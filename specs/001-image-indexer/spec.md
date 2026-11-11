@@ -18,6 +18,7 @@
 - Q: Which images on a crawled page should count as "appearing on" that page? → A: Every image on the page (after the size and format filters). When an image is the page's declared lead image (the one named in the page's metadata for link previews), its link to that page is marked as the lead. No layout rules are written for individual sites.
 - Q: Should the pipeline keep the converted image files themselves, and if so, where? → A: Yes, in the database. Each converted JPEG's bytes are stored in the same transaction as its faces and page links, and can be exported back to an identical `.jpg` file. No extra compression beyond what the database already does.
 - Q: What should happen if a run is triggered while another run is still in progress? → A: Only one full run is active at a time, and a new trigger waits in the queue. Individual steps (inside a run, or a single step the operator re-runs) MAY execute at the same time as each other when they don't collide. Two steps collide when they would send requests to the same host or write the same records. Colliding steps wait for each other. (Refined after PR review: a site's own network steps never overlap, and any host shared between sites is protected by one shared rate budget, instead of making the steps wait. See FR-003 and FR-022a.)
+- Q: How many times should a link that keeps failing be retried across re-runs? → A: At most 3 attempts per link in total. After the third failed attempt, the link is abandoned: later runs don't request it, and they log that it was given up. The same cap applies to face detection on a staged image.
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -110,7 +111,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 - **Oversized images** (a very large download, or a picture whose pixel count would exhaust memory when decoded): the download is aborted above a byte limit, and decoding is refused above a pixel limit. Neither stops the run.
 - **Images referenced only through inline CSS** (`style="background-image: url(…)"`): collected like `<img>` images. Background images declared in external stylesheets are not collected.
 - **A run triggered while another run is in progress**: it waits in the queue and starts when the active run finishes (FR-022).
-- **The operator re-runs a single failed step while other steps are executing**: it runs at once if it doesn't collide with them (different hosts, different records). Otherwise it waits. Either way it creates no duplicates (FR-022a, FR-022b).
+- **The operator re-runs a single failed step while other steps are executing**: it runs at once unless it is a network step of a site whose other network step is executing, in which case it waits. If it contacts a host another step is also using, the two share that host's rate budget. Either way it creates no duplicates (FR-003, FR-022a, FR-022b).
 - **robots.txt is unreachable**: the crawler uses the conservative default (it does not crawl that site) and logs the reason.
 - **Faces partly cut off at the image edge, or very small**: indexed only if the detector reports them as faces at its standard confidence. Anything below that is not a "visible face".
 
@@ -164,9 +165,10 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 **Reliability and observability**
 
-- **FR-023**: A failure on one page or one image MUST NOT fail the whole run. The failed item is skipped, and is retried on a later run. Infrastructure failures (the database or the face model being unavailable) are not item failures: they MUST fail the step, so the orchestrator retries it.
+- **FR-023**: A failure on one page or one image MUST NOT fail the whole run. The failed item is skipped, and is retried on a later run, up to the attempt cap (FR-023a). Infrastructure failures (the database or the face model being unavailable) are not item failures: they MUST fail the step, so the orchestrator retries it.
+- **FR-023a**: The system MUST make at most 3 attempts in total, across all runs, to fetch any one page or image link, and at most 3 attempts to detect faces in any one staged image. Each run counts as at most one attempt, and infrastructure failures don't count. After the third failure the item is abandoned: later runs don't try it again, and they log and count it as abandoned. A successful attempt clears the item's failure count. The operator can reset abandoned items deliberately.
 - **FR-024**: Every skipped or failed item MUST be logged in the run's task logs with its URL and the reason. That includes normal skips (format, size), not only errors.
-- **FR-025**: Each run MUST log a summary: pages crawled, images found, images skipped (by reason), images newly indexed, images reused, faces stored, and failures.
+- **FR-025**: Each run MUST log a summary: pages crawled, images found, images skipped (by reason), images newly indexed, images reused, faces stored, failures, and items abandoned at the attempt cap (FR-023a).
 
 **Operation and documentation**
 
@@ -176,10 +178,11 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 ### Key Entities
 
 - **Page**: a crawled web page on CNN or People. Attributes: normalized URL, site, crawl depth at which it was found, last crawled time. A page shows many images.
-- **Image**: one unique picture, identified by its content fingerprint. Attributes: normalized JPEG bytes (for images with faces), normalized dimensions, original dimensions and format, status (staged, indexed with faces, indexed with no faces, or skipped with a reason), indexed time. An image has one or more source URLs, appears on one or more pages, and has zero or more faces.
+- **Image**: one unique picture, identified by its content fingerprint. Attributes: normalized JPEG bytes (for images with faces), normalized dimensions, original dimensions and format, status (staged, indexed with faces, indexed with no faces, or skipped with a reason), indexed time. "Staged" is the status `pending` in the data model and tasks: the image and its bytes are stored, and face detection hasn't completed yet. An image has one or more source URLs, appears on one or more pages, and has zero or more faces.
 - **Image source URL**: an address from which an image's content was downloaded. Several URLs can resolve to the same image. This is what lets a re-run skip a known URL without downloading it.
 - **Page–Image link**: records that an image appears on a page, and whether it is that page's declared lead image. The relationship is many-to-many. This is what lets search return "all pages", and also lets it tell the page about a person apart from pages that only show their thumbnail.
 - **Face**: one detected face in one image. Attributes: bounding box (in normalized-image coordinates), detection confidence, embedding. It belongs to exactly one image.
+- **Fetch attempt**: the failure history of a page or image link that has failed at least once. Attributes: link, kind (page or image), number of failed attempts, last error, last attempt time. It is what enforces the 3-attempt cap, and it is removed when the link succeeds.
 - **Model profile**: the fixed detector, recognition model, preprocessing and distance measure used to produce the embeddings, shared with the search script.
 
 ## Success Criteria *(mandatory)*
@@ -196,7 +199,8 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 - **SC-008**: Injecting broken images and unreachable pages into a run does not make the run fail. Each one is named, with a cause, in the logs.
 - **SC-009**: The search script can find the nearest stored faces for a query embedding using only what this pipeline stored, with no extra build or transformation step.
 - **SC-010**: No crawl request goes to a page path disallowed by robots.txt, or to a page outside the two target sites. Per-host request pacing never exceeds the configured page or image rate, and no site has more crawled pages than the page cap (when one is set).
-- **SC-011**: With default settings, a run on both sites from an empty index completes within 30 minutes on a typical laptop.
+- **SC-011**: With default settings, a run on both sites from an empty index completes within 30 minutes on the reference machine: 4 CPU cores, 16 GB RAM, 8 GB of it allocated to Docker, broadband connection. The README records the machine the measurement was taken on.
+- **SC-012**: A link that fails on three runs is not requested on a fourth run, and that run's summary counts it as abandoned.
 
 ## Assumptions
 

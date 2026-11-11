@@ -6,7 +6,7 @@
 
 ## Summary
 
-This plan builds an Airflow pipeline, run entirely under Docker Compose. It crawls edition.cnn.com and people.com, respecting robots.txt, a per-run depth, a per-site page cap, and separate per-host page and image rate limits. For each image found, it downloads it, converts it to a JPEG of at most 1024 px, detects every face with DeepFace (RetinaFace detector, Facenet512 embeddings), and stores everything in one Postgres + pgvector database: image metadata, the JPEG bytes, page links (with a lead-image mark), face boxes and 512-d embeddings. Re-runs skip known URLs before downloading and reuse content already indexed under another URL, matched by its content fingerprint.
+This plan builds an Airflow pipeline, run entirely under Docker Compose. It crawls edition.cnn.com and people.com, respecting robots.txt, a per-run depth, a per-site page cap, and separate per-host page and image rate limits. For each image found, it downloads it, converts it to a JPEG of at most 1024 px, detects every face with DeepFace (RetinaFace detector, Facenet512 embeddings), and stores everything in one Postgres + pgvector database: image metadata, the JPEG bytes, page links (with a lead-image mark), face boxes and 512-d embeddings. Re-runs skip known URLs before downloading and reuse content already indexed under another URL, matched by its content fingerprint. A failing link or detection is tried at most 3 times across runs, then abandoned and logged.
 
 The DAG has three stages:
 
@@ -60,7 +60,7 @@ Airflow pools prevent collisions: one HTTP slot per site and N slots for CPU-hea
 | I. Deliverables | This feature covers the pipeline source, `docker-compose.yml`, and the README sections for running the pipeline, libraries/models, and architecture. The search script and its README sections are feature 002; the shared schema and model profile are built here for it. | ✅ |
 | I. No scope creep | Each extra item has a written need: the lead-image mark (clarification Q2, better search precision), the image export CLI (FR-009a, verifiability), and pools (FR-022a). No UI, API, naming, attributes or training. | ✅ |
 | I. Recorded decisions | Every open choice is recorded in [research.md](research.md) and cites the spec/assignment line it serves. | ✅ |
-| **II. Typed, ty** | All modules annotated. `Protocol` seams: `Fetcher`, `ImageNormalizer`, `FaceEmbedder`, `IndexStore`. `Any` only at HTML, HTTP, DeepFace and DB-row boundaries, narrowed to dataclasses. | ✅ (enforced by gates) |
+| **II. Typed, ty** | All modules annotated. `Protocol` seams, defined in or re-exported from `ports.py`: `Fetcher`, `Resolver`, `Pacer`, `ImageNormalizer`, `FaceEmbedder`, `IndexStore`. The pipeline depends only on these; the adapters (`HttpFetcher`, `PostgresPacer`, `PillowNormalizer`, `DeepFaceEmbedder`, `PostgresIndexStore`) are the only modules that import drivers. `Any` only at HTML, HTTP, DeepFace and DB-row boundaries, narrowed to dataclasses. | ✅ (enforced by gates) |
 | **III. ruff** | `[tool.ruff]` in `pyproject.toml`; ruff is the only linter and formatter. | ✅ |
 | **IV. Offline pytest** | MockTransport, HTML fixtures, FakeEmbedder, loopback DB. Each assignment requirement has an outcome test (see [quickstart §Tests](quickstart.md#automated-tests)). | ✅ |
 | **V. KISS/YAGNI/DRY** | LocalExecutor (no Celery/Redis), one Postgres for both databases, plain SQL schema with idempotent DDL (no migration framework). One `model_profile.py` and one `config.py` hold every shared fact. | ✅ |
@@ -78,7 +78,7 @@ No violations, so Complexity Tracking is empty.
 specs/001-image-indexer/
 ├── spec.md
 ├── plan.md              # this file
-├── research.md          # Phase 0: decisions R1–R12
+├── research.md          # Phase 0: decisions R1–R13
 ├── data-model.md        # Phase 1: tables, states, constraints
 ├── quickstart.md        # Phase 1: run and validation guide
 ├── contracts/
@@ -115,19 +115,32 @@ src/face_index/                # core library, no Airflow import
 ├── crawl.py                   # breadth-first crawl with depth, page cap, scope, robots
 ├── normalize.py               # bytes → NormalizedImage (JPEG ≤1024) or SkipReason
 ├── faces.py                   # FaceEmbedder protocol, DeepFaceEmbedder, result narrowing/filtering
-├── store.py                   # IndexStore: schema init, URL lookup, upserts, pending batches, atomic face commit
+├── ports.py                   # Protocols: IndexStore, ImageNormalizer (+ re-exports of Fetcher, Resolver, Pacer, FaceEmbedder)
+├── models.py                  # plain dataclasses passed across ports (PageRef, StagedImage, ImageRecord, …)
+├── store.py                   # PostgresIndexStore adapter: schema init, lookups, upserts, pending batches, atomic face commit, attempts
+├── attempts.py                # 3-attempt cap: fetch_attempt bookkeeping, abandoned check (research R11a)
+├── errors.py                  # InfrastructureError and item-level error types
 ├── schema.sql                 # single source of DDL (contracts/index-schema.sql mirrors it)
 ├── pipeline.py                # stage functions called by DAG tasks; return typed summaries
 └── export_image.py            # CLI: export stored JPEG by image id or fingerprint
 
 tests/
-├── fixtures/                  # captured HTML (cnn, people), robots.txt, sample images (faces, no face, PNG/RGBA, GIF, SVG, tiny)
-├── unit/                      # urls, extract, crawl, normalize, faces (narrowing), pacer, robots, pipeline with fakes
-├── integration/               # store against loopback pgvector: idempotency, dedup, atomicity, HNSW query
-└── dag/                       # DAG import, params schema, pools, task wiring
+├── conftest.py                # shared fixtures: DB connection + per-test schema reset, fake clock, FakeEmbedder, fake resolver
+├── fakes.py                   # FakeEmbedder, FakeResolver, MockTransport site builder, InMemoryPacer
+├── fixtures/
+│   ├── html/                  # captured cnn/people home + article pages, robots.txt
+│   ├── images/                # faces (1, 2), no face, PNG RGBA, GIF, WebP, EXIF-rotated, SVG, tiny, corrupt, bomb header
+│   └── minisite/              # 2 tiny fixture sites × 3 pages for the offline smoke test
+├── unit/                      # urls, extract, crawl, normalize, faces (narrowing), pacing, http (redirects, SSRF, limits), attempts, pipeline with fakes
+├── integration/               # store against loopback pgvector: idempotency, dedup, races, atomicity, attempts, HNSW query, Postgres pacer
+├── dag/                       # DAG import, params schema, pools, task wiring
+└── smoke/                     # offline full-pipeline smoke (marker `smoke`), real-model smoke (marker `model`)
+
+scripts/
+└── smoke.sh                   # stack smoke: `airflow dags test` at depth 0, cap 1 + SQL assertions
 
 .pre-commit-config.yaml
-.github/workflows/ci.yml
+.github/workflows/ci.yml       # lint, test (incl. offline smoke), compose-config, model-smoke, stack-smoke
 README.md                      # run pipeline, libraries/models, approach and architecture
 ```
 

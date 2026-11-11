@@ -1,8 +1,10 @@
 -- Contract: schema of the `faces` database.
--- Mirrors src/face_index/schema.sql (single source). Idempotent: applied on every run by `init_schema`.
+-- Mirrors src/face_index/schema.sql, the single source; tests/integration/test_schema.py fails if the two differ.
+-- This copy exists so reviewers and the search-script plan can read the schema without opening code.
+-- Idempotent: applied on every run by `init_schema`.
 -- Consumers: the image indexer (read/write), face_matcher.py (read-only, see index-read.md).
 
-CREATE EXTENSION IF NOT EXISTS vector;
+CREATE EXTENSION IF NOT EXISTS vector WITH SCHEMA public;  -- types and operators stay in public, on every search_path
 
 DO $$ BEGIN
     CREATE TYPE image_status AS ENUM ('pending', 'indexed', 'no_faces', 'skipped');
@@ -47,6 +49,7 @@ CREATE TABLE IF NOT EXISTS image (
     width           integer,
     height          integer,
     jpeg            bytea,
+    detect_attempts smallint     NOT NULL DEFAULT 0 CHECK (detect_attempts BETWEEN 0 AND 3),
     created_at      timestamptz  NOT NULL DEFAULT now(),
     indexed_at      timestamptz,
     CONSTRAINT skip_reason_iff_skipped CHECK ((status = 'skipped') = (skip_reason IS NOT NULL)),
@@ -58,7 +61,7 @@ CREATE TABLE IF NOT EXISTS image (
     CONSTRAINT indexed_at_iff_done CHECK ((status IN ('indexed', 'no_faces')) = (indexed_at IS NOT NULL))
 );
 
-CREATE INDEX IF NOT EXISTS image_pending_idx ON image (id) WHERE status = 'pending';
+CREATE INDEX IF NOT EXISTS image_pending_idx ON image (id) WHERE status = 'pending' AND detect_attempts < 3;
 
 CREATE TABLE IF NOT EXISTS image_url (
     url           text        PRIMARY KEY,
@@ -100,4 +103,15 @@ CREATE TABLE IF NOT EXISTS host_pace (
     kind      text        NOT NULL CHECK (kind IN ('page', 'image')),
     next_slot timestamptz NOT NULL,
     PRIMARY KEY (host, kind)
+);
+
+-- Failure history per link; enforces the 3-attempt cap (FR-023a). Deleted on success.
+CREATE TABLE IF NOT EXISTS fetch_attempt (
+    url             text        NOT NULL,
+    kind            text        NOT NULL CHECK (kind IN ('page', 'image')),
+    attempts        smallint    NOT NULL CHECK (attempts BETWEEN 1 AND 3),
+    last_error      text        NOT NULL,
+    last_attempt_at timestamptz NOT NULL DEFAULT now(),
+    last_run_id     text        NOT NULL,
+    PRIMARY KEY (url, kind)
 );

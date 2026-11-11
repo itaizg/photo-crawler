@@ -51,6 +51,7 @@ It is upserted by `init_schema`. The search script reads the row for its own `ke
 | `width`, `height` | integer, null | Normalized JPEG dimensions, each in 1–1024. Both set **iff** status ∈ {pending, indexed, no_faces}, otherwise both null. `no_faces` keeps them as metadata of what was analyzed |
 | `jpeg` | bytea, null | Normalized JPEG bytes; non-null **iff** status ∈ {pending, indexed} (clarification Q3) |
 | `created_at` | timestamptz | |
+| `detect_attempts` | smallint, default 0 | Failed detection attempts, 0–3. `plan_batches` takes only `pending` rows with `detect_attempts < 3` (FR-023a). A row that reaches 3 stays `pending` (invisible to search) and is logged as abandoned |
 | `indexed_at` | timestamptz, null | Set in the same transaction that makes the status `indexed` or `no_faces`; non-null **iff** status ∈ {indexed, no_faces} |
 
 Check constraints enforce the "iff" rules, the both-or-neither rule for each dimension pair, and the 1–1024 bound on each side. That makes SC-003 a database invariant, not just a test.
@@ -93,6 +94,22 @@ This is the lookup used to skip a known URL before downloading (FR-019).
 
 The index on `embedding` is HNSW with `vector_cosine_ops`. It is the search script's main access path ([index-read.md](contracts/index-read.md)).
 
+### `fetch_attempt`: failure history of a link (FR-023a)
+
+| Field | Type | Rules |
+|---|---|---|
+| `url` | text | Normalized page or image URL |
+| `kind` | text | `page` \| `image` (check constraint) |
+| `attempts` | smallint | 1–3: failed attempts so far, at most one per run |
+| `last_error` | text | Short reason, e.g. `http 503`, `timeout`, `decode error`, `non-public address` |
+| `last_attempt_at` | timestamptz | |
+| `last_run_id` | text | Airflow run ID of the last counted attempt. A second failure in the same run (a task retry) doesn't count again |
+
+- The primary key is `(url, kind)`.
+- A row exists only while a link is failing. A successful fetch deletes it.
+- At 3 attempts the link is **abandoned**: crawl and download check this table before requesting, and skip abandoned links with an INFO log line.
+- To retry abandoned links, the operator runs `DELETE FROM fetch_attempt WHERE attempts >= 3;` (documented in the README).
+
 ### `host_pace`: shared request pacing (FR-003, [research R4](research.md#r4-rate-limiting-robotstxt-and-identity-fr-003-fr-004))
 
 | Field | Type | Rules |
@@ -111,7 +128,9 @@ The primary key is `(host, kind)`. This is operational state, not index data: it
                │       └────(detect: 0 faces; jpeg set to NULL)───> no_faces   [dims kept]
                └─> skipped(reason)            [terminal, no bytes, no normalized dims]
 
-  decode error / oversized download / network error → nothing stored, URL retried next run
+  decode error / oversized download / network error → no image stored; fetch_attempt += 1;
+                                                       URL retried next run, abandoned after 3 failures
+  detect error on a pending image → detect_attempts += 1; retried next run, abandoned after 3
 ```
 
 - `pending` is the only state that is not terminal. A failed `detect` leaves the row `pending`, and the next run's `plan_batches` picks it up again (FR-023).
@@ -131,5 +150,6 @@ The primary key is `(host, kind)`. This is operational state, not index data: it
 | FR-017 no-face images remembered | `no_faces` / `skipped` rows keep `sha256` and their URLs |
 | FR-019/020 skip by URL or fingerprint | `image_url.url` PK, `image.sha256` unique |
 | FR-021 atomic | transaction boundaries in [research R11](research.md#r11-incremental-logic-idempotency-and-atomicity-fr-019--fr-022b) |
+| FR-023a at most 3 attempts | `fetch_attempt` (links) and `image.detect_attempts` (detection); counted at most once per run via `last_run_id` |
 | FR-022b no duplicates | natural-key uniques; `ON CONFLICT` plus a follow-up `SELECT` for the winning ID; `FOR UPDATE SKIP LOCKED` in detect |
 | FR-003 shared per-host rate | `host_pace` row per `(host, kind)`, with one atomic reservation per request |

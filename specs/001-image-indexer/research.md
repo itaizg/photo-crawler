@@ -25,9 +25,11 @@ Phase 0 output for [plan.md](plan.md). Each entry gives a **Decision**, its **Ra
 
 There is no triggerer (no deferrable operators), no Redis or Celery, and no worker service. Auth uses the default simple auth manager with `SIMPLE_AUTH_MANAGER_ALL_ADMINS=True` for this local demo, recorded in the README.
 
+- **Database credentials**: none. Postgres runs with `POSTGRES_HOST_AUTH_METHOD=trust`, is reachable only on the Compose network and `127.0.0.1`, and every DSN is password-less. This satisfies the constitution's "secrets never committed" rule and SC-001's "no manual setup" together. An operator who exposes the database sets `POSTGRES_PASSWORD` and the matching DSNs in `.env`, as documented in the README.
+
 **Rationale**: KISS/YAGNI (constitution V). One machine with tens of tasks per run needs no distributed executor. LocalExecutor runs each task in its own process, which suits per-process TensorFlow models.
 
-**Alternatives**: CeleryExecutor would add Redis and a worker service for no benefit at this scale. Running the standalone `airflow standalone` command in one container is not the documented production shape and hides how the services are split.
+**Alternatives**: A committed default password (`${POSTGRES_PASSWORD:-…}`) would put a credential in git, which the constitution forbids. Requiring a `.env` before first start would break SC-001. CeleryExecutor would add Redis and a worker service for no benefit at this scale. Running the standalone `airflow standalone` command in one container is not the documented production shape and hides how the services are split.
 
 ## R3. DAG shape, concurrency and collisions (FR-022, FR-022a, FR-022b)
 
@@ -40,6 +42,7 @@ init_schema ─┬─ crawl[cnn]  ── download[cnn]  ─┐
 
 - `crawl[site]` and `download[site]` are defined per site in a loop over `config.SITES` (not mapped), so each gets the static pool `http_<site>` with 1 slot. Only one HTTP-making task per site can run at once, even when an operator clears a single task.
 - `download[site]` writes images in the `pending` state, together with their JPEG bytes and page links (R11). That decouples the network from the CPU.
+- **XCom size**: `crawl[site]` passes its result to `download[site]` through XCom as compact JSON (URLs only, about 100 B per image reference). At depth 1 without a cap that is about 300 pages × 30 refs ≈ 1 MB, which Airflow's Postgres metadata database handles comfortably. A guard (`config.MAX_XCOM_BYTES` = 10 MB) fails the crawl task with a clear message before a very deep uncapped crawl could bloat the metadata database. Storing the crawl result in a staging table would remove the limit, but adds a table and its cleanup for a case the defaults never reach (YAGNI).
 - `plan_batches` lists the IDs of all `pending` images, including ones left by earlier failed runs, and splits them into batches of `config.DETECT_BATCH_SIZE` (default 50).
 - `detect` is a mapped task in pool `face_cpu` (default 2 slots, settable by the `FACE_WORKERS` environment variable in `airflow-init`). Each batch claims its rows with `SELECT … FOR UPDATE SKIP LOCKED`, so two executions never process the same image.
 - Pools are created by `airflow-init` (`airflow pools set http_cnn 1 …`), so a fresh stack is collision-safe without manual steps (SC-001).
@@ -230,14 +233,42 @@ DeepFace.represent(img_path=<BGR ndarray>, model_name="Facenet512",
 
 `image_url` and `face` inserts use `ON CONFLICT DO NOTHING` on `url` and `(image_id, face_index)`. A retried batch is a no-op for rows that are already `indexed`, because they no longer match `status = 'pending'`.
 
-Download failures, decode errors included, are not persisted, so the URL stays unknown and is retried next run (FR-023). Detection failures leave the image `pending`, so the next `plan_batches` retries it.
+Download failures, decode errors included, store no image. The URL stays unknown in `image_url` and is retried next run, up to the cap in R11a. Detection failures leave the image `pending`, so the next `plan_batches` retries it, also up to the cap.
 
 **Rationale**: FR-021 as clarified: an image is *staged* (`pending`) with its bytes and links, and becomes visible to readers only when it turns `indexed` in the same commit as its faces. The search reads only `indexed` images ([index-read.md](contracts/index-read.md)), so it never sees a partial set of faces. The upserts keep `last_crawled_at`, `last_seen_at`, `depth` and `indexed_at` accurate across re-runs.
 
 **Alternatives**:
 - Download and detect in one transaction: holds a transaction open during network I/O and makes the two stages run one after the other (see R3 and R8).
 - `ON CONFLICT DO UPDATE … RETURNING` with a dummy update to always get the ID: it works, but it writes a new row version on every hit. The follow-up `SELECT` is cheaper and clearer.
-- Persisting failed downloads with a retry counter: no current need (YAGNI). The run logs and summary cover diagnosis.
+- Retrying failures forever: wastes requests on dead links, and a single bad image could make every run fail its detection batch. Rejected in favour of the 3-attempt cap (R11a).
+
+## R11a. Attempt cap: at most 3 tries per link (FR-023a)
+
+**Decision**:
+- `config.MAX_ATTEMPTS = 3` is a constant, not a DAG parameter (YAGNI; the user fixed the value).
+- **Links** (pages in `crawl`, images in `download`): before requesting, look up `fetch_attempt(url, kind)`. If `attempts ≥ 3`, skip the link, log `link abandoned url=… attempts=3 last_error=…` at INFO, and count it as `abandoned`.
+- **On an item failure**, record it with one statement:
+
+  ```sql
+  INSERT INTO fetch_attempt (url, kind, attempts, last_error, last_run_id) VALUES ($1, $2, 1, $3, $4)
+  ON CONFLICT (url, kind) DO UPDATE SET
+    attempts = fetch_attempt.attempts + (fetch_attempt.last_run_id IS DISTINCT FROM EXCLUDED.last_run_id)::int,
+    last_error = EXCLUDED.last_error, last_attempt_at = now(), last_run_id = EXCLUDED.last_run_id;
+  ```
+
+  A second failure in the same run, from an Airflow task retry, refreshes the error but doesn't add an attempt.
+- **On success**, `DELETE FROM fetch_attempt WHERE url = $1 AND kind = $2`.
+- **Detection**: a failure increments `image.detect_attempts` in its own short transaction, after the per-image transaction rolls back. `plan_batches` selects `status = 'pending' AND detect_attempts < 3`, and logs, then counts, pending rows at the cap as abandoned.
+- **Not counted**: infrastructure errors (R12; the task fails and Airflow retries it), robots.txt disallows, and permanent skips. Those are policy outcomes, not failures. Requests to non-public addresses *are* counted, so a hostile link is abandoned after 3 runs.
+- **No immediate retry within a run**: each link is requested once per run. The cap therefore means "3 runs", which keeps a run's duration predictable.
+- **Reset**: the README documents `DELETE FROM fetch_attempt WHERE attempts >= 3;` and `UPDATE image SET detect_attempts = 0 WHERE status = 'pending';`.
+
+**Rationale**: the user asked for a 3-attempt cap. Keying it on the normalized URL plus kind matches "the same link". `last_run_id` makes the count idempotent under Airflow task retries (FR-022b).
+
+**Alternatives**:
+- Immediate in-run retries with backoff: they'd add up to 3× the request time for a dead host, and they'd collide with the rate budget.
+- Counting with a timestamp instead of a run ID: wrong when two runs fall in the same second, and less readable in logs.
+- A DAG parameter for the cap: no current need.
 
 ## R12. Failure isolation, logging and run summary (FR-023 … FR-025)
 
@@ -250,15 +281,44 @@ Download failures, decode errors included, are not persisted, so the URL stays u
   except Exception as e: log + count failure  # item failure, run continues
   ```
 
-  So a database outage fails the task (Airflow retries it once, `retries=1`, `retry_delay=1 min`) and is never miscounted as an item failure. Each item's work is committed in its own transaction before the next item starts, so a retried task redoes only the work that wasn't committed, and that is safe to repeat (R11).
+  So a database outage fails the task (Airflow retries it once, `retries=1`, `retry_delay=1 min`) and is never miscounted as an item failure, nor counted against the link's 3 attempts (R11a). Each item's work is committed in its own transaction before the next item starts, so a retried task redoes only the work that wasn't committed, and that is safe to repeat (R11).
 - **Logging every outcome with its URL** (FR-024):
   - Skips are returned values, not exceptions, and are logged at INFO: `image skipped url=… reason=too_small`.
   - Item failures are logged at WARNING: `image failed url=… stage=download reason=…`.
   - Page failures and robots refusals are logged the same way.
-- Each stage function returns a typed summary dataclass, passed by XCom: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, and failures by stage.
+- Each stage function returns a typed summary dataclass, passed by XCom: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, failures by stage, and **abandoned** (links and detections at the attempt cap).
 
 **Rationale**: The constitution's failure isolation, plus FR-023's clarified split between item and infrastructure failures, plus FR-025. XCom carries only small counters, as Airflow recommends.
 
 **Alternatives**:
 - Catching everything per item: hides outages as thousands of "item failures" and lets a run end as `success` with work missing.
 - Recording failures in a table: adds persistent state with no reader, since the evaluator reads the Airflow logs.
+
+## R13. Smoke tests, CI and project layout
+
+**Decision**: there are three test tiers. Each is fast enough for the moment it runs.
+
+| Tier | What runs | Data | Network / model | Time | Where |
+|---|---|---|---|---|---|
+| **Unit + integration** (`tests/unit`, `tests/integration`, `tests/dag`) | Each module on its own; the store against loopback pgvector; DAG import | HTML and image fixtures | None; `FakeEmbedder`; loopback DB | < 1 min | Every push and PR (CI `test` job) |
+| **Offline pipeline smoke** (`tests/smoke/test_pipeline_smoke.py`, marker `smoke`) | The **whole pipeline**, stage functions in DAG order (`init_schema → crawl → download → plan_batches → detect → summarize`), run **twice** | A fixture mini-site: 2 sites × 3 pages, 8 images (2 with faces, a duplicate under two URLs, a PNG with alpha, an SVG, a tiny icon, a corrupt file, a 500 response) | `httpx.MockTransport` + fake resolver + `FakeEmbedder`; loopback DB | < 15 s | Every push and PR (same `test` job) |
+| **Model smoke** (`tests/smoke/test_deepface_smoke.py`, marker `model`) | The real `DeepFaceEmbedder` on 3 fixture images: one face, two faces, none | 3 small JPEGs | Real weights (cached) | ~1 min | CI `model-smoke` job: push to `main` and manual dispatch |
+| **Stack smoke** (`scripts/smoke.sh`) | The real DAG in the Compose stack via `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'`, then SQL assertions | Live home pages only: 2 pages, about 40 images | Live sites, real model | ~2–4 min | Locally before a release; CI `stack-smoke` job (manual dispatch only, since it hits live sites) |
+
+- The offline smoke asserts the end-to-end outcomes: images stored as JPEG ≤ 1024 px, one row per face, page links (including the duplicate linked to both pages), the lead mark, skip reasons, the run summary counts, and on the **second run** zero downloads plus the corrupt link's `fetch_attempt.attempts = 2`. A third and fourth run show it abandoned (SC-012).
+- **Test seams** the smoke tier needs, all in the production code as protocols with real defaults: `Fetcher` (built on an injectable `httpx` transport), `Resolver` (`socket.getaddrinfo` by default; the fake maps the fixture hosts to a public test address such as `93.184.216.34`, so the SSRF check passes without network), `Pacer` (in-memory with an injected clock in unit tests; Postgres in smoke), `FaceEmbedder`, and the site list (`config.SITES` by default; the smoke tier passes fixture sites to `pipeline.py` functions as arguments). No production flag disables safety checks.
+
+**CI** (`.github/workflows/ci.yml`, `permissions: contents: read`, actions pinned by SHA, Python 3.13 via `uv`):
+1. `lint`: `pre-commit run --all-files` (ruff check, ruff format --check, ty check).
+2. `test`: service container `pgvector/pgvector:pg17`; `uv sync --locked --group dev --group dag`; `uv run pytest -m "not model"`. This runs unit, integration, DAG and offline smoke tests.
+3. `compose-config`: `docker compose config -q`.
+4. `model-smoke` (on push to `main` and `workflow_dispatch`): caches `~/.deepface` keyed on the `deepface` version, then `uv run pytest -m model`.
+5. `stack-smoke` (only on `workflow_dispatch`): `docker compose up -d --build`, then `scripts/smoke.sh`, then `docker compose down -v`.
+
+**Layout**: the `src/` layout with the `face_index` package (importable by the future `face_matcher.py`), `dags/` mounted into Airflow, `docker/` for images and initialization, and `tests/{unit,integration,dag,smoke,fixtures}`. pytest markers `smoke` and `model` are declared in `pyproject.toml` with `--strict-markers`.
+
+**Rationale**: the user asked for quick pipeline runs on very small data. The offline smoke gives the full pipeline in seconds on every commit, without breaking constitution IV, and the stack smoke proves the real Compose, Airflow and DeepFace path in minutes, as the constitution's Quality Gates require before a deliverable is done.
+
+**Alternatives**:
+- A `fixture-site` nginx container for the stack smoke: deterministic, but the crawler would have to allow a private address, which means a safety bypass in production code. The live depth-0 run is simpler and exercises the real path.
+- Running the stack smoke on every PR: a 2 GB image build and live-site traffic per commit. Too slow and impolite.

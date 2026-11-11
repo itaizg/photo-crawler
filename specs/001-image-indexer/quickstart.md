@@ -14,7 +14,7 @@ This is a run guide and the end-to-end validation for [spec.md](spec.md). Schema
 docker compose up -d --build
 ```
 
-No `.env` file is needed. `docker-compose.yml` gives every variable a local-only default (`${POSTGRES_PASSWORD:-faces-local}`, `${FACE_WORKERS:-2}`, …), and Postgres is published only on `127.0.0.1`. To override any of them, `cp .env.example .env` and edit it. The real `.env` is git-ignored, as the constitution requires for secrets.
+No `.env` file is needed. `docker-compose.yml` gives every variable a non-secret default (`${POSTGRES_USER:-faces}`, `${FACE_WORKERS:-2}`, …). The local database uses **no password** (`POSTGRES_HOST_AUTH_METHOD=trust`) and is published only on `127.0.0.1`, so no credential is committed (constitution, Project Constraints). To override a variable, or to set a password before exposing the database beyond your machine, `cp .env.example .env` and edit it. The real `.env` is git-ignored.
 
 **Expected**:
 - `docker compose ps` shows `postgres`, `airflow-apiserver`, `airflow-scheduler` and `airflow-dag-processor` as healthy. `airflow-init` exited with code 0.
@@ -83,6 +83,29 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer --conf 
 
 This is covered by automated tests that inject a 500 response, a timeout, a corrupt image, an oversized download, a redirect to a private address, and a robots.txt network error into a fake HTTP transport. Each test asserts that the run summary counts the failure, the log names the URL, and every other item is indexed. A separate test makes the store raise a connection error and asserts that the task *fails* (so Airflow retries it) instead of counting item failures.
 
+## Smoke runs on very small data (research R13)
+
+| Smoke | Command | Takes | Proves |
+|---|---|---|---|
+| Offline pipeline | `uv run pytest -m smoke` | < 15 s | The whole pipeline, run twice, on a fixture mini-site: storage, dedup, links, skips, summary, re-run with zero downloads, attempt cap |
+| Real model | `uv run pytest -m model` | ~1 min (first run downloads weights) | DeepFace finds 1, 2 and 0 faces on the fixture images; confidence filter; 512-d vectors |
+| Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
+
+`scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. It exits non-zero unless all of these hold:
+- the run succeeded;
+- both sites have exactly 1 crawled page;
+- at least 1 face is stored;
+- every stored image is JPEG ≤ 1024 px;
+- every face is linked to a page.
+
+## 8. Attempt cap (SC-012)
+
+This is covered by the offline smoke and integration tests: a link that returns 500 shows `fetch_attempt.attempts` of 1, 2 and 3 over three runs, and the fourth run doesn't request it and counts it under `abandoned`. To see it on the live stack:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "SELECT kind, attempts, count(*) FROM fetch_attempt GROUP BY 1,2;"'
+```
+
 ## Automated tests
 
 ```bash
@@ -94,7 +117,7 @@ docker compose up -d postgres
 ```
 
 ```bash
-uv run pytest
+uv run pytest -m "not model"     # unit, integration, DAG and offline smoke, as CI runs them
 ```
 
 Each assignment requirement has at least one outcome test (constitution IV):
