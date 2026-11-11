@@ -167,7 +167,7 @@ Skips are permanent because they depend only on the bytes, which the fingerprint
 
 **Total ≈ 17–20 min**, leaving headroom under 30 min. If a laptop measures slower, the levers in order are: raise `FACE_WORKERS` (needs RAM), lower the page cap, or set `MIN_SIDE` higher to skip thumbnails. The measured figure goes in the README.
 
-**Measured 2026-11-11 (T065)**, first default run, CNN only (people.com answered HTTP 402), on an Apple M-series machine with 14 cores and 8 GB for Docker:
+**Measured 2026-11-11 (T065)**, first default run, CNN only (people.com answered HTTP 402), on an Apple M-series machine with 14 cores and 8 GB for Docker. That is not the SC-011 reference machine (4 cores, 16 GB) and not both sites, so the numbers below show the scale of the problem rather than a verdict on SC-011:
 
 | Stage | Load | Time |
 |---|---|---|
@@ -178,8 +178,8 @@ Skips are permanent because they depend only on the bytes, which the fingerprint
 
 **Second default run**, right after the first: 2 min 10 s. 5,534 URLs were reused without downloading; 72 new images gave 63 newly indexed images and 138 faces (SC-007 confirmed on live data).
 
-The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) is not met.** Download alone takes 16 min at the polite image rate. The levers, in order:
-1. A smaller default `page_cap` (about 15 pages would fit 30 min).
+The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open**: the measured run took 72 min for one site on a faster machine than the reference, so the defaults would not meet it on the reference machine either. Download alone takes 16 min at the polite image rate. The levers, in order:
+1. A smaller default `page_cap`. Estimated from the per-image times above, not measured: about 15 pages fit 30 min for one site, about 10 per site with both sites (downloads run in parallel per host; detection is shared).
 2. More `FACE_WORKERS`, at about 1.5 GB of RAM each.
 3. A higher `MIN_SIDE`, to skip thumbnails before detection.
 

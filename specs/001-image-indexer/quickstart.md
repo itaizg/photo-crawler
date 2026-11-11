@@ -28,8 +28,8 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer
 ```
 
 **Expected**:
-- The run reaches `success` within 30 minutes with no manual action.
-- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored` for both sites.
+- The run reaches `success` with no manual action. The target is 30 minutes (SC-011), which is not yet met: the measured default run took 72 minutes for CNN alone (README, research R8). Use a smaller `page_cap` for a quicker check.
+- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored`. Faces come only from sites that accept the crawler: people.com currently answers HTTP 402, which shows up as a crawl failure in the table. Crawling it needs the site's permission.
 - Item failures, if any, appear in that table and in the `download`/`detect` logs with a URL and reason. They never show up as a failed task.
 
 ## 3. Check the stored data (SC-003, SC-005, SC-006)
@@ -91,12 +91,14 @@ This is covered by automated tests that inject a 500 response, a timeout, a corr
 | Real model | `uv run pytest -m model` | ~1 min (first run downloads weights) | DeepFace finds 1, 2 and 0 faces on the fixture images; confidence filter; 512-d vectors |
 | Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
 
-`scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. It exits non-zero unless all of these hold:
+`scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. Its checks look only at pages crawled by this run, so rows from earlier runs cannot make it pass. It exits non-zero unless all of these hold:
 - the run succeeded;
-- both sites have exactly 1 crawled page;
-- at least 1 face is stored;
-- every stored image is JPEG ≤ 1024 px;
-- every face is linked to a page.
+- at least one site has a page crawled by this run;
+- at least 1 face is on this run's pages;
+- every image on this run's pages is JPEG ≤ 1024 px;
+- every face is linked to a page and has a 512-d embedding.
+
+A site with no page this run is reported as `WARN`, with the failing links, but does not fail the check: a site that refuses the crawler (people.com answers HTTP 402) is not a pipeline fault.
 
 ## 8. Attempt cap (SC-012)
 

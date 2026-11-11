@@ -101,7 +101,7 @@ scripts/smoke.sh                      # the real DAG in the stack, depth 0, one 
 
 ## Example usage and expected outputs
 
-All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker.
+All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker. This is not the spec's reference machine (4 cores, 16 GB), and only CNN could be crawled (people.com refuses the crawler, see Known limitations).
 
 **First default run** (`airflow dags trigger image_indexer`, empty index), 72 min. This is the `summarize` task log:
 
@@ -139,21 +139,37 @@ analyzed, no faces                       9
 faces stored                           138
 ```
 
-**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), about 4 min:
+**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages:
 
 ```
-FAIL: one crawled page per site (1)      <- people.com answers HTTP 402
-PASS: at least one face stored (312)
+INFO: cnn crawled (1 page)
+WARN: people has no page this run (see the failing links below)
+PASS: at least one site crawled this run (1)
+PASS: faces on this run's pages (392)
 PASS: images are JPEG and at most 1024 px (0)
 PASS: every face is linked to a page (0)
-PASS: every face has a 512-d embedding (0)
+PASS: every face on this run's pages has a 512-d embedding (0)
+failing link this run: https://people.com/ | 3 | http 402
+SMOKE PASSED
 ```
+
+**Stored data checks** (quickstart §3), on the index after both runs:
+
+| Check | Result |
+|---|---|
+| Indexed images that are not JPEG or exceed 1024 px | 0 |
+| Faces not linked to a page | 0 |
+| Faces on images that are not `indexed` | 0 |
+| Images shared by more than one page | 549 (one is on 47 pages) |
+| Lead marks | 49, for 50 pages |
+| Model profile | `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, 512 |
+| Analyzed images missing dimensions or a time | 0 |
 
 **Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
 
 ## Known limitations
 
-- **A full default run takes about 72 minutes, not the 30-minute target (SC-011).** CNN articles carry about 100 images each, so 50 pages give about 4,700 images. To go faster, lower `page_cap` (about 15 pages per site fits 30 minutes) or raise `FACE_WORKERS` if Docker has the memory.
+- **SC-011 (a default run on both sites within 30 minutes) is open.** The one measured run took 72 minutes for CNN alone, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if both sites are reachable (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
 
 - **people.com refuses the crawler** with HTTP 402 for its honest User-Agent (`photo-crawler/0.1.0`). The pipeline records the failure, retries it on up to 3 runs, and indexes CNN normally. The crawler does not disguise itself to get around this; crawling People needs the site's permission.
 - The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
