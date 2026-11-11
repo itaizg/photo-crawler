@@ -101,18 +101,59 @@ scripts/smoke.sh                      # the real DAG in the stack, depth 0, one 
 
 ## Example usage and expected outputs
 
-From a real stack smoke run on 2026-11-11 (depth 0, one page per site), Apple M-series, 14 cores, Docker with 8 GB:
+All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker.
+
+**First default run** (`airflow dags trigger image_indexer`, empty index), 72 min. This is the `summarize` task log:
 
 ```
+metric                               count
+pages crawled                           50
+  cnn                                   50
+images found                          5575
+downloaded                            4710
+reused by URL                          862
+reused by fingerprint                    3
+staged for detection                  4704
+skipped                                  5
+  robots_disallowed                      2
+  too_small                              3
+newly indexed (with faces)            3034
+analyzed, no faces                    1670
+faces stored                          9346
+failures                                 2
+  crawl                                  1
+  download                               1
+abandoned (3 attempts)                   0
+```
+
+Per stage: crawl 0.9 min, download 16.3 min (held at the 5 req/s image limit), face detection 54.8 min (2 workers, about 1.4 s per image each). The crawl failure is people.com's HTTP 402; the download failure is one image that returned HTTP 500.
+
+**Second default run** right after the first, 2 min 10 s. Known URLs are not downloaded again; new articles add new images:
+
+```
+images found                          5609
+downloaded                              72
+reused by URL                         5534
+newly indexed (with faces)              63
+analyzed, no faces                       9
+faces stored                           138
+```
+
+**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), about 4 min:
+
+```
+FAIL: one crawled page per site (1)      <- people.com answers HTTP 402
 PASS: at least one face stored (312)
 PASS: images are JPEG and at most 1024 px (0)
 PASS: every face is linked to a page (0)
 PASS: every face has a 512-d embedding (0)
 ```
 
-The CNN home page gave 196 images: 122 with faces (312 faces in total) and 74 without. The run took about 4 minutes.
+**Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
 
 ## Known limitations
+
+- **A full default run takes about 72 minutes, not the 30-minute target (SC-011).** CNN articles carry about 100 images each, so 50 pages give about 4,700 images. To go faster, lower `page_cap` (about 15 pages per site fits 30 minutes) or raise `FACE_WORKERS` if Docker has the memory.
 
 - **people.com refuses the crawler** with HTTP 402 for its honest User-Agent (`photo-crawler/0.1.0`). The pipeline records the failure, retries it on up to 3 runs, and indexes CNN normally. The crawler does not disguise itself to get around this; crawling People needs the site's permission.
 - The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
