@@ -87,7 +87,7 @@ init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
 
 ```bash
 docker compose up -d postgres         # loopback database for integration tests
-uv sync --locked
+uv sync --locked --group dag          # `dag` adds Airflow for the DAG tests
 uv run pytest -m "not model"          # unit, integration, DAG and offline smoke tests
 uv run pytest -m model                # real DeepFace model
 scripts/smoke.sh                      # the real DAG in the stack, depth 0, one page per site
