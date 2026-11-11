@@ -17,7 +17,7 @@
 - Q: How should a run's size and duration be bounded beyond crawl depth? → A: A page cap per site (default 50), plus a separate, higher rate limit for image servers (default 5 req/s). Both can be set per run, and a page cap of None means no cap. Rate limits apply to each host on its own, so different hosts may be crawled in parallel.
 - Q: Which images on a crawled page should count as "appearing on" that page? → A: Every image on the page (after the size and format filters). When an image is the page's declared lead image (the one named in the page's metadata for link previews), its link to that page is marked as the lead. No layout rules are written for individual sites.
 - Q: Should the pipeline keep the converted image files themselves, and if so, where? → A: Yes, in the database. Each converted JPEG's bytes are stored in the same transaction as its faces and page links, and can be exported back to an identical `.jpg` file. No extra compression beyond what the database already does.
-- Q: What should happen if a run is triggered while another run is still in progress? → A: Only one full run is active at a time, and a new trigger waits in the queue. Individual steps (inside a run, or a single step the operator re-runs) MAY execute at the same time as each other when they don't collide. Two steps collide when they would send requests to the same host or write the same records. Colliding steps wait for each other.
+- Q: What should happen if a run is triggered while another run is still in progress? → A: Only one full run is active at a time, and a new trigger waits in the queue. Individual steps (inside a run, or a single step the operator re-runs) MAY execute at the same time as each other when they don't collide. Two steps collide when they would send requests to the same host or write the same records. Colliding steps wait for each other. (Refined after PR review: a site's own network steps never overlap, and any host shared between sites is protected by one shared rate budget, instead of making the steps wait. See FR-003 and FR-022a.)
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -105,7 +105,10 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 - **Images already smaller than the maximum size**: kept at their original size, never upscaled.
 - **Very many faces in one image** (crowd shots): every detected face is stored, with no per-image cap.
 - **The same page reached by different URLs** (tracking parameters, fragments, trailing slashes): treated as one page.
-- **Redirects** to another site: the target is not crawled. The page-scope rule applies to the final address.
+- **Redirects**: every redirect hop is checked (scope for pages, robots.txt, address safety, rate limit) *before* it is requested. A page redirect to another site is not followed.
+- **References to non-public addresses** (loopback, private, link-local or other reserved IP ranges, by literal IP or after DNS lookup, including through a redirect): never requested. The item is logged as a failure.
+- **Oversized images** (a very large download, or a picture whose pixel count would exhaust memory when decoded): the download is aborted above a byte limit, and decoding is refused above a pixel limit. Neither stops the run.
+- **Images referenced only through inline CSS** (`style="background-image: url(…)"`): collected like `<img>` images. Background images declared in external stylesheets are not collected.
 - **A run triggered while another run is in progress**: it waits in the queue and starts when the active run finishes (FR-022).
 - **The operator re-runs a single failed step while other steps are executing**: it runs at once if it doesn't collide with them (different hosts, different records). Otherwise it waits. Either way it creates no duplicates (FR-022a, FR-022b).
 - **robots.txt is unreachable**: the crawler uses the conservative default (it does not crawl that site) and logs the reason.
@@ -119,20 +122,22 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 - **FR-001**: The system MUST crawl starting from the home pages of https://edition.cnn.com/ and https://people.com/.
 - **FR-002**: The system MUST follow links only to pages within those two sites, up to a crawl depth set for each run (depth 0 = home pages only).
-- **FR-003**: The system MUST limit its request rate with two values set for each run: a page rate for the hosts of the target sites' pages, and an image rate for the hosts that serve images. Each limit applies to each host on its own, so requests to different hosts MAY run in parallel.
+- **FR-003**: The system MUST limit its request rate with two values set for each run: a page rate for the hosts of the target sites' pages, and an image rate for the hosts that serve images. Each limit applies to each host on its own, so requests to different hosts MAY run in parallel. A host's limit is shared by every step executing at once, so two steps that happen to contact the same host together never exceed it.
 - **FR-004**: The system MUST obey each host's robots.txt rules before fetching a page or image.
 - **FR-005**: Depth, page cap, page rate and image rate MUST be settable when a run is triggered, without code changes. Documented defaults apply when they are not set: depth 1, page cap 50 per site, page rate 1 request per second per host, image rate 5 requests per second per host.
 - **FR-005a**: The system MUST stop crawling new pages on a site once that site's page cap is reached for the run. A page cap of None means no cap, and the crawl is then bounded only by depth.
 - **FR-006**: The system MUST collect every image on each crawled page, including responsive and lazy-loaded images, thumbnails and author photos, and record which page(s) each image was found on. Images are not filtered by where they sit in the page's layout.
 - **FR-006a**: When a page declares a lead image in its metadata (the image used for link previews), the system MUST collect that image and mark its link to that page as the lead. Every other link is unmarked. A page has at most one lead image.
-- **FR-007**: The system MUST normalize page URLs so that the same page reached through cosmetic URL variants is recorded once.
+- **FR-007**: The system MUST normalize page URLs so that the same page reached through cosmetic URL variants (fragments, tracking parameters, parameter order, trailing slashes) is recorded once. Query parameters that can select different content MUST be kept.
+- **FR-007a**: The system MUST NOT request any address that resolves to a loopback, private, link-local or otherwise non-public IP range, including redirect targets.
 
 **Normalization**
 
 - **FR-008**: The system MUST convert every indexed image to one format (JPEG) and scale it down so that its longest side is at most 1024 px, keeping the aspect ratio and never upscaling.
 - **FR-009**: The system MUST keep the normalized copy of each indexed image in the database, as the exact JPEG bytes, and face locations MUST refer to the coordinates of that copy. Images skipped before normalization (FR-010) or containing no faces store no bytes.
 - **FR-009a**: The operator MUST be able to export any stored image to a `.jpg` file that is byte-identical to the stored copy.
-- **FR-010**: The system MUST skip images that cannot contain a usable face (vector graphics, and images below a minimum size), and record why.
+- **FR-010**: The system MUST skip images that cannot or should not be processed, and record why: vector graphics, images below a minimum size, and images above a maximum pixel count. Content that fails to decode is a failure (FR-023), not a skip, so it is retried on a later run.
+- **FR-010a**: The system MUST bound the resources one image can use: downloads above a maximum size are aborted, and decoding is refused above a maximum pixel count.
 
 **Face detection and embedding**
 
@@ -152,15 +157,15 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 - **FR-019**: Before downloading, the system MUST check whether an image URL is already indexed. If it is, it MUST NOT download it again, and only link any new page to it.
 - **FR-020**: After downloading a new URL, the system MUST check the content fingerprint. If identical content is already indexed, the system MUST link the new URL and page to the existing record without computing faces again.
-- **FR-021**: An image's record, its normalized bytes, its faces and its page links MUST be stored together or not at all, so no image ever has a partial set of faces or a missing copy.
+- **FR-021**: An image MAY be staged (with its normalized bytes, source URL and page links) before its faces are computed, but it MUST NOT be marked as indexed until its complete set of faces is stored. Marking it indexed and storing its faces MUST happen together or not at all. Readers of the index (the search script) see only indexed images, so they never see an image with a partial set of faces or a missing copy.
 - **FR-022**: Only one full run MAY be active at a time. A run triggered while another is active MUST wait in the queue and start when the active run finishes.
-- **FR-022a**: Steps that do not collide MAY execute at the same time as each other. This covers steps inside a run (for example the two sites, or downloading and face detection) and a single step the operator re-runs on its own. Two steps collide when they would send requests to the same host or write the same records. Colliding steps MUST NOT execute at the same time, and per-host rate limits MUST hold across everything executing at once.
+- **FR-022a**: Steps that do not collide MAY execute at the same time as each other. This covers steps inside a run (for example the two sites, or downloading and face detection) and a single step the operator re-runs on its own. Two steps collide when they would write the same records, or when they are the same site's network steps. Colliding steps MUST NOT execute at the same time. Requests from different steps to a shared host are paced by that host's single, shared rate limit (FR-003).
 - **FR-022b**: Repeating a step (a retry or a manual re-run) MUST NOT create duplicate image, face or page-link records.
 
 **Reliability and observability**
 
-- **FR-023**: A failure on one page or one image MUST NOT fail the whole run. The failed item is skipped, and is retried on a later run.
-- **FR-024**: Every skipped or failed item MUST be logged in the run's task logs with its URL and the reason.
+- **FR-023**: A failure on one page or one image MUST NOT fail the whole run. The failed item is skipped, and is retried on a later run. Infrastructure failures (the database or the face model being unavailable) are not item failures: they MUST fail the step, so the orchestrator retries it.
+- **FR-024**: Every skipped or failed item MUST be logged in the run's task logs with its URL and the reason. That includes normal skips (format, size), not only errors.
 - **FR-025**: Each run MUST log a summary: pages crawled, images found, images skipped (by reason), images newly indexed, images reused, faces stored, and failures.
 
 **Operation and documentation**
@@ -171,7 +176,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 ### Key Entities
 
 - **Page**: a crawled web page on CNN or People. Attributes: normalized URL, site, crawl depth at which it was found, last crawled time. A page shows many images.
-- **Image**: one unique picture, identified by its content fingerprint. Attributes: normalized JPEG bytes (for images with faces), normalized dimensions, original dimensions and format, status (indexed with faces, indexed with no faces, or skipped with a reason), indexed time. An image has one or more source URLs, appears on one or more pages, and has zero or more faces.
+- **Image**: one unique picture, identified by its content fingerprint. Attributes: normalized JPEG bytes (for images with faces), normalized dimensions, original dimensions and format, status (staged, indexed with faces, indexed with no faces, or skipped with a reason), indexed time. An image has one or more source URLs, appears on one or more pages, and has zero or more faces.
 - **Image source URL**: an address from which an image's content was downloaded. Several URLs can resolve to the same image. This is what lets a re-run skip a known URL without downloading it.
 - **Page–Image link**: records that an image appears on a page, and whether it is that page's declared lead image. The relationship is many-to-many. This is what lets search return "all pages", and also lets it tell the page about a person apart from pages that only show their thumbnail.
 - **Face**: one detected face in one image. Attributes: bounding box (in normalized-image coordinates), detection confidence, embedding. It belongs to exactly one image.

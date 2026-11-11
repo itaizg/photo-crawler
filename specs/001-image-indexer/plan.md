@@ -14,7 +14,7 @@ The DAG has three stages:
 2. **Download**: one task per site, which de-duplicates, downloads, converts, and stages each image as `pending`.
 3. **Detect**: parallel batches of pending images, which detect faces, embed them, and flip each image to `indexed`.
 
-Airflow pools prevent collisions: one HTTP slot per site and N slots for CPU-heavy face work. Business logic lives in a plain `face_index` package that does not import Airflow, so the future search script can reuse its schema and model profile.
+Airflow pools prevent collisions: one HTTP slot per site and N slots for CPU-heavy face work. A small Postgres-backed pacer shares each host's rate across tasks, and every request, redirect hops included, is checked for scope, robots.txt and non-public addresses before it is sent. Business logic lives in a plain `face_index` package that does not import Airflow, so the future search script can reuse its schema and model profile.
 
 ## Technical Context
 
@@ -37,9 +37,10 @@ Airflow pools prevent collisions: one HTTP slot per site and N slots for CPU-hea
 **Performance Goals**: A default run (depth 1, cap 50, 1 req/s per page host, 5 req/s per image host) on both sites from an empty index completes in ≤ 30 min on a typical laptop (SC-011). [research R8](research.md#r8-run-time-budget-sc-011) has the budget.
 
 **Constraints**:
-- Polite crawling: robots.txt, per-host pacing, an identifying User-Agent.
+- Polite and safe crawling: robots.txt, per-host pacing shared across tasks, an identifying User-Agent, redirects checked hop by hop, and no requests to non-public addresses.
+- Bounded resources for each image: 20 MB download limit, 50-megapixel decode limit.
 - One full run at a time.
-- Atomic writes: an image is stored together with its faces, or not at all.
+- Atomic indexing: an image becomes `indexed` in the same transaction as its faces. Staged (`pending`) images are invisible to search.
 - Model weights are baked into the image, so runs never download models.
 - Each face worker uses about 1.5 GB of RAM, so the default face concurrency is 2.
 
@@ -95,7 +96,7 @@ specs/001-image-indexer/
 pyproject.toml                 # uv project, ruff + ty + pytest config
 uv.lock
 docker-compose.yml             # postgres(pgvector), airflow-init, api-server, scheduler, dag-processor
-.env.example                   # documented variables; real .env is git-ignored
+.env.example                   # optional overrides (Compose has local-only defaults); real .env is git-ignored
 docker/
 ├── airflow.Dockerfile         # apache/airflow:<3.x>-python3.13 + project deps + baked model weights
 ├── postgres-init.sql          # creates `airflow` and `faces` databases, enables `vector` in `faces`
@@ -108,8 +109,9 @@ src/face_index/                # core library, no Airflow import
 ├── config.py                  # defaults: sites, depth, cap, rates, MAX_SIDE, MIN_SIDE, JPEG quality, batch size
 ├── model_profile.py           # detector, model, dims, metric, alignment, normalization, min confidence
 ├── urls.py                    # page/image URL normalization, site scope
-├── http.py                    # Fetcher protocol + httpx implementation, per-(host, kind) pacer, robots cache
-├── extract.py                 # HTML → links, image refs (src/srcset/lazy attrs/picture), lead image (og:image)
+├── http.py                    # Fetcher protocol + httpx implementation: manual redirects, address safety, size limit, robots cache
+├── pacing.py                  # Pacer protocol: in-memory (tests) and Postgres host_pace (runtime)
+├── extract.py                 # HTML → links, image refs (src/srcset/lazy attrs/picture/inline CSS/noscript), lead image (og:image)
 ├── crawl.py                   # breadth-first crawl with depth, page cap, scope, robots
 ├── normalize.py               # bytes → NormalizedImage (JPEG ≤1024) or SkipReason
 ├── faces.py                   # FaceEmbedder protocol, DeepFaceEmbedder, result narrowing/filtering

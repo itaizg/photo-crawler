@@ -11,12 +11,10 @@ This is a run guide and the end-to-end validation for [spec.md](spec.md). Schema
 ## 1. Start the stack (SC-001)
 
 ```bash
-cp .env.example .env        # set POSTGRES_PASSWORD; optionally FACE_WORKERS
-```
-
-```bash
 docker compose up -d --build
 ```
+
+No `.env` file is needed. `docker-compose.yml` gives every variable a local-only default (`${POSTGRES_PASSWORD:-faces-local}`, `${FACE_WORKERS:-2}`, …), and Postgres is published only on `127.0.0.1`. To override any of them, `cp .env.example .env` and edit it. The real `.env` is git-ignored, as the constitution requires for secrets.
 
 **Expected**:
 - `docker compose ps` shows `postgres`, `airflow-apiserver`, `airflow-scheduler` and `airflow-dag-processor` as healthy. `airflow-init` exited with code 0.
@@ -37,8 +35,10 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer
 ## 3. Check the stored data (SC-003, SC-005, SC-006)
 
 ```bash
-docker compose exec postgres psql -U "$POSTGRES_USER" -d faces
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces'
 ```
+
+The single quotes matter: `$POSTGRES_USER` is expanded *inside* the container, where Compose has set it, not in your shell, where it is usually unset.
 
 | Check | SQL | Expected |
 |---|---|---|
@@ -47,7 +47,8 @@ docker compose exec postgres psql -U "$POSTGRES_USER" -d faces
 | No faces left on non-indexed images | `SELECT count(*) FROM face f JOIN image i ON i.id=f.image_id WHERE i.status<>'indexed';` | `0` |
 | Images shared across pages | `SELECT image_id, count(*) FROM page_image GROUP BY 1 HAVING count(*) > 1 LIMIT 5;` | At least one row (site logos and recirculation thumbnails) |
 | Lead marks | `SELECT count(*) FROM page_image WHERE is_lead;` | Close to the number of pages with an `og:image` |
-| Same model | `SELECT key, dimensions FROM model_profile;` | One row: `retinaface+Facenet512+cosine+align+base`, `512` |
+| Same model | `SELECT key, dimensions FROM model_profile;` | One row: `retinaface+Facenet512+cosine+align+base@deepface<maj.min>/tf<maj.min>`, `512` |
+| Dimensions kept for analyzed images | `SELECT count(*) FROM image WHERE status IN ('indexed','no_faces') AND (width IS NULL OR indexed_at IS NULL);` | `0` |
 
 ## 4. Spot-check faces (SC-004)
 
@@ -80,7 +81,7 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer --conf 
 
 ## 7. Failure isolation (US4, SC-008)
 
-This is covered by automated tests that inject a 500 response, a timeout, a corrupt image and a robots.txt network error into a fake HTTP transport. Each test asserts that the run summary counts the failure, the log names the URL, and every other item is indexed.
+This is covered by automated tests that inject a 500 response, a timeout, a corrupt image, an oversized download, a redirect to a private address, and a robots.txt network error into a fake HTTP transport. Each test asserts that the run summary counts the failure, the log names the URL, and every other item is indexed. A separate test makes the store raise a connection error and asserts that the task *fails* (so Airflow retries it) instead of counting item failures.
 
 ## Automated tests
 
@@ -100,9 +101,9 @@ Each assignment requirement has at least one outcome test (constitution IV):
 
 | Assignment requirement | Test asserts |
 |---|---|
-| 1. Scrape images from the site | Crawling fixture HTML yields the expected image refs (src, srcset largest, lazy attributes, `og:image` lead) and respects depth, cap, scope and robots |
-| 2. Single format, fixed max size | Every fixture image (PNG RGBA, GIF, WebP, large JPEG, EXIF-rotated) becomes RGB JPEG ≤ 1024 px with no upscaling; SVG and tiny images are skipped with a reason |
+| 1. Scrape images from the site | Crawling fixture HTML yields the expected image refs (src, largest srcset, lazy attributes, inline `background-image`, `<noscript>`, `og:image` lead) and respects depth, cap, scope, robots, redirect checks and the non-public-address block. Tracking parameters are dropped, while content parameters are kept |
+| 2. Single format, fixed max size | Every fixture image (PNG RGBA, GIF, WebP, large JPEG, EXIF-rotated) becomes RGB JPEG ≤ 1024 px with no upscaling. SVG, tiny and decompression-bomb images are skipped with a logged reason; corrupt bytes are a retryable failure |
 | 3. Detect and embed all faces | `FakeEmbedder` returning 3 faces → 3 face rows; DeepFace's whole-image fallback (confidence 0) → 0 faces; 511-d vectors are rejected |
-| 4. Store metadata, boxes, embeddings | Loopback pgvector: atomic commit (a failure inside the transaction leaves no faces), URL and fingerprint reuse, no duplicates after two runs, lead mark moved, HNSW cosine query returns the inserted face |
-| Rate limits | The pacer, with a fake clock, never allows more than N starts in any 1-second window per `(host, kind)` |
-| DAG | Imports cleanly; param schema rejects `depth=-1`; tasks use the expected pools; `max_active_runs == 1` |
+| 4. Store metadata, boxes, embeddings | Loopback pgvector: atomic commit (a failure inside the transaction leaves no faces and the image `pending`); the `no_faces` transition succeeds and keeps the dimensions; URL and fingerprint reuse; a lost insert race still links to the winner's ID; no duplicates after two runs; the lead mark is moved or cleared; `last_seen_at`, `depth` and `indexed_at` are refreshed; schema checks reject half-set dimensions; the HNSW cosine query returns the inserted face |
+| Rate limits | The in-memory pacer, with a fake clock, never allows more than N starts in any 1-second window per `(host, kind)`. The Postgres pacer, with two concurrent callers on one host, reserves non-overlapping slots |
+| DAG | Imports cleanly; param schema rejects `depth=-1` and `depth=11`; tasks use the expected pools; `max_active_runs == 1` |

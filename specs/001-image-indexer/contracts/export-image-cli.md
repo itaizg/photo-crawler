@@ -19,7 +19,8 @@ docker compose exec airflow-scheduler \
 
 | Case | Exit code | Output |
 |---|---|---|
-| Found, status `indexed` or `pending` | 0 | File written; stderr prints `wrote <path> (<bytes> B, <w>x<h>, <n> faces)` |
+| Found, status `indexed` | 0 | File written; stderr prints `wrote <path> (<bytes> B, <w>x<h>, <n> faces)` |
+| Found, status `pending` | 3 | `image <id> is not indexed yet (status=pending)`. Staged images aren't part of the index (FR-021) |
 | Found, status `no_faces` or `skipped` | 3 | `image <id> has no stored bytes (status=<status>)` |
 | Not found | 2 | `no image with <selector>` |
 | Bad arguments | 64 | argparse usage |

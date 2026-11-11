@@ -9,7 +9,7 @@ DO $$ BEGIN
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 DO $$ BEGIN
-    CREATE TYPE skip_reason AS ENUM ('unsupported_format', 'undecodable', 'too_small');
+    CREATE TYPE skip_reason AS ENUM ('unsupported_format', 'too_small', 'too_large');
 EXCEPTION WHEN duplicate_object THEN NULL; END $$;
 
 CREATE TABLE IF NOT EXISTS model_profile (
@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS model_profile (
     normalization       text        NOT NULL,
     min_face_confidence real        NOT NULL,
     deepface_version    text        NOT NULL,
+    tensorflow_version  text        NOT NULL,
     created_at          timestamptz NOT NULL DEFAULT now()
 );
 
@@ -30,7 +31,7 @@ CREATE TABLE IF NOT EXISTS page (
     id               bigserial   PRIMARY KEY,
     url              text        NOT NULL UNIQUE,
     site             text        NOT NULL CHECK (site IN ('cnn', 'people')),
-    depth            smallint    NOT NULL CHECK (depth >= 0),
+    depth            smallint    NOT NULL CHECK (depth BETWEEN 0 AND 10),
     first_crawled_at timestamptz NOT NULL DEFAULT now(),
     last_crawled_at  timestamptz NOT NULL DEFAULT now()
 );
@@ -50,8 +51,11 @@ CREATE TABLE IF NOT EXISTS image (
     indexed_at      timestamptz,
     CONSTRAINT skip_reason_iff_skipped CHECK ((status = 'skipped') = (skip_reason IS NOT NULL)),
     CONSTRAINT jpeg_iff_kept CHECK ((status IN ('pending', 'indexed')) = (jpeg IS NOT NULL)),
-    CONSTRAINT dims_iff_kept CHECK ((status IN ('pending', 'indexed')) = (width IS NOT NULL AND height IS NOT NULL)),
-    CONSTRAINT max_side CHECK (width IS NULL OR (width BETWEEN 1 AND 1024 AND height BETWEEN 1 AND 1024))
+    CONSTRAINT dims_pair CHECK ((width IS NULL) = (height IS NULL)),
+    CONSTRAINT original_dims_pair CHECK ((original_width IS NULL) = (original_height IS NULL)),
+    CONSTRAINT dims_iff_analyzed CHECK ((status IN ('pending', 'indexed', 'no_faces')) = (width IS NOT NULL)),
+    CONSTRAINT max_side CHECK (width IS NULL OR (width BETWEEN 1 AND 1024 AND height BETWEEN 1 AND 1024)),
+    CONSTRAINT indexed_at_iff_done CHECK ((status IN ('indexed', 'no_faces')) = (indexed_at IS NOT NULL))
 );
 
 CREATE INDEX IF NOT EXISTS image_pending_idx ON image (id) WHERE status = 'pending';
@@ -89,3 +93,11 @@ CREATE TABLE IF NOT EXISTS face (
 );
 
 CREATE INDEX IF NOT EXISTS face_embedding_hnsw ON face USING hnsw (embedding vector_cosine_ops);
+
+-- Shared per-host request pacing (research R4). Operational state, not index data.
+CREATE TABLE IF NOT EXISTS host_pace (
+    host      text        NOT NULL,
+    kind      text        NOT NULL CHECK (kind IN ('page', 'image')),
+    next_slot timestamptz NOT NULL,
+    PRIMARY KEY (host, kind)
+);

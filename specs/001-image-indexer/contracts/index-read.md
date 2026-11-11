@@ -4,7 +4,7 @@ This is what the pipeline guarantees to the search script (feature 002). It is w
 
 ## Guarantees
 
-1. **Same model**: a `model_profile` row exists whose `key` equals `face_index.model_profile.KEY`. Every `face.model_profile_id` points to it. The search script imports the same module, embeds its query with the same settings, and must refuse to run if the row is missing.
+1. **Same model**: a `model_profile` row exists whose `key` equals `face_index.model_profile.KEY`. The key includes the deepface and tensorflow major.minor versions. The search script imports the same module, embeds its query with the same settings, and must refuse to run if the row is missing. It must filter faces by that row's `id` (`f.model_profile_id = %(profile_id)s`), so embeddings made by a different runtime, left over from before an upgrade, are never compared with its query.
 2. **Visibility**: only faces whose image has `status = 'indexed'` are complete. `pending` images can exist mid-run and must be excluded. Faces exist only for `indexed` images, so joining through `image` with that filter is enough.
 3. **Distance**: cosine. pgvector's `<=>` operator returns the cosine *distance* (`1 − cosine similarity`), which is DeepFace's `cosine` metric directly. The DeepFace threshold for Facenet512 + cosine (0.30) applies unchanged.
 4. **Pages**: every page that shows an image is reachable through `page_image`. `is_lead` marks the page whose declared lead image it is.
@@ -13,7 +13,7 @@ This is what the pipeline guarantees to the search script (feature 002). It is w
 ## Reference query: all pages with a matching face
 
 ```sql
--- %(q)s: query embedding (vector(512)); %(max_dist)s: e.g. 0.30
+-- %(q)s: query embedding (vector(512)); %(max_dist)s: e.g. 0.30; %(profile_id)s: model_profile.id for KEY
 SELECT p.url,
        min(f.embedding <=> %(q)s)        AS best_distance,
        bool_or(pi.is_lead)               AS is_lead_on_some_match,
@@ -22,7 +22,8 @@ FROM face f
 JOIN image i       ON i.id = f.image_id AND i.status = 'indexed'
 JOIN page_image pi ON pi.image_id = i.id
 JOIN page p        ON p.id = pi.page_id
-WHERE f.embedding <=> %(q)s < %(max_dist)s
+WHERE f.model_profile_id = %(profile_id)s
+  AND f.embedding <=> %(q)s < %(max_dist)s
 GROUP BY p.url
 ORDER BY best_distance;
 ```
