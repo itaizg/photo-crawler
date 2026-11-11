@@ -37,7 +37,7 @@ build-backend = "hatchling.build"
 packages = ["src/face_index"]
 
 [tool.uv]
-default-groups = ["dev", "dag"]
+default-groups = ["dev"]  # add `--group dag` for the DAG tests
 
 [tool.ruff]
 line-length = 100
