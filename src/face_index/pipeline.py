@@ -59,10 +59,10 @@ class RunParams:
             raise ValueError(f"depth must be between 0 and {config.MAX_DEPTH}")
         if self.page_cap is not None and self.page_cap < 1:
             raise ValueError("page_cap must be at least 1 or None")
-        if not 0 < self.page_rate <= config.MAX_PAGE_RATE:
-            raise ValueError(f"page_rate must be in (0, {config.MAX_PAGE_RATE}]")
-        if not 0 < self.image_rate <= config.MAX_IMAGE_RATE:
-            raise ValueError(f"image_rate must be in (0, {config.MAX_IMAGE_RATE}]")
+        if not config.MIN_RATE <= self.page_rate <= config.MAX_PAGE_RATE:
+            raise ValueError(f"page_rate must be in [{config.MIN_RATE}, {config.MAX_PAGE_RATE}]")
+        if not config.MIN_RATE <= self.image_rate <= config.MAX_IMAGE_RATE:
+            raise ValueError(f"image_rate must be in [{config.MIN_RATE}, {config.MAX_IMAGE_RATE}]")
 
 
 @dataclass(frozen=True, slots=True)
@@ -129,36 +129,59 @@ def download(
     result = CrawlResult.from_json(dict(crawl_payload))
     summary = Summary()
     summary.merge(result.summary)
+    failed: set[str] = set()  # image URLs that already failed in this task: not asked again
     for page in result.pages:
         try:
             page_id = deps.store.upsert_page(page.url, site.name, page.depth)
-            deps.store.reset_lead(page_id)
+            # A new lead replaces the old one atomically when it is linked (store._link), so the
+            # old lead is cleared up front only when the page no longer declares one.
+            if page.lead_ref is None:
+                deps.store.reset_lead(page_id)
         except InfrastructureError:
             raise
         except Exception as exc:  # this page cannot be recorded; keep the run going
             log.warning("page failed url=%s stage=download reason=%s", page.url, exc)
             summary.add("failures.download")
             continue
+        lead_linked = False
         for ref in page.image_refs:
-            _index_ref(ref, page, page_id, deps, run_id, summary)
+            linked = _index_ref(ref, page, page_id, deps, run_id, summary, failed)
+            lead_linked |= linked and ref == page.lead_ref
+        if page.lead_ref is not None and not lead_linked:
+            try:  # the declared lead could not be stored this time: do not keep a stale lead
+                deps.store.reset_lead(page_id)
+            except InfrastructureError:
+                raise
+            except Exception as exc:
+                log.warning("page failed url=%s stage=lead reason=%s", page.url, exc)
     return summary.to_json()
 
 
 def _index_ref(
-    ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: str, summary: Summary
-) -> None:
+    ref: str,
+    page: CrawledPage,
+    page_id: int,
+    deps: Deps,
+    run_id: str,
+    summary: Summary,
+    failed: set[str],
+) -> bool:
+    """Index one image reference; returns True when the page was linked to an image."""
     store = deps.store
     is_lead = ref == page.lead_ref
+    if ref in failed:
+        summary.add("skipped.failed_earlier_in_run")
+        return False
     try:
         known = store.find_image_by_url(ref)
         if known is not None:
             store.link(page_id, known, is_lead)
             summary.add("reused_by_url")
-            return
+            return True
         if store.is_abandoned(ref, "image", config.MAX_ATTEMPTS):
             log.info("link abandoned url=%s kind=image attempts=%d", ref, config.MAX_ATTEMPTS)
             summary.add("abandoned.image")
-            return
+            return False
         response = deps.fetcher.get_image(ref)
         summary.add("downloaded")
         sha256 = hashlib.sha256(response.body).digest()
@@ -167,7 +190,7 @@ def _index_ref(
             store.add_url_and_link(same_content, ref, page_id, is_lead)
             store.record_success(ref, "image")
             summary.add("reused_by_fingerprint")
-            return
+            return True
         normalized = deps.normalizer.normalize(response.body, response.content_type)
         _, created = store.stage_image(normalized, ref, page_id, is_lead)
         store.record_success(ref, "image")
@@ -178,15 +201,19 @@ def _index_ref(
             summary.add("staged")
         else:
             summary.add("reused_by_fingerprint")
+        return True
     except InfrastructureError:
         raise
     except Disallowed as exc:
         log.info("image skipped url=%s reason=%s", ref, exc.reason)
         summary.add(f"skipped.{exc.reason}")
     except ItemError as exc:
+        failed.add(ref)
         _image_failed(ref, exc.reason, deps, run_id, summary)
     except Exception as exc:  # unexpected per-item error: count it, keep the run going
+        failed.add(ref)
         _image_failed(ref, f"unexpected {type(exc).__name__}: {exc}", deps, run_id, summary)
+    return False
 
 
 def _image_failed(ref: str, reason: str, deps: Deps, run_id: str, summary: Summary) -> None:
@@ -197,6 +224,10 @@ def _image_failed(ref: str, reason: str, deps: Deps, run_id: str, summary: Summa
 
 def plan_batches(deps: Deps) -> list[list[int]]:
     batches = deps.store.pending_batches(config.DETECT_BATCH_SIZE, config.MAX_ATTEMPTS)
+    if len(batches) > config.MAX_DETECT_BATCHES:
+        later = sum(len(b) for b in batches[config.MAX_DETECT_BATCHES :])
+        log.info("detection deferred images=%d (left for the next run)", later)
+        batches = batches[: config.MAX_DETECT_BATCHES]
     abandoned = deps.store.abandoned_pending(config.MAX_ATTEMPTS)
     if abandoned:
         log.info("detection abandoned images=%d attempts=%d", abandoned, config.MAX_ATTEMPTS)
@@ -220,8 +251,14 @@ def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict
             deps.store.record_detect_failure(image_id, run_id)
             continue
         if faces is None:
-            summary.add("detect.already_done")
-        elif faces == 0:
+            # Already stored, by an earlier try of this task whose result Airflow lost: count
+            # what it stored so the run summary stays complete.
+            faces = deps.store.stored_faces(image_id)
+            if faces is None:  # locked by another worker, which counts it
+                summary.add("detect.already_done")
+                continue
+            summary.add("detect.recovered")
+        if faces == 0:
             summary.add("images_no_faces")
         else:
             summary.add("images_indexed")

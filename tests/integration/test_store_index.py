@@ -271,3 +271,10 @@ def test_detect_attempts_cap(store: PostgresIndexStore) -> None:
         store.record_detect_failure(image_id, run)
     assert store.pending_batches(50, 3) == []
     assert store.abandoned_pending(3) == 1
+
+
+def test_stored_faces_reports_only_finished_images(store: PostgresIndexStore) -> None:
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    assert store.stored_faces(image_id) is None  # still pending
+    store.process_pending(image_id, lambda p: [face(1), face(30)], profile_id=1)
+    assert store.stored_faces(image_id) == 2

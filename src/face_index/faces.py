@@ -85,6 +85,29 @@ class DeepFaceEmbedder:
             )
         except ValueError as exc:
             raise ItemError(f"detection failed: {exc}") from exc
+        except Exception as exc:
+            if _is_outage(exc):  # the runtime, not this image: fail the task so Airflow retries
+                raise InfrastructureError(f"face model failed: {type(exc).__name__}") from exc
+            raise ItemError(f"detection failed: {type(exc).__name__}: {exc}") from exc
         height, width = bgr.shape[:2]
         entries = [entry for entry in raw if isinstance(entry, dict)]  # one image → flat list
         return narrow_results(entries, width, height)
+
+
+# TensorFlow errors that describe the runtime (memory, device, cancelled work), not one image.
+_TF_OUTAGES = frozenset(
+    {
+        "ResourceExhaustedError",
+        "InternalError",
+        "UnavailableError",
+        "AbortedError",
+        "CancelledError",
+    }
+)
+
+
+def _is_outage(exc: BaseException) -> bool:
+    if isinstance(exc, MemoryError):
+        return True
+    cls = type(exc)
+    return cls.__module__.startswith("tensorflow") and cls.__name__ in _TF_OUTAGES

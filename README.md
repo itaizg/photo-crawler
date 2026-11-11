@@ -31,8 +31,8 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 |---|---|---|
 | `depth` | 1 | Link hops from each home page (0–10); 0 = home pages only |
 | `page_cap` | 50 | Maximum pages per site; `null` = no cap |
-| `page_rate` | 1.0 | Page requests per second, per host (≤ 10) |
-| `image_rate` | 5.0 | Image requests per second, per host (≤ 20) |
+| `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
+| `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
 
 The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, and links abandoned.
 

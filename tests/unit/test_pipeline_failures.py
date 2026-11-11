@@ -95,6 +95,9 @@ class MemoryStore:
     ) -> int | None:
         return len(detect(PendingImage(image_id, images.photo(64, 64), 64, 64)))
 
+    def stored_faces(self, image_id: int) -> int | None:
+        return None
+
 
 def deps(
     store: MemoryStore, routes: dict[str, Reply], embedder: FaceEmbedder | None = None
@@ -219,3 +222,52 @@ def test_summary_merges_and_logs_every_counter(caplog: pytest.LogCaptureFixture)
     ):
         assert label in caplog.text
     assert "    2" in caplog.text or "2" in caplog.text
+
+
+def test_an_image_that_failed_is_not_requested_again_in_the_same_task() -> None:
+    store = MemoryStore()
+    broken = "https://img.test/500.jpg"
+    pages = [CrawledPage(f"https://news.test/{i}", 1, (broken,), None) for i in range(3)]
+    payload = CrawlResult(site="cnn", pages=pages).to_json()
+    the_deps = deps(store, ROUTES)
+    counts = pipeline.download(SITE, payload, the_deps, "run-1")
+    assert counts["failures.download"] == 1
+    assert counts["skipped.failed_earlier_in_run"] == 2
+    assert len(store.failures) == 1
+
+
+def test_detection_batches_per_run_stay_under_the_mapping_limit() -> None:
+    class Backlog(MemoryStore):
+        def pending_batches(self, batch_size: int, max_attempts: int) -> list[list[int]]:
+            return [[i] for i in range(pipeline.config.MAX_DETECT_BATCHES + 5)]
+
+        def abandoned_pending(self, max_attempts: int) -> int:
+            return 0
+
+    batches = pipeline.plan_batches(deps(Backlog(), {}))
+    assert len(batches) == pipeline.config.MAX_DETECT_BATCHES
+
+
+def test_a_redelivered_detection_recovers_its_counts() -> None:
+    class AlreadyDone(MemoryStore):
+        def process_pending(
+            self,
+            image_id: int,
+            detect: Callable[[PendingImage], list[DetectedFace]],
+            profile_id: int,
+        ) -> int | None:
+            return None
+
+        def stored_faces(self, image_id: int) -> int | None:
+            return 3
+
+    counts = pipeline.detect([1], 1, deps(AlreadyDone(), {}), "run-1")
+    assert counts == {"detect.recovered": 1, "faces_stored": 3, "images_indexed": 1}
+
+
+@pytest.mark.parametrize("rate", [0.0, 0.01, 1e-9])
+def test_rates_below_the_floor_are_rejected(rate: float) -> None:
+    with pytest.raises(ValueError, match="page_rate"):
+        pipeline.RunParams.from_mapping({"page_rate": rate})
+    with pytest.raises(ValueError, match="image_rate"):
+        pipeline.RunParams.from_mapping({"image_rate": rate})

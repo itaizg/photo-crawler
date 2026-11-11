@@ -305,6 +305,17 @@ class PostgresIndexStore:
                 )
             return len(faces)
 
+    def stored_faces(self, image_id: int) -> int | None:
+        with self._guard() as conn:
+            row = conn.execute(
+                "SELECT i.status, (SELECT count(*) FROM face f WHERE f.image_id = i.id) "
+                "FROM image i WHERE i.id = %s",
+                (image_id,),
+            ).fetchone()
+        if row is None or row[0] not in ("indexed", "no_faces"):
+            return None
+        return int(row[1])
+
     # -- attempt cap ------------------------------------------------------------------------
 
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool:

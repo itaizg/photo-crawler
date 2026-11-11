@@ -2,6 +2,7 @@
 
 import pytest
 
+from face_index import faces
 from face_index.errors import ItemError
 from face_index.faces import narrow_results
 
@@ -51,3 +52,14 @@ def test_embedding_is_a_float_tuple() -> None:
     (face,) = narrow_results([entry(1, 1)], 400, 300)
     assert len(face.embedding) == 512
     assert isinstance(face.embedding[0], float)
+
+
+def test_runtime_outages_are_told_apart_from_bad_images() -> None:
+    resource_exhausted = type("ResourceExhaustedError", (Exception,), {})
+    resource_exhausted.__module__ = "tensorflow.python.framework.errors_impl"
+    invalid_argument = type("InvalidArgumentError", (Exception,), {})
+    invalid_argument.__module__ = "tensorflow.python.framework.errors_impl"
+    assert faces._is_outage(MemoryError())
+    assert faces._is_outage(resource_exhausted())
+    assert not faces._is_outage(invalid_argument())
+    assert not faces._is_outage(KeyError("x"))

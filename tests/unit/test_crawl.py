@@ -66,3 +66,67 @@ def test_result_round_trips_through_json() -> None:
     again = CrawlResult.from_json(result.to_json())
     assert again.pages == result.pages
     assert again.summary.counts == result.summary.counts
+
+
+def crawl_routes(
+    routes: dict[str, Reply], depth: int, cap: int | None
+) -> tuple[CrawlResult, MockSite]:
+    site = MockSite({"https://edition.cnn.com/robots.txt": robots_reply(), **routes})
+    fetcher = HttpFetcher(
+        pacer=RecordingPacer(),
+        resolver=FakeResolver(),
+        transport=site.transport(),
+        scope=lambda u: in_scope(u, SITE),
+    )
+    return crawl_site(SITE, fetcher, depth, cap), site
+
+
+def test_failed_and_non_html_requests_count_toward_the_cap() -> None:
+    result, site = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/pdf", "/gone", "/a"]),
+            "https://edition.cnn.com/pdf": Reply(200, b"%PDF", {"content-type": "application/pdf"}),
+            "https://edition.cnn.com/a": page([]),
+        },
+        depth=1,
+        cap=3,
+    )
+    assert site.requested("https://edition.cnn.com/gone")  # 404: a failed request
+    assert not site.requested("https://edition.cnn.com/a")  # cap of 3 requests reached
+    assert result.summary.counts["pages_left_by_cap.cnn"] == 1
+
+
+def test_malformed_urls_are_skipped_not_fatal() -> None:
+    result, _ = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(
+                ["https://edition.cnn.com:99999/x", "/a"],
+                ("https://m.cnn.com:bad/x.jpg", "/ok.jpg"),
+            ),
+            "https://edition.cnn.com/a": page([]),
+        },
+        depth=1,
+        cap=None,
+    )
+    assert [p.url for p in result.pages] == [
+        "https://edition.cnn.com/",
+        "https://edition.cnn.com/a",
+    ]
+    assert result.pages[0].image_refs == ("https://edition.cnn.com/ok.jpg",)
+
+
+def test_redirected_page_is_stored_once_under_its_final_url() -> None:
+    result, site = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/old", "/new"]),
+            "https://edition.cnn.com/old": Reply(301, headers={"location": "/new"}),
+            "https://edition.cnn.com/new": page([]),
+        },
+        depth=1,
+        cap=None,
+    )
+    assert [p.url for p in result.pages] == [
+        "https://edition.cnn.com/",
+        "https://edition.cnn.com/new",
+    ]
+    assert sum(u == "https://edition.cnn.com/new" for u, _ in site.requests) == 1

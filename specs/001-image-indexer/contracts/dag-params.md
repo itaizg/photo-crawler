@@ -6,10 +6,10 @@ These are set in the Airflow UI ("Trigger DAG w/ config") or from the CLI. Any v
 |---|---|---|---|---|
 | `depth` | `{"type": "integer", "minimum": 0, "maximum": 10}` | `1` | Link hops from each home page; 0 = home pages only. Capped at 10 (it matches the `page.depth` check, and depth 3 already reaches most of a news site) | FR-002, FR-005 |
 | `page_cap` | `{"type": ["integer", "null"], "minimum": 1}` | `50` | Maximum pages fetched successfully per site; `null` = no cap | FR-005a |
-| `page_rate` | `{"type": "number", "exclusiveMinimum": 0, "maximum": 10}` | `1.0` | Page requests per second, per host | FR-003 |
-| `image_rate` | `{"type": "number", "exclusiveMinimum": 0, "maximum": 20}` | `5.0` | Image requests per second, per host | FR-003 |
+| `page_rate` | `{"type": "number", "minimum": 0.1, "maximum": 10}` | `1.0` | Page requests per second, per host | FR-003 |
+| `image_rate` | `{"type": "number", "minimum": 0.1, "maximum": 20}` | `5.0` | Image requests per second, per host | FR-003 |
 
-The upper bounds on the rates are a safety guard against typos, such as `100` meant as `1.00`. They aren't tuning knobs.
+The upper bounds on the rates are a safety guard against typos, such as `100` meant as `1.00`. They aren't tuning knobs. The lower bound, one request every 10 seconds, keeps a tiny rate from reserving a host's shared slot far into the future, which would also slow later runs.
 
 ## DAG-level settings (not parameters)
 

@@ -32,14 +32,14 @@ PARAMS = {
     "page_rate": Param(
         config.DEFAULT_PAGE_RATE,
         type="number",
-        exclusiveMinimum=0,
+        minimum=config.MIN_RATE,
         maximum=config.MAX_PAGE_RATE,
         description="Page requests per second, per host.",
     ),
     "image_rate": Param(
         config.DEFAULT_IMAGE_RATE,
         type="number",
-        exclusiveMinimum=0,
+        minimum=config.MIN_RATE,
         maximum=config.MAX_IMAGE_RATE,
         description="Image requests per second, per host.",
     ),
