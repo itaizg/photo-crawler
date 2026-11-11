@@ -218,3 +218,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# photo-crawler
+.DS_Store
+.deepface/
+out/
+smoke-output/
+.specify/feature.json
+smoke-output.log
+tests/fixtures/images/*.jpg
