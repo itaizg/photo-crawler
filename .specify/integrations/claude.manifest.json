@@ -1,0 +1,25 @@
+{
+  "integration": "claude",
+  "version": "unknown",
+  "installed_at": "2026-11-10T19:18:42.964870+00:00",
+  "files": {
+    ".claude/skills/speckit-analyze/SKILL.md": "b62f769b7b5c552c8e4bde840b0579e46c5cf13f273b2b350f85e25e971d8c61",
+    ".claude/skills/speckit-clarify/SKILL.md": "d74bad307e0e8448f7da1a535ef333cdfb35670d19d9de4c7adf1bdb641ae5b2",
+    ".claude/skills/speckit-constitution/SKILL.md": "36a9e0e5d662889b9db9b0724eb910710452b5004452a6934649e10231319371",
+    ".claude/skills/speckit-implement/SKILL.md": "8c2e487f81afdd9c1ee48b977a291b8853a9ee80371363ff139708c66f17ddeb",
+    ".claude/skills/speckit-converge/SKILL.md": "5f0ba2a0aac35ce310b1cd77f57b4e46012ed6c642221738ba00ef56503b706b",
+    ".claude/skills/speckit-plan/SKILL.md": "47617bc28985784b1051b9bea8aeace2edff319a466c2f0a8f247e947a6d4c89",
+    ".claude/skills/speckit-checklist/SKILL.md": "24837b354fe58a326c193bbbed8213359943dca754d5c112d39a3b7a3da9de25",
+    ".claude/skills/speckit-specify/SKILL.md": "f9857c598d6c20b42c00d9fbb2169dcc400f614311ce686e3aff71d32357729b",
+    ".claude/skills/speckit-tasks/SKILL.md": "e9c64572da80d5420128609f06c3c01fda99a7b09172aa045888cc312b31db69",
+    ".claude/skills/speckit-taskstoissues/SKILL.md": "6fefd3246289f3c4bbab121a5bf42a4b50b77f05eb13b1460b34d7b792d06fd7",
+    ".claude/skills/team-discover/SKILL.md": "95a5edc6b517789a5c121346d609fde59a5ac013d9256e8a32989ff59eb82d9d",
+    ".claude/skills/team-repair/SKILL.md": "06ae35974440f7e6b530b1489e7475b3dd5d8f46ed290b277a9c7ce5ea46112c",
+    ".claude/skills/team-skills/SKILL.md": "823f2b166612da793999264a5e47beda96b319355e561758bcb0ff6f623b9489",
+    ".claude/skills/team-boot/SKILL.md": "f7c37703ffcc584969affb104d2ef50ef183b2da8d752dbb221756503056beb0",
+    ".claude/skills/team-curate/SKILL.md": "ae3d950b4893ba57835716a6154a1c5236fe8d708a76d008b9d40874da56b152",
+    ".claude/skills/speckit-agent-context-update/SKILL.md": "559eca8af6e7d32ea9a04b317ac19b3764a8bd39807d20dadefc610e8bbab20f",
+    ".claude/skills/team-evolve/SKILL.md": "8a4e9f26005b35431aa69d568668235d477622e30fba8966a635d48e268e1d9f",
+    ".claude/skills/team-verify/SKILL.md": "88240d977bdc7619cec1c760158f8532275914ac8e741a790506fca1e356237b"
+  }
+}
