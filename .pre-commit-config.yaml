@@ -1,0 +1,26 @@
+# Quality gates (constitution, "Quality Gates and Automation"). Revisions are pinned exactly.
+# Spec Kit, agent tooling and the mission docs are not project code; leave them byte-for-byte.
+exclude: ^(\.specify|\.claude|\.agents|docs)/
+repos:
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.17.4
+    hooks:
+      - id: ruff-check
+        args: [--fix]
+      - id: ruff-format
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: check-yaml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: check-added-large-files
+        args: [--maxkb=500]
+  - repo: local
+    hooks:
+      - id: ty
+        name: ty check
+        entry: uv run --locked ty check
+        language: system
+        pass_filenames: false
+        types_or: [python, pyi]

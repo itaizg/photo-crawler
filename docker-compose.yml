@@ -1,0 +1,122 @@
+# One command starts everything: `docker compose up -d --build` (FR-026, research R2).
+# No .env is required: every variable has a non-secret default. See .env.example to override.
+#
+# Database credentials: none. Postgres trusts connections because it is reachable only from this
+# Compose network and from 127.0.0.1 on the host, so no password is committed (constitution,
+# Project Constraints). Before exposing it anywhere else, set POSTGRES_PASSWORD in .env and add
+# it to the DSNs below.
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow.Dockerfile
+  image: photo-crawler-airflow:latest
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-faces}@postgres:5432/airflow
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Generated once by airflow-init into a private volume; never committed.
+    AIRFLOW__API_AUTH__JWT_SECRET_CMD: cat /opt/airflow/secrets/jwt_secret
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
+    DEEPFACE_HOME: /opt/deepface
+    TF_CPP_MIN_LOG_LEVEL: "2"
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - airflow-logs:/opt/airflow/logs
+    - airflow-secrets:/opt/airflow/secrets
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-depends
+    postgres:
+      condition: service_healthy
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-faces}
+      POSTGRES_DB: faces
+      POSTGRES_HOST_AUTH_METHOD: trust
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d faces"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        if [ ! -s /opt/airflow/secrets/jwt_secret ]; then
+          python -c "import secrets; print(secrets.token_urlsafe(48))" > /opt/airflow/secrets/jwt_secret
+          chmod 600 /opt/airflow/secrets/jwt_secret
+        fi
+        airflow db migrate
+        airflow pools set http_cnn 1 "one network step at a time for cnn"
+        airflow pools set http_people 1 "one network step at a time for people"
+        airflow pools set face_cpu "${FACE_WORKERS:-2}" "parallel face detection batches"
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+volumes:
+  postgres-data:
+  airflow-logs:
+  airflow-secrets:

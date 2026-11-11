@@ -50,6 +50,7 @@ CREATE TABLE IF NOT EXISTS image (
     height          integer,
     jpeg            bytea,
     detect_attempts smallint     NOT NULL DEFAULT 0 CHECK (detect_attempts BETWEEN 0 AND 3),
+    detect_last_run_id text,  -- run that last counted a detection failure (once per run, FR-023a)
     created_at      timestamptz  NOT NULL DEFAULT now(),
     indexed_at      timestamptz,
     CONSTRAINT skip_reason_iff_skipped CHECK ((status = 'skipped') = (skip_reason IS NOT NULL)),

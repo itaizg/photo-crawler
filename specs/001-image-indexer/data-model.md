@@ -52,6 +52,7 @@ It is upserted by `init_schema`. The search script reads the row for its own `ke
 | `jpeg` | bytea, null | Normalized JPEG bytes; non-null **iff** status ∈ {pending, indexed} (clarification Q3) |
 | `created_at` | timestamptz | |
 | `detect_attempts` | smallint, default 0 | Failed detection attempts, 0–3. `plan_batches` takes only `pending` rows with `detect_attempts < 3` (FR-023a). A row that reaches 3 stays `pending` (invisible to search) and is logged as abandoned |
+| `detect_last_run_id` | text, null | Airflow run that last counted a detection failure, so a task retry in the same run doesn't count twice |
 | `indexed_at` | timestamptz, null | Set in the same transaction that makes the status `indexed` or `no_faces`; non-null **iff** status ∈ {indexed, no_faces} |
 
 Check constraints enforce the "iff" rules, the both-or-neither rule for each dimension pair, and the 1–1024 bound on each side. That makes SC-003 a database invariant, not just a test.
