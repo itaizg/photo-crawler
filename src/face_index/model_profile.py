@@ -50,3 +50,7 @@ def current_profile() -> ProfileRecord:
         deepface_version=deepface_version,
         tensorflow_version=tensorflow_version,
     )
+
+
+# The key for the installed versions; the search script selects its profile row by it.
+KEY = current_profile().key

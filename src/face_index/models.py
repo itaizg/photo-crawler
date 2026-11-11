@@ -57,6 +57,11 @@ class Skipped:
     original_width: int | None = None
     original_height: int | None = None
 
+    def __post_init__(self) -> None:
+        # Dimensions may be unknown only when the header could not be read for its size.
+        if self.reason == "too_small" and self.original_width is None:
+            raise ValueError("a too_small skip must carry its original dimensions")
+
 
 @dataclass(frozen=True, slots=True)
 class Box:

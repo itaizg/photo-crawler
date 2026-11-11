@@ -25,6 +25,9 @@ def normalize_page_url(url: str) -> str:
     """Canonical page URL: https, lowercase host, no fragment, no tracking params, sorted query."""
     parts = urlsplit(url.strip())
     scheme = parts.scheme.lower()
+    port = parts.port
+    if port == _DEFAULT_PORTS.get(scheme):
+        port = None  # an explicit default port must not survive the switch to https
     if scheme == "http":
         scheme = "https"
     host = (parts.hostname or "").lower()
@@ -35,7 +38,7 @@ def normalize_page_url(url: str) -> str:
         (k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True) if not _is_tracking(k)
     ]
     query = urlencode(sorted(query_items))
-    return urlunsplit((scheme, _netloc(host, parts.port, scheme), path, query, ""))
+    return urlunsplit((scheme, _netloc(host, port, scheme), path, query, ""))
 
 
 def normalize_image_url(url: str) -> str:

@@ -13,7 +13,7 @@ import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
 
-from face_index import attempts, model_profile
+from face_index import attempts, db, model_profile
 from face_index.errors import InfrastructureError, ItemError
 from face_index.models import (
     DetectedFace,
@@ -83,6 +83,18 @@ def schema_sql() -> str:
     return files("face_index").joinpath("schema.sql").read_text(encoding="utf-8")
 
 
+def _link(conn: psycopg.Connection, page_id: int, image_id: int, is_lead: bool) -> None:
+    """Link a page to an image. A new lead replaces the old one in the same transaction, so a
+    page is never left without its lead between two statements (FR-009a)."""
+    if is_lead:
+        conn.execute(
+            "UPDATE page_image SET is_lead = false "
+            "WHERE page_id = %s AND is_lead AND image_id <> %s",
+            (page_id, image_id),
+        )
+    conn.execute(_LINK, (page_id, image_id, is_lead))
+
+
 class PostgresIndexStore:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -92,7 +104,7 @@ class PostgresIndexStore:
 
     def _connection(self) -> psycopg.Connection:
         if self._conn is None or self._conn.closed:
-            conn = psycopg.connect(self._dsn, autocommit=True)
+            conn = db.connect(self._dsn)
             # Before init_schema creates the extension this fails; init_schema registers it then.
             with suppress(psycopg.ProgrammingError):
                 register_vector(conn)
@@ -149,14 +161,15 @@ class PostgresIndexStore:
             return int(row[0])
 
     def reset_lead(self, page_id: int) -> None:
+        """Clear the page's lead mark; used when this crawl linked no lead image."""
         with self._guard() as conn:
             conn.execute(
                 "UPDATE page_image SET is_lead = false WHERE page_id = %s AND is_lead", (page_id,)
             )
 
     def link(self, page_id: int, image_id: int, is_lead: bool) -> None:
-        with self._guard() as conn:
-            conn.execute(_LINK, (page_id, image_id, is_lead))
+        with self._guard() as conn, conn.transaction():
+            _link(conn, page_id, image_id, is_lead)
 
     # -- images -----------------------------------------------------------------------------
 
@@ -176,7 +189,7 @@ class PostgresIndexStore:
                 "INSERT INTO image_url (url, image_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (url, image_id),
             )
-            conn.execute(_LINK, (page_id, image_id, is_lead))
+            _link(conn, page_id, image_id, is_lead)
 
     def stage_image(
         self, image: NormalizedImage | Skipped, url: str, page_id: int, is_lead: bool
@@ -217,7 +230,7 @@ class PostgresIndexStore:
                 "INSERT INTO image_url (url, image_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
                 (url, image_id),
             )
-            conn.execute(_LINK, (page_id, image_id, is_lead))
+            _link(conn, page_id, image_id, is_lead)
             return image_id, created
 
     # -- detection --------------------------------------------------------------------------
@@ -253,7 +266,10 @@ class PostgresIndexStore:
             if row is None:
                 return None
             pending = PendingImage(int(row[0]), bytes(row[1]), int(row[2]), int(row[3]))
-            faces = detect(pending)
+            # Only faces at or above the profile's confidence floor are stored and searchable.
+            faces = [
+                f for f in detect(pending) if f.confidence >= model_profile.MIN_FACE_CONFIDENCE
+            ]
             for face in faces:
                 b = face.box
                 if b.x < 0 or b.y < 0 or b.x + b.w > pending.width or b.y + b.h > pending.height:

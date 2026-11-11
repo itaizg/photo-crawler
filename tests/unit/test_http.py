@@ -178,3 +178,58 @@ def test_too_many_redirects() -> None:
     fetcher, _, _ = make({**ROBOTS, HOME: loop})
     with pytest.raises(ItemError, match="redirects"):
         fetcher.get_page(HOME)
+
+
+def test_pages_need_a_scope() -> None:
+    site = MockSite({**ROBOTS, HOME: html_reply("ok")})
+    fetcher = HttpFetcher(
+        pacer=RecordingPacer(), resolver=FakeResolver(), transport=site.transport()
+    )
+    with pytest.raises(Disallowed):
+        fetcher.get_page(HOME)
+    assert not site.requested(HOME)
+
+
+def test_ipv6_host_header_is_bracketed() -> None:
+    url = "https://[2606:4700:4700::1111]/a.jpg"
+    fetcher, site, _ = make({})
+    with pytest.raises(ItemError):
+        fetcher.get_image(url)
+    _, request = site.requests[-1]
+    assert request.headers["host"] == "[2606:4700:4700::1111]"
+
+
+def test_each_host_gets_its_own_connection_pool_and_no_cookies_are_kept() -> None:
+    other = "https://cdn.cnn.com/b.jpg"
+    fetcher, site, _ = make(
+        {
+            **ROBOTS,
+            IMG: Reply(200, b"x", {"content-type": "image/jpeg", "set-cookie": "s=1; Path=/"}),
+            other: Reply(200, b"y", {"content-type": "image/jpeg"}),
+        }
+    )
+    fetcher.get_image(IMG)
+    fetcher.get_image(other)
+    _, request = next((u, r) for u, r in site.requests if u == other)
+    assert "cookie" not in request.headers  # both hosts resolve to the same IP
+    assert len(fetcher._clients) == 2
+
+
+def test_robots_rules_are_kept_per_scheme() -> None:
+    http_url = "http://edition.cnn.com/private/x"
+    fetcher, _, _ = make(
+        {
+            **ROBOTS,
+            "http://edition.cnn.com/robots.txt": robots_reply(),  # http allows everything
+            http_url: html_reply("open"),
+        }
+    )
+    with pytest.raises(Disallowed):
+        fetcher.get_page("https://edition.cnn.com/private/x")
+    assert fetcher.get_page(http_url).text == "open"
+
+
+def test_unknown_charset_falls_back_to_utf8() -> None:
+    reply = Reply(200, "café".encode(), {"content-type": "text/html; charset=x-made-up"})
+    fetcher, _, _ = make({**ROBOTS, HOME: reply})
+    assert fetcher.get_page(HOME).text == "café"

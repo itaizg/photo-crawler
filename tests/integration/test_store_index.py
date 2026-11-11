@@ -1,6 +1,7 @@
 """PostgresIndexStore against loopback pgvector (FR-009, FR-015 to FR-022b, research R11)."""
 
 import threading
+import time
 from typing import LiteralString
 
 import numpy as np
@@ -157,16 +158,60 @@ def test_lead_reset_moves_and_clears_mark(
     assert one(sql, "SELECT count(*) FROM page_image WHERE is_lead") == 0
 
 
+def test_new_lead_replaces_old_lead_without_a_reset(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    pid = page(store)
+    a, _ = store.stage_image(normalized(1), "https://img/a.jpg", pid, True)
+    b, _ = store.stage_image(normalized(2), "https://img/b.jpg", pid, True)
+    leads = [r[0] for r in sql.execute("SELECT image_id FROM page_image WHERE is_lead").fetchall()]
+    assert leads == [b]
+    store.link(pid, a, True)
+    leads = [r[0] for r in sql.execute("SELECT image_id FROM page_image WHERE is_lead").fetchall()]
+    assert leads == [a]
+
+
+def test_faces_below_the_confidence_floor_are_not_stored(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    weak = DetectedFace(Box(1, 1, 10, 10), 0.5, tuple([0.5] * 512))
+    assert store.process_pending(image_id, lambda p: [weak, face(30)], profile_id=1) == 1
+    assert one(sql, "SELECT min(confidence) FROM face") == pytest.approx(0.99)
+
+
+def test_size_skips_keep_original_dimensions(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    assert store is not None  # creates the schema
+    with pytest.raises(ValueError, match="original dimensions"):
+        Skipped(b"\x09" * 32, "too_small", "JPEG")
+    with pytest.raises(psycopg.errors.CheckViolation):
+        sql.execute(
+            "INSERT INTO image (sha256, status, skip_reason, original_format) "
+            "VALUES (%s, 'skipped', 'too_small', 'JPEG')",
+            (b"\x0a" * 32,),
+        )
+
+
+def blocked_on_lock(sql: psycopg.Connection) -> bool:
+    query = (
+        "SELECT count(*) FROM pg_stat_activity "
+        "WHERE datname = current_database() AND wait_event_type = 'Lock'"
+    )
+    return one(sql, query) != 0
+
+
 def test_concurrent_staging_of_same_content_links_to_winner(
-    db_dsn: str, store: PostgresIndexStore
+    db_dsn: str, store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     pid = page(store)
     other = PostgresIndexStore(db_dsn)
     blocker = psycopg.connect(db_dsn)
     # The blocker inserts the same sha256 inside an open transaction, so `store` must wait.
     blocker.execute(
-        "INSERT INTO image (sha256, status, skip_reason, original_format) "
-        "VALUES (%s, 'skipped', 'too_small', 'JPEG')",
+        "INSERT INTO image (sha256, status, skip_reason, original_format, original_width, "
+        "original_height) VALUES (%s, 'skipped', 'too_small', 'JPEG', 40, 40)",
         (normalized().sha256,),
     )
     results: list[tuple[int, bool]] = []
@@ -176,8 +221,12 @@ def test_concurrent_staging_of_same_content_links_to_winner(
         )
     )
     worker.start()
-    worker.join(timeout=0.5)
-    assert worker.is_alive()  # waiting on the unique index
+    # Wait until the worker's insert is actually blocked on a lock, not just slow to start.
+    deadline = time.monotonic() + 10
+    while not blocked_on_lock(sql) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert blocked_on_lock(sql), "the second insert never waited on the unique index"
+    assert worker.is_alive()
     blocker.commit()
     worker.join(timeout=5)
     blocker.close()

@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 
 import psycopg
 
+from face_index import db
 from face_index.errors import InfrastructureError
 from face_index.models import RequestKind
 
@@ -75,7 +76,7 @@ class PostgresPacer:
 
     def _connection(self) -> psycopg.Connection:
         if self._conn is None or self._conn.closed:
-            self._conn = psycopg.connect(self._dsn, autocommit=True)
+            self._conn = db.connect(self._dsn)
         return self._conn
 
     def reserve(self, host: str, kind: RequestKind) -> tuple[datetime, datetime]:

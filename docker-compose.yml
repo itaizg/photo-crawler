@@ -3,8 +3,10 @@
 #
 # Database credentials: none. Postgres trusts connections because it is reachable only from this
 # Compose network and from 127.0.0.1 on the host, so no password is committed (constitution,
-# Project Constraints). Before exposing it anywhere else, set POSTGRES_PASSWORD in .env and add
-# it to the DSNs below.
+# Project Constraints). Before exposing it anywhere else: remove POSTGRES_HOST_AUTH_METHOD, set
+# POSTGRES_PASSWORD in .env and add it to the DSNs below, and recreate the postgres-data volume
+# (the trust rule is written into pg_hba.conf when the volume is first created, so it stays until
+# the volume is rebuilt or pg_hba.conf is edited). Setting a password alone does not turn trust off.
 
 x-airflow-common: &airflow-common
   build:
@@ -39,7 +41,7 @@ services:
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-faces}
       POSTGRES_DB: faces
-      POSTGRES_HOST_AUTH_METHOD: trust
+      POSTGRES_HOST_AUTH_METHOD: trust  # local only; see the note at the top before exposing it
     ports:
       - "127.0.0.1:5432:5432"
     volumes:

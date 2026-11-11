@@ -47,7 +47,7 @@ It is upserted by `init_schema`. The search script reads the row for its own `ke
 | `status` | `image_status` enum | `pending` \| `indexed` \| `no_faces` \| `skipped` |
 | `skip_reason` | `skip_reason` enum, null | `unsupported_format` \| `too_small` \| `too_large`; non-null **iff** `status = skipped`. Decode errors are not skips: they are item failures, retried next run |
 | `original_format` | text, null | Pillow format name or content type (`JPEG`, `PNG`, `WEBP`, `GIF`, `image/svg+xml`, …) |
-| `original_width`, `original_height` | integer, null | Both set or both null; null only for `unsupported_format` |
+| `original_width`, `original_height` | integer, null | Both set or both null; null only for `unsupported_format`, and for `too_large` when the header is refused before its size is read |
 | `width`, `height` | integer, null | Normalized JPEG dimensions, each in 1–1024. Both set **iff** status ∈ {pending, indexed, no_faces}, otherwise both null. `no_faces` keeps them as metadata of what was analyzed |
 | `jpeg` | bytea, null | Normalized JPEG bytes; non-null **iff** status ∈ {pending, indexed} (clarification Q3) |
 | `created_at` | timestamptz | |

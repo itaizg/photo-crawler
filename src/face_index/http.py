@@ -3,9 +3,12 @@
 Every request, and every redirect hop, is checked *before* it is sent: scheme and port, crawl
 scope (pages only), robots.txt, address safety, and a pacer slot. The connection goes to the IP
 that passed the address check, with the original name in the ``Host`` header and as the TLS
-server name, so DNS cannot change between the check and the connect.
+server name, so DNS cannot change between the check and the connect. Each host name gets its own
+connection pool, so two names that share an IP never share a TLS connection, and no cookies are
+kept between requests.
 """
 
+import codecs
 import ipaddress
 import logging
 import socket
@@ -62,13 +65,11 @@ class HttpFetcher:
         self._resolver = resolver or SystemResolver()
         self._scope = scope
         self._max_download = max_download_bytes
-        self._robots: dict[str, _RobotsRule] = {}
-        self._client = httpx.Client(
-            transport=transport,
-            follow_redirects=False,
-            timeout=httpx.Timeout(config.READ_TIMEOUT, connect=config.CONNECT_TIMEOUT),
-            headers={"User-Agent": config.USER_AGENT},
-        )
+        self._transport = transport
+        self._robots: dict[tuple[str, str], _RobotsRule] = {}
+        # One client per (scheme, host name): connections are pooled by the pinned IP, so a
+        # shared pool would let a second name on the same IP reuse the first name's TLS session.
+        self._clients: dict[tuple[str, str], httpx.Client] = {}
 
     # -- public API -------------------------------------------------------------------------
 
@@ -81,8 +82,7 @@ class HttpFetcher:
             if "html" not in content_type.lower():
                 return PageResponse(final_url, content_type, None)
             body = self._read(response, config.MAX_PAGE_BYTES, final_url)
-            encoding = response.encoding or "utf-8"
-            return PageResponse(final_url, content_type, body.decode(encoding, errors="replace"))
+            return PageResponse(final_url, content_type, _decode(body, response.charset_encoding))
 
     def get_image(self, url: str) -> ImageResponse:
         final_url, response = self._open(url, "image", config.IMAGE_ACCEPT, check_scope=False)
@@ -93,7 +93,9 @@ class HttpFetcher:
             return ImageResponse(final_url, response.headers.get("content-type"), body)
 
     def close(self) -> None:
-        self._client.close()
+        for client in self._clients.values():
+            client.close()
+        self._clients.clear()
 
     # -- internals --------------------------------------------------------------------------
 
@@ -102,11 +104,12 @@ class HttpFetcher:
     ) -> tuple[str, httpx.Response]:
         current = url
         for _ in range(config.MAX_REDIRECTS + 1):
-            if check_scope and self._scope is not None and not self._scope(current):
+            # Pages are only fetched inside a site's scope; without one, no page is in scope.
+            if check_scope and (self._scope is None or not self._scope(current)):
                 raise Disallowed("out_of_scope", current)
             host = self._checked_host(current)
             self._vetted_ip(host, current)  # refuse non-public targets before any robots lookup
-            if not self._robots_rule(host, current).allows(current):
+            if not self._robots_rule(current).allows(current):
                 raise Disallowed("robots_disallowed", current)
             response = self._send(current, kind, accept)
             location = response.headers.get("location")
@@ -151,18 +154,33 @@ class HttpFetcher:
         self._pacer.wait(host, kind)
         pinned_url = httpx.URL(url).copy_with(host=ip)
         extensions = {"sni_hostname": host} if parts.scheme == "https" else {}
-        request = self._client.build_request(
+        client = self._client_for(parts.scheme, host)
+        request = client.build_request(
             "GET",
             pinned_url,
-            headers={"Host": host, "Accept": accept},
+            headers={"Host": f"[{host}]" if ":" in host else host, "Accept": accept},
             extensions=extensions,
         )
         try:
-            return self._client.send(request, stream=True)
+            response = client.send(request, stream=True)
         except httpx.TimeoutException as exc:
             raise ItemError("timeout", url) from exc
         except httpx.TransportError as exc:
             raise ItemError(f"network error: {type(exc).__name__}", url) from exc
+        client.cookies.clear()  # the crawler never sends cookies back
+        return response
+
+    def _client_for(self, scheme: str, host: str) -> httpx.Client:
+        client = self._clients.get((scheme, host))
+        if client is None:
+            client = httpx.Client(
+                transport=self._transport,
+                follow_redirects=False,
+                timeout=httpx.Timeout(config.READ_TIMEOUT, connect=config.CONNECT_TIMEOUT),
+                headers={"User-Agent": config.USER_AGENT},
+            )
+            self._clients[(scheme, host)] = client
+        return client
 
     def _read(self, response: httpx.Response, limit: int, url: str) -> bytes:
         declared = response.headers.get("content-length")
@@ -182,11 +200,13 @@ class HttpFetcher:
             raise ItemError(f"network error: {type(exc).__name__}", url) from exc
         return b"".join(chunks)
 
-    def _robots_rule(self, host: str, url: str) -> _RobotsRule:
-        rule = self._robots.get(host)
+    def _robots_rule(self, url: str) -> _RobotsRule:
+        parts = urlsplit(url)
+        key = (parts.scheme, (parts.hostname or "").lower())  # robots.txt is per scheme and host
+        rule = self._robots.get(key)
         if rule is None:
             rule = self._fetch_robots(url)
-            self._robots[host] = rule
+            self._robots[key] = rule
         return rule
 
     def _fetch_robots(self, url: str) -> _RobotsRule:
@@ -219,3 +239,14 @@ class HttpFetcher:
             return _RobotsRule(None, allow_all=False)
         log.warning("robots unavailable host=%s reason=too many redirects", parts.hostname)
         return _RobotsRule(None, allow_all=False)
+
+
+def _decode(body: bytes, charset: str | None) -> str:
+    """Decode a page with its declared charset, falling back to UTF-8 for unknown labels."""
+    encoding = "utf-8"
+    if charset:
+        try:
+            encoding = codecs.lookup(charset).name
+        except LookupError:
+            log.info("unknown charset %r, decoding as utf-8", charset)
+    return body.decode(encoding, errors="replace")

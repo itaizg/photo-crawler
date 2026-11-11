@@ -17,6 +17,7 @@ CNN, PEOPLE = SITES
         ("https://people.com/x?fbclid=1&page=2&gclid=3", "https://people.com/x?page=2"),
         ("https://people.com/x?b=2&a=1", "https://people.com/x?a=1&b=2"),
         ("https://people.com:443/x", "https://people.com/x"),
+        ("http://people.com:80/x", "https://people.com/x"),
         ("https://people.com", "https://people.com/"),
     ],
 )

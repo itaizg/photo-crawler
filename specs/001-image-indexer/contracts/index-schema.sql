@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS image (
     CONSTRAINT jpeg_iff_kept CHECK ((status IN ('pending', 'indexed')) = (jpeg IS NOT NULL)),
     CONSTRAINT dims_pair CHECK ((width IS NULL) = (height IS NULL)),
     CONSTRAINT original_dims_pair CHECK ((original_width IS NULL) = (original_height IS NULL)),
+    CONSTRAINT original_dims_known CHECK (original_width IS NOT NULL OR skip_reason IN ('unsupported_format', 'too_large')),
     CONSTRAINT dims_iff_analyzed CHECK ((status IN ('pending', 'indexed', 'no_faces')) = (width IS NOT NULL)),
     CONSTRAINT max_side CHECK (width IS NULL OR (width BETWEEN 1 AND 1024 AND height BETWEEN 1 AND 1024)),
     CONSTRAINT indexed_at_iff_done CHECK ((status IN ('indexed', 'no_faces')) = (indexed_at IS NOT NULL))

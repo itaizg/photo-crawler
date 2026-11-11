@@ -58,6 +58,10 @@ TRACKING_PARAMS = frozenset(
 )
 TRACKING_PREFIXES = ("utm_",)
 
+# Database (both adapters): fail fast instead of hanging on an unreachable server
+DB_CONNECT_TIMEOUT = 10  # seconds
+DB_STATEMENT_TIMEOUT_MS = 300_000
+
 # Normalization (FR-008, FR-010, FR-010a, research R7)
 MAX_SIDE = 1024
 MIN_SIDE = 64

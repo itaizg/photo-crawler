@@ -87,7 +87,7 @@ def test_only_one_lead_per_page(sql: psycopg.Connection) -> None:
     for i in (1, 2):
         sql.execute(
             "INSERT INTO image (sha256, status, skip_reason, original_format) "
-            "VALUES (%s, 'skipped', 'too_small', 'PNG')",
+            "VALUES (%s, 'skipped', 'unsupported_format', 'SVG')",
             (bytes([i]) * 32,),
         )
     sql.execute(
