@@ -6,7 +6,7 @@
 
 ## Summary
 
-The search is one command-line module, `face_index/face_matcher.py`, run as `python -m face_index.face_matcher` in a Compose service that reuses the pipeline's image (same DeepFace, TensorFlow and cached weights). It:
+The search is one command-line module, `face_index/face_matcher.py`, run as `uv run --no-project python -m face_index.face_matcher` in a Compose service that reuses the pipeline's image (same DeepFace, TensorFlow and cached weights). It:
 
 1. Reads a query photo from the shared `queries/` folder.
 2. Normalizes it with the pipeline's `PillowNormalizer` (JPEG, ≤ 1024 px).
@@ -133,7 +133,7 @@ tests/
 └── smoke/test_face_matcher_smoke.py      # NEW, marker `model`
 ```
 
-**Structure Decision**: Single project, extending the existing `face_index` package. The script lives inside the package, so the Compose service runs it from the already-built image with `python -m face_index.face_matcher`. The assignment's "`face_matcher.py` or similar" is met by the module's file name. A root-level wrapper was rejected as a second entry point with no use ([research R1](research.md#r1-where-the-script-lives-and-how-it-runs)).
+**Structure Decision**: Single project, extending the existing `face_index` package. The script lives inside the package, so the Compose service runs it from the already-built image with `uv run --no-project python -m face_index.face_matcher`. The assignment's "`face_matcher.py` or similar" is met by the module's file name. A root-level wrapper was rejected as a second entry point with no use ([research R1](research.md#r1-where-the-script-lives-and-how-it-runs)).
 
 ## Post-Design Constitution Re-check
 

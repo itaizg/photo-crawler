@@ -42,7 +42,7 @@ description: "Task list for the Face Search Script"
 - [X] T001 [P] Create `queries/README.md`. It explains that query photos go here, that this folder is mounted into the `face-matcher` container at `/work/queries`, and that annotated copies `<name>.faces.jpg` are written next to the photo. Add `queries/*` and `!queries/README.md` to `.gitignore`.
 - [X] T002 [P] Add the `face-matcher` service to `docker-compose.yml` per R1:
   - It reuses the `x-airflow-common` `build` and `image` (`photo-crawler-airflow:latest`) and has `profiles: [tools]`.
-  - `entrypoint: ["python", "-m", "face_index.face_matcher"]`, `working_dir: /work`, volume `./queries:/work/queries`, `user: "${AIRFLOW_UID:-50000}:0"`.
+  - `entrypoint: ["uv", "run", "--no-project", "python", "-m", "face_index.face_matcher"]`, `working_dir: /work`, volume `./queries:/work/queries`, `user: "${AIRFLOW_UID:-50000}:0"`.
   - Environment: only `FACE_INDEX_DSN`, `DEEPFACE_HOME` and `TF_CPP_MIN_LOG_LEVEL`.
   - `depends_on: postgres: condition: service_healthy`.
   - Add a header comment with the one-line usage `docker compose run --rm face-matcher queries/<photo>`.

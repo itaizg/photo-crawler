@@ -5,8 +5,8 @@ Every open choice for feature 002, with the spec line it serves. Facts about the
 ## R1. Where the script lives and how it runs
 
 **Decision**:
-- **Location**: the CLI is `src/face_index/face_matcher.py`, run as `python -m face_index.face_matcher`.
-- **Service**: Compose gets a `face-matcher` service with `profiles: [tools]`, so `docker compose up` does not start it. It uses the pipeline's image (`photo-crawler-airflow:latest`, same build anchor) with the entrypoint replaced by `python -m face_index.face_matcher`.
+- **Location**: the CLI is `src/face_index/face_matcher.py`, run as `uv run python -m face_index.face_matcher` (on the host) or `uv run --no-project python -m face_index.face_matcher` (in the image, where it runs in Airflow's interpreter).
+- **Service**: Compose gets a `face-matcher` service with `profiles: [tools]`, so `docker compose up` does not start it. It uses the pipeline's image (`photo-crawler-airflow:latest`, same build anchor) with the entrypoint replaced by `uv run --no-project python -m face_index.face_matcher`.
   - Environment: only `FACE_INDEX_DSN`, `DEEPFACE_HOME` and `TF_CPP_MIN_LOG_LEVEL`.
   - It runs as `${AIRFLOW_UID:-50000}`, has `working_dir: /work`, mounts `./queries:/work/queries`, and depends on a healthy `postgres`.
 - **One command** (FR-016): `docker compose run --rm face-matcher queries/alice.jpg`.
@@ -19,7 +19,7 @@ Every open choice for feature 002, with the spec line it serves. Facts about the
 
 **Alternatives considered**:
 - **A slim search-only image**: smaller, but a second dependency set to keep in step with the pipeline's for the profile key to match. Rejected (DRY, constitution "shared model contract").
-- **`docker compose exec airflow-scheduler python -m …`** (as the export CLI does): needs the Airflow stack running and has no `queries/` mount. Rejected for the main path, though it still works for operators.
+- **`docker compose exec airflow-scheduler uv run --no-project python -m …`** (as the export CLI does): needs the Airflow stack running and has no `queries/` mount. Rejected for the main path, though it still works for operators.
 - **A root-level `face_matcher.py` wrapper**: a second entry point not in the image. Rejected (YAGNI). The module name already satisfies "`face_matcher.py` or similar".
 
 ## R2. Threshold: value, comparison and valid range
