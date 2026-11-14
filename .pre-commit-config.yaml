@@ -1,6 +1,7 @@
 # Quality gates (constitution, "Quality Gates and Automation"). Revisions are pinned exactly.
-# Spec Kit, agent tooling and the mission docs are not project code; leave them byte-for-byte.
-exclude: ^(\.specify|\.claude|\.agents|docs)/
+# Spec Kit, agent tooling (including Spec Kit's generated .mcp.json) and the mission docs are not
+# project code; leave them byte-for-byte.
+exclude: ^((\.specify|\.claude|\.agents|docs)/|\.mcp\.json$)
 repos:
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.17.4

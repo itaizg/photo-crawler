@@ -1,6 +1,7 @@
 """The safe HTTP fetcher (FR-003, FR-004, FR-007a, FR-010a, research R4).
 
-Every request, and every redirect hop, is checked *before* it is sent: scheme and port, crawl
+Every request, and every redirect hop, is checked *before* it is sent: scheme (https only for
+images) and port, crawl
 scope (pages only), robots.txt, address safety, and a pacer slot. The connection goes to the IP
 that passed the address check, with the original name in the ``Host`` header and as the TLS
 server name, so DNS cannot change between the check and the connect. Each host name gets its own
@@ -109,15 +110,20 @@ class HttpFetcher:
         self, url: str, kind: RequestKind, accept: str, *, check_scope: bool
     ) -> tuple[str, httpx.Response]:
         current = url
+        sent = False  # a refused redirect hop still leaves the earlier hops sent (page cap)
         for _ in range(config.MAX_REDIRECTS + 1):
             # Pages are only fetched inside a site's scope; without one, no page is in scope.
             if check_scope and (self._scope is None or not self._scope(current)):
-                raise Disallowed("out_of_scope", current)
+                raise Disallowed("out_of_scope", current, sent=sent)
             host = self._checked_host(current)
+            # Image bytes go into the index, so they must arrive over authenticated transport.
+            if kind == "image" and urlsplit(current).scheme == "http":
+                raise Disallowed("insecure_scheme", current, sent=sent)
             self._vetted_ip(host, current)  # refuse non-public targets before any robots lookup
             if not self._robots_rule(current).allows(current):
-                raise Disallowed("robots_disallowed", current)
+                raise Disallowed("robots_disallowed", current, sent=sent)
             response = self._send(current, kind, accept)
+            sent = True
             location = response.headers.get("location")
             if response.status_code in _REDIRECTS and location:
                 response.close()

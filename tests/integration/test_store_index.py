@@ -140,7 +140,7 @@ def test_cosine_query_finds_the_face(store: PostgresIndexStore, sql: psycopg.Con
 # -- re-runs (US2) -------------------------------------------------------------------------------
 
 
-def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
+def test_page_upsert_keeps_smallest_depth_and_crawl_time(
     store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     pid = page(store, depth=2)
@@ -148,9 +148,19 @@ def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
     assert page(store, depth=1) == pid
     assert page(store, depth=3) == pid
     row = sql.execute(
-        "SELECT depth, last_crawled_at > %s FROM page WHERE id = %s", (first, pid)
+        "SELECT depth, last_crawled_at = %s FROM page WHERE id = %s", (first, pid)
     ).fetchone()
-    assert row == (1, True)
+    assert row == (1, True)  # only finish_page records a new crawl
+
+
+def test_finish_page_records_the_crawl_start(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    pid = page(store)
+    started = store.clock()
+    store.finish_page(pid, started)
+    row = sql.execute("SELECT last_crawled_at = %s FROM page WHERE id = %s", (started, pid))
+    assert row.fetchone() == (True,)
 
 
 def test_relink_refreshes_last_seen(store: PostgresIndexStore, sql: psycopg.Connection) -> None:
@@ -311,8 +321,11 @@ def test_outdated_links_counts_one_pages_stale_links_and_deletes_nothing(
     store.link(b, first, False)
     assert store.outdated_links(a) == 0  # fresh crawl: every link was just seen
 
-    store.upsert_page("https://cnn.test/a", "cnn", 1)  # re-crawled ...
+    started = store.clock()  # re-crawled ...
+    store.upsert_page("https://cnn.test/a", "cnn", 1)
     store.link(a, second, False)  # ... and only the second image is still there
+    assert store.outdated_links(a) == 0  # not finished yet: every old link still counts
+    store.finish_page(a, started)
     assert store.outdated_links(a) == 1
     assert store.outdated_links(b) == 0
     row = sql.execute("SELECT count(*) FROM page_image").fetchone()
@@ -330,3 +343,83 @@ def _outdated_image(seed: int) -> NormalizedImage:
         original_width=64,
         original_height=64,
     )
+
+
+def test_one_url_staged_with_different_bytes_links_pages_to_the_urls_image(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    # Two workers each fetched the same new URL and got different bytes; the first to map the
+    # URL wins, and the second page links to that image, not to a second copy.
+    first, created = store.stage_image(normalized(1), "https://img/a.jpg", page(store), False)
+    assert created
+    second_page = page(store, "https://people.com/b")
+    second, created = store.stage_image(normalized(2), "https://img/a.jpg", second_page, False)
+    assert (second, created) == (first, False)
+    assert store.find_image_by_url("https://img/a.jpg") == first
+    assert one(sql, "SELECT count(*) FROM image") == 1  # the losing row is not left orphaned
+    assert one(sql, "SELECT image_id FROM page_image WHERE page_id = %s", second_page) == first
+
+
+def test_waiting_detection_takes_over_when_the_lock_holder_rolls_back(
+    db_dsn: str, store: PostgresIndexStore
+) -> None:
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    holder = psycopg.connect(db_dsn)
+    holder.execute("SELECT 1 FROM image WHERE id = %s FOR UPDATE", (image_id,))
+    assert store.process_pending(image_id, lambda p: [face(1)], profile_id=1) is None  # skipped
+    results: list[int | None] = []
+    waiter = PostgresIndexStore(db_dsn)
+    worker = threading.Thread(
+        target=lambda: results.append(
+            waiter.process_pending(image_id, lambda p: [face(1)], profile_id=1, wait=True)
+        )
+    )
+    worker.start()
+    time.sleep(0.3)
+    assert worker.is_alive()  # waiting on the holder's lock
+    holder.rollback()  # the holder failed: the waiter processes the image itself
+    worker.join(timeout=5)
+    holder.close()
+    waiter.close()
+    assert results == [1]
+    assert store.stored_faces(image_id) == 1
+
+
+def test_waiting_detection_sees_the_holders_result(db_dsn: str, store: PostgresIndexStore) -> None:
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    holder = psycopg.connect(db_dsn)
+    holder.execute("SELECT 1 FROM image WHERE id = %s FOR UPDATE", (image_id,))
+    results: list[int | None] = []
+    waiter = PostgresIndexStore(db_dsn)
+    worker = threading.Thread(
+        target=lambda: results.append(
+            waiter.process_pending(image_id, lambda p: [face(1)], profile_id=1, wait=True)
+        )
+    )
+    worker.start()
+    time.sleep(0.3)
+    holder.execute(
+        "UPDATE image SET status = 'no_faces', jpeg = NULL, indexed_at = now() WHERE id = %s",
+        (image_id,),
+    )
+    holder.commit()
+    worker.join(timeout=5)
+    holder.close()
+    waiter.close()
+    assert results == [None]  # done by the holder, which counts it
+
+
+def test_waiting_detection_gives_up_after_the_lock_timeout(
+    db_dsn: str, store: PostgresIndexStore, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from face_index import config
+
+    monkeypatch.setattr(config, "DETECT_LOCK_TIMEOUT_S", 0.2)
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    holder = psycopg.connect(db_dsn)
+    holder.execute("SELECT 1 FROM image WHERE id = %s FOR UPDATE", (image_id,))
+    try:
+        assert store.process_pending(image_id, lambda p: [face(1)], profile_id=1, wait=True) is None
+        assert store.stored_faces(image_id) is None  # still pending, for the next run
+    finally:
+        holder.close()

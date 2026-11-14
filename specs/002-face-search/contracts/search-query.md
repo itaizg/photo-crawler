@@ -67,6 +67,6 @@ If the `model_profile`, `face` or `image` table is missing, Postgres raises `Und
 
 [index-read.md](../../001-image-indexer/contracts/index-read.md) gains:
 
-> 6. **Link freshness**: `upsert_page` sets `page.last_crawled_at` before the download step links that page's images. Every link the step refreshes therefore has `last_seen_at >= last_crawled_at`, both from the database clock. A link not seen in the page's latest successful crawl is strictly older. A page whose fetch failed keeps its previous `last_crawled_at`.
+> 6. **Link freshness**: the download step reads the database clock before it touches a page, then refreshes the page's links, and only after every image reference of the page was processed sets `page.last_crawled_at` to that start time (`finish_page`). Every link the step refreshes therefore has `last_seen_at >= last_crawled_at`, both from the database clock, and a link not seen in the page's latest finished crawl is strictly older. A page whose fetch failed, or whose download stopped partway, keeps its previous `last_crawled_at`, so all its earlier links still count.
 
 Its reference query gains the same `AND pi.last_seen_at >= p.last_crawled_at` join condition, and `test_index_read.py` gains an outdated-link case.

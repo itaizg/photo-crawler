@@ -1,5 +1,6 @@
 """HTML → links, image references and the lead image (FR-006, FR-006a, research R6)."""
 
+import logging
 import re
 from typing import TypeIs
 from urllib.parse import urljoin
@@ -8,6 +9,9 @@ from bs4 import BeautifulSoup
 from bs4.element import Tag
 
 from face_index.models import PageExtract
+from face_index.urls import for_log
+
+log = logging.getLogger(__name__)
 
 _LAZY_SRC = ("data-src", "data-original", "data-lazy-src")
 _SRCSET = ("srcset", "data-srcset")
@@ -131,18 +135,27 @@ def extract_page(html: str, base_url: str) -> PageExtract:
             noscript.replace_with(BeautifulSoup(noscript.string, "lxml"))
 
     base_tag = soup.find("base", href=True)
-    base = (
-        urljoin(base_url, _attr(base_tag, "href") or "") if isinstance(base_tag, Tag) else base_url
-    )
+    base = base_url
+    if isinstance(base_tag, Tag):
+        base = _join(base_url, _attr(base_tag, "href") or "") or base_url
 
     links: list[str] = []
     for anchor in soup.find_all("a", href=True):
         href = _attr(anchor, "href") if isinstance(anchor, Tag) else None
-        if _usable(href) and not href.startswith("#"):
-            links.append(urljoin(base, href))
-    images = [urljoin(base, ref) for ref in _image_refs(soup)]
+        if _usable(href) and not href.startswith("#") and (link := _join(base, href)):
+            links.append(link)
+    images = [url for ref in _image_refs(soup) if (url := _join(base, ref))]
     lead = _lead_ref(soup)
-    lead_url = urljoin(base, lead) if lead else None
+    lead_url = _join(base, lead) if lead else None
     if lead_url:
         images.append(lead_url)
     return PageExtract(links=_unique(links), image_refs=_unique(images), lead_ref=lead_url)
+
+
+def _join(base: str, ref: str) -> str | None:
+    """Resolve ``ref`` against ``base``; a malformed URL (e.g. a bad IPv6 host) is skipped."""
+    try:
+        return urljoin(base, ref)
+    except ValueError as exc:
+        log.info("url skipped url=%s reason=malformed (%s)", for_log(ref), exc)
+        return None

@@ -6,6 +6,7 @@ adapters (``HttpFetcher``, ``PostgresPacer``, ``PillowNormalizer``, ``DeepFaceEm
 """
 
 from collections.abc import Callable, Sequence
+from datetime import datetime
 from typing import Protocol
 
 from face_index.models import (
@@ -53,7 +54,22 @@ class IndexStore(Protocol):
         """Create the schema if needed and return the current model profile id."""
         ...
 
-    def upsert_page(self, url: str, site: str, depth: int) -> int: ...
+    def clock(self) -> datetime:
+        """The database's current time, the clock every crawl and link timestamp uses."""
+        ...
+
+    def upsert_page(self, url: str, site: str, depth: int) -> int:
+        """Insert or find the page. An existing page's ``last_crawled_at`` is not changed."""
+        ...
+
+    def finish_page(self, page_id: int, started_at: datetime) -> None:
+        """Record a finished crawl of the page: ``last_crawled_at = started_at``.
+
+        Called after every image reference of the page was processed, with the ``clock()``
+        value read before ``upsert_page``. Links refreshed in this crawl are never older than
+        ``started_at``; links it did not see are (index-read.md guarantee 6).
+        """
+        ...
 
     def reset_lead(self, page_id: int) -> None: ...
 
@@ -86,12 +102,15 @@ class IndexStore(Protocol):
         image_id: int,
         detect: Callable[[PendingImage], list[DetectedFace]],
         profile_id: int,
+        *,
+        wait: bool = False,
     ) -> int | None:
         """Lock one pending image, run ``detect`` on it and store the result atomically.
 
         Returns the number of faces stored, or None if the image is no longer pending or is
-        locked by another worker. If ``detect`` raises, nothing is stored and the exception
-        propagates.
+        locked by another worker. With ``wait``, a lock held elsewhere is awaited (bounded by
+        ``config.DETECT_LOCK_TIMEOUT_S``) instead of skipped. If ``detect`` raises, nothing is
+        stored and the exception propagates.
         """
         ...
 

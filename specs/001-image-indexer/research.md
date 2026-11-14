@@ -96,7 +96,7 @@ init_schema ─┬─ crawl[cnn]  ── download[cnn]  ─┐
 
 **Decision**:
 - Sites in `config.SITES`: `cnn` with seed `https://edition.cnn.com/` and page hosts `{edition.cnn.com}`; `people` with seed `https://people.com/` and page hosts `{people.com, www.people.com}`.
-- The crawl is breadth-first from the seed. The seed is depth 0, and links found at depth d are depth d+1, crawled only if d+1 ≤ `depth`. The crawl stops adding pages once `page_cap` pages have been fetched successfully (`None` means no cap). It follows only `text/html` responses.
+- The crawl is breadth-first from the seed. The seed is depth 0, and links found at depth d are depth d+1, crawled only if d+1 ≤ `depth`. The crawl stops once `page_cap` page requests have been sent (`None` means no cap). Failed, non-HTML and redirect-then-refused requests count too, so the cap bounds the load on the site, not the number of pages stored. It follows only `text/html` responses.
 - **Page URL normalization**: lowercase the scheme and host, map `http` to `https`, drop the fragment, collapse duplicate slashes, and strip a trailing `/` except at the root. In the query, **drop only known tracking parameters** (`utm_*`, `fbclid`, `gclid`, `dclid`, `msclkid`, `mc_cid`, `mc_eid`, `cid`, `ref`, `ref_src`, `taid`, `iid`), sort the rest by name, and drop the `?` if nothing remains. The tracking list lives in `config.py`. Parameters that can select content (pagination, gallery slide, search) are kept, so distinct pages don't collapse into one.
 - **Image URL normalization**: lowercase the host, drop the fragment, **keep the query** (CDN resize and crop parameters identify the rendition).
 
@@ -178,7 +178,7 @@ Skips are permanent because they depend only on the bytes, which the fingerprint
 
 **Second default run**, right after the first: 2 min 10 s. 5,534 URLs were reused without downloading; 72 new images gave 63 newly indexed images and 138 faces (SC-007 confirmed on live data).
 
-The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open**: the measured run took 72 min for one site on a faster machine than the reference, so the defaults would not meet it on the reference machine either. Download alone takes 16 min at the polite image rate. The levers, in order:
+The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open, and at risk**: the measured run took 72 min for one site, on a different machine from the reference, so it neither passes nor formally fails the criterion. Whether a both-site default run meets it on the reference machine is undetermined until it is measured there. Download alone took 16 min at the polite image rate. The levers, in order:
 1. A smaller default `page_cap`. Estimated from the per-image times above, not measured: about 15 pages fit 30 min for one site, about 10 per site with both sites (downloads run in parallel per host; detection is shared).
 2. More `FACE_WORKERS`, at about 1.5 GB of RAM each.
 3. A higher `MIN_SIDE`, to skip thumbnails before detection.
@@ -234,14 +234,15 @@ DeepFace.represent(img_path=<BGR ndarray>, model_name="Facenet512",
 
 **Decision**: `download[site]` handles the pages in crawl order. For each page:
 
-1. **Upsert the page** and get its ID. A conflict refreshes the crawl metadata and keeps the smallest depth:
-   `INSERT … ON CONFLICT (url) DO UPDATE SET last_crawled_at = now(), depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
+1. **Upsert the page** and get its ID, after reading the database clock (`SELECT now()`) as the crawl's start time. A conflict keeps the smallest depth and leaves `last_crawled_at` alone:
+   `INSERT … ON CONFLICT (url) DO UPDATE SET depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
 2. **Reset the lead mark**: `UPDATE page_image SET is_lead = false WHERE page_id = $p AND is_lead`. The page's *current* lead is set again in step 3 once its image resolves. A lead that changed or disappeared on the site is therefore cleared, and the one-lead-per-page index can never conflict.
 3. For each image reference on the page:
    1. Look up the normalized URL in `image_url`. **Known** → link it (below), with no download (FR-019).
    2. Unknown → robots and address checks, paced download, then fingerprint.
    3. Fingerprint already in `image` → insert `image_url` and link it. The image is reused, with no detection (FR-020).
    4. New → normalize, then in **one transaction** insert the `image` (`pending` with JPEG bytes and normalized dimensions, or `skipped` with a reason), its `image_url`, and its link.
+4. **Finish the page**: `UPDATE page SET last_crawled_at = <start time>`. Only now does the page count as re-crawled, so a task that stops partway through a page leaves it with its previous crawl time and all its earlier links (index-read.md guarantee 6).
 
 **Getting IDs when two inserts race** (`image` by `sha256`, `page` by `url`): use `INSERT … ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the insert lost the race, so `SELECT id … WHERE <natural key>`. Under READ COMMITTED, the losing insert waits for the winner to commit before it reports the conflict, so the follow-up `SELECT` always finds the winner's row. URL and page links are then written against that ID, so no association is lost.
 
@@ -302,6 +303,8 @@ Download failures, decode errors included, store no image. The URL stays unknown
   ```
 
   So a database outage fails the task (Airflow retries it once, `retries=1`, `retry_delay=1 min`) and is never miscounted as an item failure, nor counted against the link's 3 attempts (R11a). Each item's work is committed in its own transaction before the next item starts, so a retried task redoes only the work that wasn't committed, and that is safe to repeat (R11).
+- **A task where every attempted item failed fails.** When a crawl, download or detection task attempted at least one item and none succeeded, it raises `StageFailed` after recording every failure, so Airflow retries it and the run ends `failed`. Skips, policy refusals and abandoned links are not attempts. A failure is still counted once per run against the 3-attempt cap, because attempts are keyed by run id (R11a). `summarize` runs with `trigger_rule="all_done"`: it logs the summary of the stages that finished, adds a row for the stages with no result, and then fails too, so the summary is never lost and a failed stage is never hidden.
+- **URLs in logs are masked.** Every logged URL goes through `urls.for_log`, which drops userinfo and replaces each query value with `…`, so signed URLs never reach the Airflow logs.
 - **Logging every outcome with its URL** (FR-024):
   - Skips are returned values, not exceptions, and are logged at INFO: `image skipped url=… reason=too_small`.
   - Item failures are logged at WARNING: `image failed url=… stage=download reason=…`.

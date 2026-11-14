@@ -12,7 +12,7 @@ Keep every indexed face searchable after the face model's runtime changes. Today
 
 1. **Detect the gap**: a run (or a check command) reports how many images have faces only under an older profile.
 2. **Re-embed from stored bytes**: `indexed` images keep their normalized JPEG in `image.jpeg`, so re-indexing them needs no network access and no re-crawl.
-3. **Swap atomically per image**: an image's old faces are replaced by its new ones in one transaction, so search never sees an image with no faces, or with faces from both profiles, mid-swap.
+3. **Swap atomically per image**: an image's old faces are replaced by its new ones in one transaction, so search never sees one image with faces from both profiles. This is a per-image guarantee only: see "Coverage during a re-index" below.
 4. **Reuse the detect path**: re-indexing goes through the existing `plan_batches` → `detect` tasks (the `face_cpu` pool, batch caps and 3-attempt limit), not a second code path.
 
 ## Constraints
@@ -22,6 +22,8 @@ Keep every indexed face searchable after the face model's runtime changes. Today
 - **`no_faces` images have no bytes**: the `jpeg_iff_kept` constraint drops the JPEG of an image with no faces. A new model might find faces in them, but only a re-download could tell. Out of scope unless the open question below decides otherwise.
 - **Status invariants**: the `dims_iff_analyzed` and `indexed_at_iff_done` constraints must keep holding during and after the change.
 - **Cost**: the first full index took 54.8 minutes of detection for about 4,700 images. A re-index costs the same, so it must be explicit (a DAG param or a separate DAG), never a surprise inside a normal run.
+- **Coverage during a re-index** (Sourcery review of #6, 2026-11-14): search embeds the query with the installed, new runtime, and vectors from different runtimes must not be compared, so old-profile faces cannot be searched once the runtime changes. Until the re-index finishes, search covers only the images already re-embedded. The re-index must report its progress (images left), and the README must say that search is partial until it finishes. Keeping full coverage would need both runtimes installed side by side, which is out of scope.
+- **What counts as a runtime change** (Sourcery review of #6, 2026-11-14): the profile key holds DeepFace's full 0.0.x version but only TensorFlow's major.minor (001 research R9). A TensorFlow patch upgrade keeps the key by design, so it triggers no re-index. If a patch release is ever shown to change embeddings, the key must include it; that is out of scope here.
 - **Python, Airflow, Docker Compose**, as for the pipeline.
 
 ## Non-Goals

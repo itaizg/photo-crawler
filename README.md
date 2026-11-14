@@ -30,7 +30,7 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 | Param | Default | Meaning |
 |---|---|---|
 | `depth` | 1 | Link hops from each home page (0–10); 0 = home pages only |
-| `page_cap` | 50 | Maximum pages per site; `null` = no cap |
+| `page_cap` | 50 | Maximum page requests per site (failed and non-HTML ones count too); `null` = no cap |
 | `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
 | `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
 
@@ -192,7 +192,7 @@ analyzed, no faces                       9
 faces stored                           138
 ```
 
-**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages:
+**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages and the links it saw on them, except the orphan-face check, which covers the whole `face` table:
 
 ```
 INFO: cnn crawled (1 page)
@@ -225,7 +225,6 @@ SMOKE PASSED
 - **SC-011 (a default run on both sites within 30 minutes) is open.** The one measured run took 72 minutes for CNN alone, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if both sites are reachable (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
 
 - **people.com refuses the crawler** with HTTP 402 for its honest User-Agent (`photo-crawler/0.1.0`). The pipeline records the failure, retries it on up to 3 runs, and indexes CNN normally. The crawler does not disguise itself to get around this; crawling People needs the site's permission.
-- **A page can briefly lose its links after a failed download task.** If the download task dies partway through a page (the database or model is lost), that page's later links look outdated to the search until Airflow retries the task, which refreshes them.
 - **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.
 - **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A size filter is an open decision ([TODO.md](TODO.md)).
 - **A look-alike can pass the default threshold.** First live check (2026-11-13, CNN index of about 9.5k faces): searching with an indexed one-face selfie returned its own 4 pages (distance ≤ 0.004) and one more page at 0.261. That page shows a different man, whose face is only about 55 px wide in a 270×480 red-carpet photo. Small faces give less reliable embeddings, so this is the case [noisy-index-faces.md](docs/briefs/noisy-index-faces.md) is about. The threshold was not tuned to hide it; the labelled evaluation (SC-001 to SC-003) is what decides whether a face-size filter or a stricter default is needed.
