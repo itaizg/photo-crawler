@@ -5,7 +5,7 @@ These are set in the Airflow UI ("Trigger DAG w/ config") or from the CLI. Any v
 | Param | JSON schema | Default | Meaning | Spec |
 |---|---|---|---|---|
 | `depth` | `{"type": "integer", "minimum": 0, "maximum": 10}` | `1` | Link hops from each home page; 0 = home pages only. Capped at 10 (it matches the `page.depth` check, and depth 3 already reaches most of a news site) | FR-002, FR-005 |
-| `page_cap` | `{"type": ["integer", "null"], "minimum": 1}` | `50` | Maximum pages fetched successfully per site; `null` = no cap | FR-005a |
+| `page_cap` | `{"type": ["integer", "null"], "minimum": 1}` | `50` | Maximum page requests per site, counting failed, non-HTML and refused-redirect requests too (it bounds the load on the site); `null` = no cap | FR-005a |
 | `page_rate` | `{"type": "number", "minimum": 0.1, "maximum": 10}` | `1.0` | Page requests per second, per host | FR-003 |
 | `image_rate` | `{"type": "number", "minimum": 0.1, "maximum": 20}` | `5.0` | Image requests per second, per host | FR-003 |
 

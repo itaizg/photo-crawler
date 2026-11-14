@@ -92,7 +92,7 @@ This is covered by automated tests that inject a 500 response, a timeout, a corr
 | Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
 
 `scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. It exits non-zero unless all of these hold:
-- the run succeeded;
+- the run summary was logged, and any failed task belongs to a site that refused every request (people.com answers HTTP 402 to the crawler, which fails `crawl_people`);
 - both sites have exactly 1 crawled page;
 - at least 1 face is stored;
 - every stored image is JPEG ≤ 1024 px;

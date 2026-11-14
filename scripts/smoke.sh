@@ -15,9 +15,25 @@ CONF='{"depth": 0, "page_cap": 1}'
 # the database clock is all we need.
 START=$(sql "SELECT now()::text" | tr -d '\r')
 echo "== running image_indexer with $CONF (start $START)"
+# A stage in which every item failed fails its task, and then the run (research R12). On live
+# data that is expected for people.com, which answers the crawler with HTTP 402, so the run may
+# end failed: it passes when the summary was logged and only that site's tasks (and the summary,
+# which fails after logging) failed.
+dag_status=0
 docker compose exec -T airflow-scheduler airflow dags test image_indexer --conf "$CONF" \
-  > smoke-output.log 2>&1 || { tail -n 60 smoke-output.log; echo "FAIL: dag run"; exit 1; }
+  > smoke-output.log 2>&1 || dag_status=$?
+if ! grep -q "run summary" smoke-output.log; then
+  tail -n 60 smoke-output.log; echo "FAIL: dag run (no run summary)"; exit 1
+fi
 grep -A 30 "run summary" smoke-output.log | head -n 40 || true
+if [ "$dag_status" -ne 0 ]; then
+  unexpected=$(grep -i "fail" smoke-output.log | grep -oE "task_id=[a-z_]+" | sort -u \
+    | grep -vE "task_id=(crawl_people|download_people|summarize)$" || true)
+  if [ -n "$unexpected" ]; then
+    tail -n 60 smoke-output.log; echo "FAIL: dag run (failed tasks: $unexpected)"; exit 1
+  fi
+  echo "INFO: run ended failed, only because of people.com's tasks (expected on live data)"
+fi
 
 THIS_RUN="SELECT id FROM page WHERE last_crawled_at >= '$START'"
 RUN_IMAGES="SELECT image_id FROM page_image WHERE page_id IN ($THIS_RUN)"
