@@ -1,12 +1,16 @@
+import socket
+import threading
+
 import httpx
 import pytest
 
 from face_index import config
 from face_index.errors import Disallowed, FetchRefused, ItemError
-from face_index.http import HttpFetcher
+from face_index.http import HttpFetcher, SystemResolver
 from face_index.urls import in_scope
 from tests.fakes import (
     PUBLIC_IP,
+    FakeClock,
     FakeResolver,
     MockSite,
     RecordingPacer,
@@ -254,3 +258,73 @@ def test_unknown_charset_falls_back_to_utf8() -> None:
     )
     fetcher, _, _ = make({**ROBOTS, HOME: reply})
     assert fetcher.get_page(HOME).text == "café"
+
+
+# -- DNS timeout and robots retry (review #13, #14) ---------------------------------------------
+
+
+def test_dns_lookup_that_hangs_becomes_an_item_error() -> None:
+    release = threading.Event()
+
+    def hang(host: str) -> list[str]:
+        release.wait(5)
+        return [PUBLIC_IP]
+
+    try:
+        with pytest.raises(ItemError, match="dns timeout"):
+            SystemResolver(timeout=0.05, lookup=hang).resolve("slow.example")
+    finally:
+        release.set()
+
+
+def test_dns_failure_is_an_item_error() -> None:
+    def fail(host: str) -> list[str]:
+        raise socket.gaierror(socket.EAI_NONAME, "Name or service not known")
+
+    with pytest.raises(ItemError, match="dns error"):
+        SystemResolver(lookup=fail).resolve("nope.example")
+
+
+def test_dns_answer_is_returned() -> None:
+    assert SystemResolver(lookup=lambda host: [PUBLIC_IP]).resolve("ok.example") == [PUBLIC_IP]
+
+
+def test_robots_outage_is_retried_after_the_retry_window() -> None:
+    clock = FakeClock()
+    site = MockSite(
+        {"https://edition.cnn.com/robots.txt": Reply(status=503), HOME: html_reply("ok")}
+    )
+    fetcher = HttpFetcher(
+        pacer=RecordingPacer(),
+        resolver=FakeResolver(),
+        transport=site.transport(),
+        scope=lambda url: in_scope(url, CNN),
+        clock=clock,
+    )
+    with pytest.raises(Disallowed, match="robots_disallowed"):
+        fetcher.get_page(HOME)
+    clock.now += config.ROBOTS_RETRY_SECONDS / 2
+    with pytest.raises(Disallowed):  # still inside the window: no new robots request
+        fetcher.get_page(HOME)
+    assert sum(u.endswith("/robots.txt") for u, _ in site.requests) == 1
+    site.routes["https://edition.cnn.com/robots.txt"] = robots_reply()
+    clock.now += config.ROBOTS_RETRY_SECONDS
+    assert fetcher.get_page(HOME).text == "ok"
+
+
+def test_robots_404_is_kept_for_good() -> None:
+    clock = FakeClock()
+    site = MockSite(
+        {"https://edition.cnn.com/robots.txt": Reply(status=404), HOME: html_reply("ok")}
+    )
+    fetcher = HttpFetcher(
+        pacer=RecordingPacer(),
+        resolver=FakeResolver(),
+        transport=site.transport(),
+        scope=lambda url: in_scope(url, CNN),
+        clock=clock,
+    )
+    fetcher.get_page(HOME)
+    clock.now += config.ROBOTS_RETRY_SECONDS * 100
+    fetcher.get_page(HOME)
+    assert sum(u.endswith("/robots.txt") for u, _ in site.requests) == 1
