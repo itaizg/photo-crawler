@@ -378,14 +378,14 @@ trap 'rm -f "$TMP_SECTION"' EXIT
   if [[ -n "$TEAM_DIRECTIVES" ]]; then
     echo "## Team Directives & Constitution"
     echo
-    echo "This project is bound by the team-ai-directives knowledge base."
+    echo "The team-ai-directives knowledge base provides the ground assumptions and norms for this project. It is not changed implicitly: any change to it, or to how this project applies it, MUST be made explicitly and approved by the user first."
     echo "- **Strict Compliance**: You MUST invoke the \`team-boot\` skill BEFORE responding to any task or question. This is not optional and applies to every interaction. If a skill applies, you MUST invoke it immediately."
     echo "- **Anti-Patterns** (do NOT rationalize skipping the skill check):"
     echo "  - \"Let me explore the codebase first\" -> Skills tell you HOW to explore. Check first."
     echo "  - \"This is a plain message, not a spec command\" -> Skill check applies to EVERY interaction."
     echo "  - \"I'll check after understanding the request\" -> Check BEFORE understanding -- skills guide your questions."
     echo "  - \"This is too simple\" -> Simple things become complex. Check first."
-    echo "- **Team Constitution**: Read and strictly adhere to the principles in \`$TEAM_DIRECTIVES/context_modules/constitution.md\`. When creating or updating the project's constitution, you MUST inherit and align with these principles."
+    echo "- **Team Constitution**: Read the principles in \`$TEAM_DIRECTIVES/context_modules/constitution.md\`. Treat them as ground assumptions and norms. When creating or updating the project's constitution, inherit and align with them; propose any deviation explicitly for user approval."
     echo "- **Rules, Personas & Examples**: Use the \`team-discover\` skill to find and load relevant rules, personas, or examples before making changes."
     echo
   fi

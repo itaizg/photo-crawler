@@ -477,14 +477,14 @@ $lines = @($MarkerStart)
 if ($TeamDirectives) {
     $lines += '## Team Directives & Constitution'
     $lines += ''
-    $lines += 'This project is bound by the team-ai-directives knowledge base.'
+    $lines += 'The team-ai-directives knowledge base provides the ground assumptions and norms for this project. It is not changed implicitly: any change to it, or to how this project applies it, MUST be made explicitly and approved by the user first.'
     $lines += '- **Strict Compliance**: You MUST invoke the `team-boot` skill BEFORE responding to any task or question. This is not optional and applies to every interaction. If a skill applies, you MUST invoke it immediately.'
     $lines += '- **Anti-Patterns** (do NOT rationalize skipping the skill check):'
     $lines += '  - "Let me explore the codebase first" -> Skills tell you HOW to explore. Check first.'
     $lines += '  - "This is a plain message, not a spec command" -> Skill check applies to EVERY interaction.'
     $lines += '  - "I''ll check after understanding the request" -> Check BEFORE understanding -- skills guide your questions.'
     $lines += '  - "This is too simple" -> Simple things become complex. Check first.'
-    $lines += "- **Team Constitution**: Read and strictly adhere to the principles in \`$TeamDirectives/context_modules/constitution.md\`. When creating or updating the project's constitution, you MUST inherit and align with these principles."
+    $lines += "- **Team Constitution**: Read the principles in \`$TeamDirectives/context_modules/constitution.md\`. Treat them as ground assumptions and norms. When creating or updating the project's constitution, inherit and align with them; propose any deviation explicitly for user approval."
     $lines += "- **Rules, Personas & Examples**: Use the \`team-discover\` skill to find and load relevant rules, personas, or examples before making changes."
     $lines += ''
 }

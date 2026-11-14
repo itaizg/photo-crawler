@@ -1,60 +1,26 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 1.0.0 → 2.0.0
-Bump rationale: MAJOR. Principle II is redefined (records crossing a trust boundary are now
-  narrowed to Pydantic models, not dataclasses or TypedDicts), and Governance precedence is
-  redefined (the team constitution now ranks equal with this document). Eleven principles
-  and two user-requested principles are added on top of that.
+Version change: 2.0.0 → 2.1.0
+Bump rationale: MINOR. One project constraint and two governance rules are added; no
+  principle is removed or redefined.
 
-Sources:
-  - assignment.md (the authority; see Principle I).
-  - Team constitution: team-ai-directives `context_modules/constitution.md` (14 principles).
-    Adopted with the same weight as this project's own principles.
-  - photo-crawler constitution v1.0.0 (Principles I–VI and all sections, preserved).
-  - Amendment request of 2026-11-14: Pydantic models over frozen dataclasses, Pythonic syntax,
-    avoiding try/except/finally where possible.
-
-Modified principles:
-  - II. Typed Code, Checked by ty: trust-boundary narrowing now targets Pydantic models
-    (was dataclass / TypedDict / Protocol); Protocols remain for component seams.
-  - IV. Tests Are the Contract → IV. Tests Are the Contract and Drive Confidence
-    (merged team principle 5: tests verify behavior, not existence).
-  - V. Simplicity: KISS, YAGNI, DRY → V. Simplicity First: KISS, YAGNI, DRY
-    (merged team principle 11: implementation ladder, protected concerns; Pydantic named as
-    the accepted dependency for data records).
-
-Added principles:
-  - VII. Pythonic Code (user request)
-  - VIII. Exceptions Only at Boundaries (user request)
-  - IX. Immutability by Default, with Pydantic Models (team 6 + user request)
-  - X. Human Oversight Is Mandatory (team 1)
-  - XI. Appropriate Delegation (team 2)
-  - XII. Observability and Reproducibility (team 3)
-  - XIII. Security by Default (team 4)
-  - XIV. Zero Trust (team 9)
-  - XV. Stateless, Idempotent Tasks (team 8)
-  - XVI. Documentation Matters (team 7)
-  - XVII. Think Before Coding (team 10)
-  - XVIII. Surgical Changes (team 12)
-  - XIX. Goal-Driven Execution (team 13)
-  - XX. Memory: Learn From Every Run (team 14)
-  Team principles 5 and 11 are merged into IV and V rather than duplicated.
-
-Added sections:
-  - "Inheritance" preamble under Core Principles.
 Modified sections:
-  - Quality Gates and Automation: ruff rule families enforcing VII and VIII.
-  - Project Constraints: Pydantic as a core dependency; read-only search DB role.
-  - Governance: precedence (assignment > team constitution = this constitution), conflict
-    rule between equal-ranked principles, compliance range I–XX.
+  - Project Constraints: Python is executed only through `uv run` or `uvx`, never through
+    `python`, `python3`, or `pip` directly.
+  - Governance: new "No divergence" rule (code must not drift from the governing documents;
+    a wanted divergence amends the document first); amendments to this constitution, and
+    changes to the team constitution or how it applies here, need explicit user approval.
+Added principles: none.
 Removed sections: none.
 
 Follow-up TODOs (repository changes, not made by this amendment):
   - Add pyproject.toml with [tool.ruff] (including the rule families listed under Quality
     Gates) and [tool.ty], .pre-commit-config.yaml, and .github/workflows/ci.yml so that the
-    Quality Gates are enforced. (Carried over from 1.0.0, extended.)
+    Quality Gates are enforced.
   - Add pydantic to the project dependencies when pyproject.toml is created.
+
+The history of earlier amendments is in git (`git log -p -- .specify/memory/constitution.md`).
 -->
 
 # photo-crawler Constitution
@@ -433,6 +399,10 @@ Rationale: without memory, every session starts from scratch; with it, the work 
 - Language and runtime: Python 3.13, managed with `uv`, pinned in `uv.lock`; CI installs with
   `uv sync --locked`. Airflow runs in its own Docker image and is never imported by the
   search script or by core (non-DAG) modules.
+- Python execution: every Python command run in this repository (scripts, tests, tools,
+  Spec Kit scripts, hooks, CI steps, and commands in the docs) MUST go through `uv run`
+  (project environment) or `uvx` (one-off tools). `python`, `python3`, and `pip` MUST NOT be
+  invoked directly.
 - Core libraries: Pydantic v2 for data records and settings (Principle IX).
 - Docker Compose is the single entry point: one documented command starts Airflow, the
   database, and every other required service. No service is run outside Compose.
@@ -456,10 +426,16 @@ Rationale: without memory, every session starts from scratch; with it, the work 
 - Conflicts between equally ranked principles: apply both where possible; otherwise the
   stricter requirement wins. Where neither is stricter, the choice MUST be recorded as a
   decision in the PR description. No principle may widen the assignment's scope.
+- No divergence: code that is written or added MUST conform to `assignment.md`, the team
+  constitution, and this constitution. A change that diverges from them MUST NOT merge. If
+  the divergence is wanted, the governing document is amended first, explicitly and with the
+  user's approval; code never leads a document out of date.
 - Team constitution changes: when the team constitution changes, this document MUST be
   re-synced through `/speckit-constitution` so the inheritance stays complete.
 - Amendments are made by a commit or pull request that edits this file, updates the Sync
-  Impact Report, and bumps the version. No amendment MAY weaken Principle I. Any amendment
+  Impact Report, and bumps the version, and MUST be explicitly approved by the user. The same
+  applies to changes to the team constitution or to how this project applies it; neither is
+  changed implicitly. No amendment MAY weaken Principle I. Any amendment
   that introduces a new gate MUST land together with, or be immediately followed by, the
   tooling change that enforces it.
 - Versioning (semantic): MAJOR for removing or redefining a principle or gate; MINOR for a new
@@ -471,4 +447,4 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   the assignment requirements it implements and evaluates it against these principles before
   implementation begins.
 
-**Version**: 2.0.0 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-14
+**Version**: 2.1.0 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-14
