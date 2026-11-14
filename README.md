@@ -116,3 +116,17 @@ The CNN home page gave 196 images: 122 with faces (312 faces in total) and 74 wi
 
 - **people.com refuses the crawler** with HTTP 402 for its honest User-Agent (`photo-crawler/0.1.0`). The pipeline records the failure, retries it on up to 3 runs, and indexes CNN normally. The crawler does not disguise itself to get around this; crawling People needs the site's permission.
 - The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
+
+## Database access and tests
+
+`docker compose up` generates the database passwords on first start into a private `db-secrets`
+volume (nothing is committed or put in `.env`). The pipeline connects as `faces_writer`, search
+as `faces_reader` (SELECT only), and the Airflow containers find the passwords through
+`PGPASSFILE`. `docker compose down -v` removes the volumes together.
+
+To run the integration tests against the Compose database from the host (loopback only):
+
+```bash
+export FACE_INDEX_TEST_DSN="postgresql://faces:$(docker compose exec -T postgres cat /run/db-secrets/postgres_password)@127.0.0.1:5432/faces_test"
+uv run pytest -m "not model"
+```

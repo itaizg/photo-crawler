@@ -1,7 +1,13 @@
 """``PostgresIndexStore``: the ``IndexStore`` adapter (research R10, R11).
 
-Every public method runs inside ``_guard()``, which turns driver connection errors into
-``InfrastructureError``. No ``psycopg`` exception leaves this module.
+Every public method runs inside ``_guard()``, which maps driver errors into the ``IndexStore``
+contract; no ``psycopg`` exception leaves this module:
+
+* ``IntegrityError`` and ``DataError`` (the database rejected this item's data) become
+  ``ItemError``: the caller skips the item and goes on.
+* Every other ``psycopg.Error`` (connection loss, permissions, a missing or wrong schema, a
+  cancelled statement) becomes ``InfrastructureError``: retrying other items would fail the
+  same way, so the run stops.
 """
 
 from collections.abc import Callable, Generator
@@ -28,6 +34,11 @@ INSERT INTO page (url, site, depth) VALUES (%s, %s, %s)
 ON CONFLICT (url) DO UPDATE
   SET last_crawled_at = now(), depth = least(page.depth, EXCLUDED.depth)
 RETURNING id
+"""
+
+_URL_TO_IMAGE = """
+INSERT INTO image_url (url, image_id) VALUES (%s, %s)
+ON CONFLICT (url) DO UPDATE SET image_id = EXCLUDED.image_id
 """
 
 _LINK = """
@@ -85,8 +96,10 @@ def schema_sql() -> str:
 
 def _link(conn: psycopg.Connection, page_id: int, image_id: int, is_lead: bool) -> None:
     """Link a page to an image. A new lead replaces the old one in the same transaction, so a
-    page is never left without its lead between two statements (FR-009a)."""
+    page is never left without its lead between two statements (FR-009a). The page row is
+    locked first, so two writers swapping leads on one page run one after the other."""
     if is_lead:
+        conn.execute("SELECT 1 FROM page WHERE id = %s FOR UPDATE", (page_id,))
         conn.execute(
             "UPDATE page_image SET is_lead = false "
             "WHERE page_id = %s AND is_lead AND image_id <> %s",
@@ -115,11 +128,13 @@ class PostgresIndexStore:
     def _guard(self) -> Generator[psycopg.Connection]:
         try:
             yield self._connection()
+        except (psycopg.IntegrityError, psycopg.DataError) as exc:  # this item's data was rejected
+            raise ItemError(f"database rejected: {type(exc).__name__}") from exc
         except (psycopg.OperationalError, psycopg.InterfaceError) as exc:
             self.close()
             raise InfrastructureError(f"database unavailable: {type(exc).__name__}") from exc
-        except psycopg.Error as exc:  # the database rejected this item's data
-            raise ItemError(f"database rejected: {type(exc).__name__}") from exc
+        except psycopg.Error as exc:  # schema, permissions, bugs: not specific to one item
+            raise InfrastructureError(f"database error: {type(exc).__name__}") from exc
 
     def close(self) -> None:
         if self._conn is not None and not self._conn.closed:
@@ -185,10 +200,7 @@ class PostgresIndexStore:
 
     def add_url_and_link(self, image_id: int, url: str, page_id: int, is_lead: bool) -> None:
         with self._guard() as conn, conn.transaction():
-            conn.execute(
-                "INSERT INTO image_url (url, image_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (url, image_id),
-            )
+            conn.execute(_URL_TO_IMAGE, (url, image_id))  # the URL follows its latest content
             _link(conn, page_id, image_id, is_lead)
 
     def stage_image(
@@ -226,10 +238,7 @@ class PostgresIndexStore:
                 ).fetchone()
                 assert row is not None
             image_id = int(row[0])
-            conn.execute(
-                "INSERT INTO image_url (url, image_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (url, image_id),
-            )
+            conn.execute(_URL_TO_IMAGE, (url, image_id))  # the URL follows its latest content
             _link(conn, page_id, image_id, is_lead)
             return image_id, created
 

@@ -44,7 +44,7 @@ def image(seed: int) -> NormalizedImage:
 
 
 def test_reference_query_returns_each_matching_page_once(
-    store: PostgresIndexStore, sql: psycopg.Connection
+    store: PostgresIndexStore, sql: psycopg.Connection, db_dsn: str
 ) -> None:
     profile_id = store.init_schema()
     p1 = store.upsert_page("https://people.com/a", "people", 1)
@@ -60,7 +60,7 @@ def test_reference_query_returns_each_matching_page_once(
 
     # A pending image with the same face vector: must stay invisible.
     pending, _ = store.stage_image(image(2), "https://img/pending.jpg", p3, False)
-    with psycopg.connect(sql.info.dsn, autocommit=True) as raw:
+    with psycopg.connect(db_dsn, autocommit=True) as raw:
         register_vector(raw)
         raw.execute(
             INSERT_FACE,

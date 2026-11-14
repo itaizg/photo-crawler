@@ -3,6 +3,12 @@
 A pacer enforces a minimum interval of ``1 / rate`` between request starts for each
 ``(host, kind)``. ``PostgresPacer`` shares that budget across every task through one row per
 ``(host, kind)`` in the ``host_pace`` table.
+
+Guarantee: each caller *reserves* a start slot, and reserved slots are at least one interval
+apart. ``wait`` returns when the caller's slot arrives, so the actual send can trail its slot
+by scheduler jitter (milliseconds) and a descheduled caller can send late, never early. The
+slot is not held while the request is in flight: that would serialize every host's I/O for no
+politeness gain against intervals of a second or more.
 """
 
 import threading
