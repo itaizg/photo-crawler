@@ -53,6 +53,7 @@ services:
         {
           echo "postgres:5432:*:$${POSTGRES_USER}:$$(cat postgres_password)"
           echo "postgres:5432:*:faces_writer:$$(cat writer_password)"
+          echo "postgres:5432:*:faces_reader:$$(cat reader_password)"
         } > pgpass
         chown "$${AIRFLOW_UID}:0" pgpass
         chmod 600 pgpass
@@ -162,11 +163,14 @@ services:
     entrypoint: ["uv", "run", "--no-project", "python", "-m", "face_index.face_matcher"]
     working_dir: /work
     environment:
-      FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
+      # Search is read-only (constitution XIV): the faces_reader role can only SELECT.
+      FACE_INDEX_DSN: postgresql://faces_reader@postgres:5432/faces
+      PGPASSFILE: /run/db-secrets/pgpass
       DEEPFACE_HOME: /opt/deepface
       TF_CPP_MIN_LOG_LEVEL: "2"
     volumes:
       - ./queries:/work/queries
+      - db-secrets:/run/db-secrets:ro
     user: "${AIRFLOW_UID:-50000}:0"
     depends_on:
       postgres:

@@ -134,7 +134,7 @@ init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
 - **Normalization.** Every stored image is an RGB JPEG (quality 90, no EXIF) whose longest side is at most 1024 px; images are never upscaled. SVGs and images under 64 px are skipped with a recorded reason.
 - **Incremental by URL and by content.** A known URL is never downloaded again; a new URL whose SHA-256 matches a stored image is linked to it without re-detecting faces. Lead images (`og:image`) are marked per page.
 - **Failure isolation.** One bad page or image is logged with its URL and counted; the run continues. Database or model outages fail the task instead, so Airflow retries it.
-- **No secrets in git.** The local database uses no password (trust auth, reachable only from the Compose network and 127.0.0.1); Airflow's JWT secret is generated at first start into a private volume.
+- **No secrets in git.** Database passwords and Airflow's JWT secret are generated at first start into private volumes (the pipeline writes as `faces_writer`, search reads as `faces_reader`, SELECT only).
 
 ## Tests and smoke runs
 
