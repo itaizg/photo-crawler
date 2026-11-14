@@ -221,7 +221,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
 
     if not paths.feature_dir.is_dir():
-        print(f"ERROR: Feature directory not found: {paths.feature_dir}", file=sys.stderr)
+        print(
+            f"ERROR: Feature directory not found: {paths.feature_dir}", file=sys.stderr
+        )
         print(
             f"Run {format_speckit_command('specify', paths.repo_root)} first to create the feature structure.",
             file=sys.stderr,
@@ -277,9 +279,7 @@ def main(argv: list[str] | None = None) -> int:
         }
         if args.template_name:
             payload["TEMPLATE_CONTENT"] = template_content
-        sys.stdout.write(
-            _json_line(payload)
-        )
+        sys.stdout.write(_json_line(payload))
     else:
         _print_text_results(paths, args.include_tasks)
     return 0

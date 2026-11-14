@@ -65,7 +65,9 @@ def main(argv: list[str] | None = None) -> int:
         )
     else:
         try:
-            template_content = resolve_template_content("plan-template", paths.repo_root)
+            template_content = resolve_template_content(
+                "plan-template", paths.repo_root
+            )
         except TemplateResolutionError as exc:
             print(f"Error: {exc}", file=sys.stderr)
             return 1

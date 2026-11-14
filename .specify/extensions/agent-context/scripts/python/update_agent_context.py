@@ -353,6 +353,7 @@ def main(argv: list[str] | None = None) -> int:
         )
         if os.path.isfile(template):
             import shutil
+
             shutil.copy2(template, ext_config)
         else:
             _err(
