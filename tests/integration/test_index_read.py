@@ -39,7 +39,13 @@ def vec(value: float) -> tuple[float, ...]:
 
 def image(seed: int) -> NormalizedImage:
     return NormalizedImage(
-        bytes([seed]) * 32, images.photo(64, 64, seed=seed), 64, 64, "JPEG", 64, 64
+        sha256=bytes([seed]) * 32,
+        jpeg=images.photo(64, 64, seed=seed),
+        width=64,
+        height=64,
+        original_format="JPEG",
+        original_width=64,
+        original_height=64,
     )
 
 
@@ -55,7 +61,11 @@ def test_reference_query_returns_each_matching_page_once(
     shared, _ = store.stage_image(image(1), "https://img/shared.jpg", p1, True)
     store.link(p2, shared, False)
     store.process_pending(
-        shared, lambda p: [DetectedFace(Box(1, 1, 10, 10), 0.99, vec(0.0))], profile_id
+        shared,
+        lambda p: [
+            DetectedFace(box=Box(x=1, y=1, w=10, h=10), confidence=0.99, embedding=vec(0.0))
+        ],
+        profile_id,
     )
 
     # A pending image with the same face vector: must stay invisible.
@@ -109,7 +119,11 @@ def test_reference_query_ignores_outdated_links(
     img, _ = store.stage_image(image(4), "https://img/four.jpg", kept, False)
     store.link(gone, img, False)
     store.process_pending(
-        img, lambda p: [DetectedFace(Box(1, 1, 10, 10), 0.99, vec(0.0))], profile_id
+        img,
+        lambda p: [
+            DetectedFace(box=Box(x=1, y=1, w=10, h=10), confidence=0.99, embedding=vec(0.0))
+        ],
+        profile_id,
     )
     store.upsert_page("https://people.com/gone", "people", 1)  # re-crawled, image not linked
 

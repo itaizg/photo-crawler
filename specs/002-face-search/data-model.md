@@ -15,7 +15,7 @@ The search adds **no tables and no columns**. It reads the pipeline's schema ([i
 
 ## In-memory values
 
-All of these are frozen dataclasses in `face_index.models`, typed for ty (constitution II).
+All of these are frozen Pydantic models (`Record` subclasses) in `face_index.models`, typed for ty (constitution II, IX).
 
 ### QueryFace
 

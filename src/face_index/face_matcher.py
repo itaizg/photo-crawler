@@ -1,23 +1,25 @@
 """Find every crawled page that shows the person in a photo (feature 002).
 
 docker compose run --rm face-matcher queries/PHOTO [options]
-python -m face_index.face_matcher PHOTO [options]
+uv run python -m face_index.face_matcher PHOTO [options]
 
 Output formats and exit statuses: specs/002-face-search/contracts/face-matcher-cli.md.
 """
 
 import argparse
-import os
 import sys
 from collections.abc import Callable, Sequence
+from contextlib import closing
 from pathlib import Path
-from typing import NoReturn
+from typing import Annotated, NoReturn
+
+from pydantic import Field, ValidationError
 
 from face_index import config, model_profile
 from face_index.drawing import draw_boxes
 from face_index.errors import IndexNotReady, InfrastructureError
 from face_index.faces import DeepFaceEmbedder
-from face_index.models import FaceResult, NormalizedImage, PageMatch, QueryFace
+from face_index.models import FaceResult, NormalizedImage, PageMatch, QueryFace, Record
 from face_index.normalize import PillowNormalizer
 from face_index.ports import FaceEmbedder, ImageNormalizer, SearchIndex
 from face_index.search import (
@@ -55,6 +57,24 @@ class _Exit(Exception):
         self.message = message
 
 
+class Options(Record):
+    """The command line, validated once at the edge (constitution IX)."""
+
+    image: Path
+    threshold: Annotated[float, Field(gt=0.0, le=2.0, allow_inf_nan=False)] = (
+        model_profile.MATCH_THRESHOLD
+    )
+    face: Annotated[int, Field(ge=1)] | None = None
+    list_faces: bool = False
+    details: bool = False
+
+
+_RULES = {
+    "threshold": "the cosine distance threshold must be in (0, 2]",
+    "face": "the face number must be 1 or more",
+}
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
@@ -62,39 +82,16 @@ class _Parser(argparse.ArgumentParser):
         raise SystemExit(EXIT_USAGE)
 
 
-def _threshold(text: str) -> float:
-    try:
-        value = float(text)
-    except ValueError:
-        value = float("nan")
-    if not 0.0 < value <= 2.0:  # also rejects NaN
-        raise argparse.ArgumentTypeError(
-            f"{text!r}: the cosine distance threshold must be in (0, 2]"
-        )
-    return value
-
-
-def _face_number(text: str) -> int:
-    try:
-        value = int(text)
-    except ValueError:
-        value = 0
-    if value < 1:
-        raise argparse.ArgumentTypeError(f"{text!r}: the face number must be 1 or more")
-    return value
-
-
-def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
+def _parse(argv: Sequence[str] | None) -> Options:
     parser = _Parser(
         prog="face_matcher",
         description="Print the crawled pages that show the person (or people) in a photo.",
         epilog=EPILOG,
         formatter_class=argparse.RawDescriptionHelpFormatter,
     )
-    parser.add_argument("image", type=Path, help="query photo, e.g. queries/alice.jpg")
+    parser.add_argument("image", help="query photo, e.g. queries/alice.jpg")
     parser.add_argument(
         "--threshold",
-        type=_threshold,
         default=None,  # None tells "not given" apart from an explicit 0.30 (--list-faces)
         metavar="T",
         help=(
@@ -104,7 +101,6 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
     )
     parser.add_argument(
         "--face",
-        type=_face_number,
         metavar="N",
         help="search only face N (faces are numbered from 1, left to right)",
     )
@@ -131,9 +127,12 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         ]
         if given:
             parser.error(f"--list-faces cannot be combined with {', '.join(given)}")
-    if args.threshold is None:
-        args.threshold = model_profile.MATCH_THRESHOLD
-    return args
+    values = {name: value for name, value in vars(args).items() if value is not None}
+    try:
+        return Options.model_validate(values)
+    except ValidationError as exc:  # user input is a trust boundary: report it as usage
+        field = str(exc.errors()[0]["loc"][0])
+        parser.error(f"{values[field]!r}: {_RULES[field]}")
 
 
 def _read(path: Path) -> bytes:
@@ -206,33 +205,44 @@ def _list_faces(path: Path, normalized: NormalizedImage, faces: Sequence[QueryFa
 
 
 def _run(
-    args: argparse.Namespace,
+    options: Options,
     index_factory: Callable[[], SearchIndex],
     embedder: FaceEmbedder,
     normalizer: ImageNormalizer,
 ) -> int:
-    data = _read(args.image)
-    index = index_factory()
-    try:
+    data = _read(options.image)
+    with closing(index_factory()) as index:
         profile_id = _check_index(index)  # before the model loads: a down database fails fast
         print("loading face model…", file=sys.stderr)
-        try:
-            normalized, faces = prepare_query(data, normalizer, embedder)
-        except QueryImageError as exc:
-            raise _Exit(EXIT_BAD_IMAGE, f"{args.image}: {exc}") from exc
-        except NoFaceError as exc:
-            raise _Exit(EXIT_NO_FACE, f"no face detected in {args.image}") from exc
-        if args.list_faces:
-            return _list_faces(args.image, normalized, faces)
-        try:
-            chosen = select_faces(faces, args.face)
-        except FaceNumberError as exc:
-            raise _Exit(EXIT_USAGE, str(exc)) from exc
-        results = search_faces(chosen, index, profile_id, args.threshold)
-    finally:
-        index.close()
-    sys.stdout.write(_format(results, args.details))
+        normalized, faces = prepare_query(data, normalizer, embedder)
+        if options.list_faces:
+            return _list_faces(options.image, normalized, faces)
+        chosen = select_faces(faces, options.face)
+        results = search_faces(chosen, index, profile_id, options.threshold)
+    sys.stdout.write(_format(results, options.details))
     return EXIT_OK
+
+
+type _Failure = (
+    _Exit | QueryImageError | NoFaceError | FaceNumberError | IndexNotReady | InfrastructureError
+)
+
+
+def _status(failure: _Failure, image: Path) -> tuple[int, str]:
+    """The one place an expected failure becomes an exit status and a message (contract)."""
+    match failure:
+        case _Exit(status=status, message=message):
+            return status, message
+        case QueryImageError():
+            return EXIT_BAD_IMAGE, f"{image}: {failure}"
+        case NoFaceError():
+            return EXIT_NO_FACE, f"no face detected in {image}"
+        case FaceNumberError():
+            return EXIT_USAGE, str(failure)
+        case IndexNotReady():
+            return EXIT_INDEX_NOT_READY, f"{failure}; run the image_indexer pipeline first"
+        case InfrastructureError():
+            return EXIT_UNAVAILABLE, str(failure)  # the message never contains the DSN
 
 
 def _default_index() -> SearchIndex:
@@ -249,28 +259,26 @@ def main(
     embedder: FaceEmbedder | None = None,
     normalizer: ImageNormalizer | None = None,
 ) -> int:
-    args = _parse(argv)
+    """Run the search; an unexpected exception is a bug and propagates with its traceback."""
+    options = _parse(argv)
     try:
         return _run(
-            args,
+            options,
             index_factory or _default_index,
             embedder or DeepFaceEmbedder(),
             normalizer or PillowNormalizer(),
         )
-    except _Exit as exc:
-        print(f"error: {exc.message}", file=sys.stderr)
-        return exc.status
-    except IndexNotReady as exc:
-        print(f"error: {exc}; run the image_indexer pipeline first", file=sys.stderr)
-        return EXIT_INDEX_NOT_READY
-    except InfrastructureError as exc:  # the message never contains the DSN
-        print(f"error: {exc}", file=sys.stderr)
-        return EXIT_UNAVAILABLE
-    except Exception as exc:
-        if os.environ.get("FACE_MATCHER_DEBUG") == "1":
-            raise
-        print(f"error: unexpected {type(exc).__name__}: {exc}", file=sys.stderr)
-        return EXIT_UNAVAILABLE
+    except (
+        _Exit,
+        QueryImageError,
+        NoFaceError,
+        FaceNumberError,
+        IndexNotReady,
+        InfrastructureError,
+    ) as failure:
+        status, message = _status(failure, options.image)
+        print(f"error: {message}", file=sys.stderr)
+        return status
 
 
 if __name__ == "__main__":

@@ -40,9 +40,9 @@ def test_null_page_cap_is_accepted(params: dict[str, Any]) -> None:
 )
 def test_run_params_validate_independently_of_airflow(bad: dict[str, object]) -> None:
     with pytest.raises(ValueError):  # noqa: PT011
-        RunParams.from_mapping(bad)
+        RunParams.model_validate(bad)
 
 
 def test_run_params_defaults() -> None:
-    assert RunParams.from_mapping({}) == RunParams()
-    assert RunParams.from_mapping({"page_cap": None}).page_cap is None
+    assert RunParams.model_validate({}) == RunParams()
+    assert RunParams.model_validate({"page_cap": None}).page_cap is None

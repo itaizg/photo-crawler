@@ -57,7 +57,10 @@ def prepare_query(
     if not detected:
         raise NoFaceError
     # The embedder returns faces left to right, then top to bottom (faces.narrow_results).
-    faces = [QueryFace(i, f.box, f.embedding) for i, f in enumerate(detected, start=1)]
+    faces = [
+        QueryFace(number=i, box=f.box, embedding=f.embedding)
+        for i, f in enumerate(detected, start=1)
+    ]
     return normalized, faces
 
 
@@ -76,6 +79,8 @@ def search_faces(
 ) -> list[FaceResult]:
     """One index query per face; pages come back de-duplicated and closest first (FR-006, 007)."""
     return [
-        FaceResult(face, tuple(index.matching_pages(face.embedding, threshold, profile_id)))
+        FaceResult(
+            face=face, pages=tuple(index.matching_pages(face.embedding, threshold, profile_id))
+        )
         for face in faces
     ]

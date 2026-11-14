@@ -16,11 +16,21 @@ from tests import images
 
 def normalized(seed: int = 1) -> NormalizedImage:
     jpeg = images.photo(64, 64, seed=seed)
-    return NormalizedImage(bytes([seed]) * 32, jpeg, 64, 64, "JPEG", 128, 128)
+    return NormalizedImage(
+        sha256=bytes([seed]) * 32,
+        jpeg=jpeg,
+        width=64,
+        height=64,
+        original_format="JPEG",
+        original_width=128,
+        original_height=128,
+    )
 
 
 def face(x: int, value: float = 0.5) -> DetectedFace:
-    return DetectedFace(Box(x, 1, 10, 10), 0.99, tuple([value] * 512))
+    return DetectedFace(
+        box=Box(x=x, y=1, w=10, h=10), confidence=0.99, embedding=tuple([value] * 512)
+    )
 
 
 def page(store: PostgresIndexStore, url: str = "https://people.com/a", depth: int = 1) -> int:
@@ -46,7 +56,16 @@ def test_stage_image_writes_image_url_and_link(
 
 def test_stage_skipped_has_no_bytes(store: PostgresIndexStore, sql: psycopg.Connection) -> None:
     image_id, _ = store.stage_image(
-        Skipped(b"\x09" * 32, "too_small", "JPEG", 40, 40), "https://img/i.jpg", page(store), False
+        Skipped(
+            sha256=b"\x09" * 32,
+            reason="too_small",
+            original_format="JPEG",
+            original_width=40,
+            original_height=40,
+        ),
+        "https://img/i.jpg",
+        page(store),
+        False,
     )
     row = sql.execute(
         "SELECT status, skip_reason, jpeg, width FROM image WHERE id = %s", (image_id,)
@@ -175,7 +194,7 @@ def test_faces_below_the_confidence_floor_are_not_stored(
     store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
-    weak = DetectedFace(Box(1, 1, 10, 10), 0.5, tuple([0.5] * 512))
+    weak = DetectedFace(box=Box(x=1, y=1, w=10, h=10), confidence=0.5, embedding=tuple([0.5] * 512))
     assert store.process_pending(image_id, lambda p: [weak, face(30)], profile_id=1) == 1
     assert one(sql, "SELECT min(confidence) FROM face") == pytest.approx(0.99)
 
@@ -185,7 +204,7 @@ def test_size_skips_keep_original_dimensions(
 ) -> None:
     assert store is not None  # creates the schema
     with pytest.raises(ValueError, match="original dimensions"):
-        Skipped(b"\x09" * 32, "too_small", "JPEG")
+        Skipped(sha256=b"\x09" * 32, reason="too_small", original_format="JPEG")
     with pytest.raises(psycopg.errors.CheckViolation):
         sql.execute(
             "INSERT INTO image (sha256, status, skip_reason, original_format) "
@@ -303,5 +322,11 @@ def test_outdated_links_counts_one_pages_stale_links_and_deletes_nothing(
 
 def _outdated_image(seed: int) -> NormalizedImage:
     return NormalizedImage(
-        bytes([100 + seed]) * 32, images.photo(64, 64, seed=seed), 64, 64, "JPEG", 64, 64
+        sha256=bytes([100 + seed]) * 32,
+        jpeg=images.photo(64, 64, seed=seed),
+        width=64,
+        height=64,
+        original_format="JPEG",
+        original_width=64,
+        original_height=64,
     )

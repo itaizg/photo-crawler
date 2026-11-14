@@ -1,7 +1,8 @@
 """The one face model setup shared by the pipeline and the search script (FR-013, research R9)."""
 
-from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
+
+from face_index.models import Record
 
 DETECTOR = "retinaface"
 MODEL = "Facenet512"
@@ -15,8 +16,7 @@ MIN_FACE_CONFIDENCE = 0.9
 MATCH_THRESHOLD = 0.30
 
 
-@dataclass(frozen=True, slots=True)
-class ProfileRecord:
+class ProfileRecord(Record):
     key: str
     deepface_version: str
     tensorflow_version: str

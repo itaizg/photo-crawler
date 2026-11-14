@@ -4,10 +4,14 @@ Runs inside `docker build`, so pipeline runs never download models (research R9)
 Weights land under `$DEEPFACE_HOME/.deepface/weights`.
 """
 
+import logging
+
 import numpy as np
 from deepface import DeepFace
 
 from face_index import model_profile
+
+log = logging.getLogger(__name__)
 
 
 def main() -> None:
@@ -21,8 +25,9 @@ def main() -> None:
         align=model_profile.ALIGN,
         normalization=model_profile.NORMALIZATION,
     )
-    print("weights cached for", model_profile.current_profile().key)
+    log.info("weights cached for %s", model_profile.current_profile().key)
 
 
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.INFO, format="%(message)s")
     main()

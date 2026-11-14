@@ -29,11 +29,13 @@ class RecordingEmbedder:
 
 
 def face(x: int, y: int = 4) -> DetectedFace:
-    return DetectedFace(Box(x, y, 16, 16), 0.99, (float(x),) * 512)
+    return DetectedFace(box=Box(x=x, y=y, w=16, h=16), confidence=0.99, embedding=(float(x),) * 512)
 
 
 def page(url: str, distance: float, *image_urls: str) -> PageMatch:
-    return PageMatch(url, distance, False, image_urls or (f"{url}.jpg",))
+    return PageMatch(
+        url=url, best_distance=distance, lead=False, image_urls=image_urls or (f"{url}.jpg",)
+    )
 
 
 # -- prepare_query (FR-003, R6) ---------------------------------------------------------------
@@ -82,8 +84,8 @@ def test_no_face_raises() -> None:
 def test_each_face_is_searched_once_with_threshold_and_profile() -> None:
     index = FakeSearchIndex(pages=[page("https://cnn.test/a", 0.1)])
     faces = [
-        QueryFace(1, Box(1, 1, 8, 8), (1.0,) * 512),
-        QueryFace(2, Box(9, 1, 8, 8), (2.0,) * 512),
+        QueryFace(number=1, box=Box(x=1, y=1, w=8, h=8), embedding=(1.0,) * 512),
+        QueryFace(number=2, box=Box(x=9, y=1, w=8, h=8), embedding=(2.0,) * 512),
     ]
     results = search_faces(faces, index, profile_id=7, threshold=0.3)
     assert [r.face.number for r in results] == [1, 2]
@@ -93,7 +95,12 @@ def test_each_face_is_searched_once_with_threshold_and_profile() -> None:
 
 
 def test_no_match_gives_an_empty_result() -> None:
-    results = search_faces([QueryFace(1, Box(1, 1, 8, 8), (1.0,) * 512)], FakeSearchIndex(), 1, 0.3)
+    results = search_faces(
+        [QueryFace(number=1, box=Box(x=1, y=1, w=8, h=8), embedding=(1.0,) * 512)],
+        FakeSearchIndex(),
+        1,
+        0.3,
+    )
     assert results[0].pages == ()
 
 
@@ -104,7 +111,7 @@ CANNED = [
     page("https://cnn.test/b", 0.25),
     page("https://cnn.test/c", 0.29),
 ]
-ONE_FACE = [QueryFace(1, Box(1, 1, 8, 8), (1.0,) * 512)]
+ONE_FACE = [QueryFace(number=1, box=Box(x=1, y=1, w=8, h=8), embedding=(1.0,) * 512)]
 
 
 def pages_at(threshold: float) -> list[str]:
@@ -152,7 +159,10 @@ def test_faces_with_equal_x_are_numbered_top_to_bottom() -> None:
     assert [(f.number, f.box.x, f.box.y) for f in faces] == [(1, 2, 70), (2, 30, 5), (3, 30, 50)]
 
 
-THREE = [QueryFace(n, Box(4 + 20 * (n - 1), 4, 16, 16), (float(n),) * 512) for n in (1, 2, 3)]
+THREE = [
+    QueryFace(number=n, box=Box(x=4 + 20 * (n - 1), y=4, w=16, h=16), embedding=(float(n),) * 512)
+    for n in (1, 2, 3)
+]
 
 
 def test_select_all_faces_by_default() -> None:

@@ -22,11 +22,12 @@ page they are not labelled on (SC-002), and no absent person gets any page (SC-0
 import sys
 import tomllib
 from collections.abc import Sequence
-from dataclasses import dataclass
+from contextlib import closing
 from pathlib import Path
 
 from face_index import config, model_profile
 from face_index.faces import DeepFaceEmbedder
+from face_index.models import Record
 from face_index.normalize import PillowNormalizer
 from face_index.ports import FaceEmbedder, SearchIndex
 from face_index.search import prepare_query, search_faces
@@ -35,20 +36,24 @@ from face_index.search_store import PostgresSearchIndex
 MIN_RECALL = 0.80
 
 
-@dataclass(frozen=True, slots=True)
-class Person:
+class Person(Record):
     name: str
     photo: str
     pages: tuple[str, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class Absent:
+class Absent(Record):
     photo: str
 
 
-@dataclass(frozen=True, slots=True)
-class PersonReport:
+class Labels(Record):
+    """The labels file, validated once when it is read (constitution IX)."""
+
+    person: tuple[Person, ...] = ()
+    absent: tuple[Absent, ...] = ()
+
+
+class PersonReport(Record):
     name: str
     expected: int
     returned: int
@@ -60,14 +65,9 @@ class PersonReport:
         return (self.expected - len(self.missed)) / self.expected if self.expected else 1.0
 
 
-def parse_labels(text: str) -> tuple[list[Person], list[Absent]]:
-    data = tomllib.loads(text)
-    people = [
-        Person(str(p["name"]), str(p["photo"]), tuple(str(u) for u in p["pages"]))
-        for p in data.get("person", [])
-    ]
-    absent = [Absent(str(a["photo"])) for a in data.get("absent", [])]
-    return people, absent
+def parse_labels(text: str) -> tuple[tuple[Person, ...], tuple[Absent, ...]]:
+    labels = Labels.model_validate(tomllib.loads(text))
+    return labels.person, labels.absent
 
 
 def evaluate_person(person: Person, returned: Sequence[str]) -> PersonReport:
@@ -131,11 +131,8 @@ def main(argv: Sequence[str] | None = None) -> int:
     if len(args) != 1:
         print(__doc__, file=sys.stderr)
         return 64
-    index = PostgresSearchIndex(config.database_dsn())
-    try:
+    with closing(PostgresSearchIndex(config.database_dsn())) as index:
         return run(Path(args[0]), index, DeepFaceEmbedder())
-    finally:
-        index.close()
 
 
 if __name__ == "__main__":

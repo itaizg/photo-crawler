@@ -2,12 +2,11 @@
 
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
 
 import httpx
 
 from face_index.errors import ItemError
-from face_index.models import Box, DetectedFace, PageMatch, RequestKind
+from face_index.models import Box, DetectedFace, PageMatch, Record, RequestKind
 
 PUBLIC_IP = "93.184.216.34"
 
@@ -45,11 +44,10 @@ class RecordingPacer:
         self.calls.append((host, kind))
 
 
-@dataclass
-class Reply:
+class Reply(Record):
     status: int = 200
     body: bytes = b""
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = {}
     error: type[httpx.TransportError] | None = None  # e.g. httpx.ReadTimeout
 
 
@@ -89,11 +87,13 @@ class MockSite:
 
 
 def html_reply(body: str) -> Reply:
-    return Reply(200, body.encode(), {"content-type": "text/html; charset=utf-8"})
+    return Reply(
+        status=200, body=body.encode(), headers={"content-type": "text/html; charset=utf-8"}
+    )
 
 
 def robots_reply(text: str = "User-agent: *\nAllow: /\n") -> Reply:
-    return Reply(200, text.encode(), {"content-type": "text/plain"})
+    return Reply(status=200, body=text.encode(), headers={"content-type": "text/plain"})
 
 
 class FakeEmbedder:

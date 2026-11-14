@@ -14,16 +14,51 @@ def seeded(store: PostgresIndexStore) -> dict[str, int]:
     pid = store.upsert_page("https://people.com/a", "people", 0)
     jpeg = images.photo(64, 64, seed=5)
     indexed, _ = store.stage_image(
-        NormalizedImage(b"\x05" * 32, jpeg, 64, 64, "JPEG", 64, 64), "https://img/i.jpg", pid, False
+        NormalizedImage(
+            sha256=b"\x05" * 32,
+            jpeg=jpeg,
+            width=64,
+            height=64,
+            original_format="JPEG",
+            original_width=64,
+            original_height=64,
+        ),
+        "https://img/i.jpg",
+        pid,
+        False,
     )
     store.process_pending(
-        indexed, lambda p: [DetectedFace(Box(2, 2, 20, 20), 0.99, (0.1,) * 512)], 1
+        indexed,
+        lambda p: [
+            DetectedFace(box=Box(x=2, y=2, w=20, h=20), confidence=0.99, embedding=(0.1,) * 512)
+        ],
+        1,
     )
     pending, _ = store.stage_image(
-        NormalizedImage(b"\x06" * 32, jpeg, 64, 64, "JPEG", 64, 64), "https://img/p.jpg", pid, False
+        NormalizedImage(
+            sha256=b"\x06" * 32,
+            jpeg=jpeg,
+            width=64,
+            height=64,
+            original_format="JPEG",
+            original_width=64,
+            original_height=64,
+        ),
+        "https://img/p.jpg",
+        pid,
+        False,
     )
     skipped, _ = store.stage_image(
-        Skipped(b"\x07" * 32, "too_small", "JPEG", 9, 9), "https://img/s.jpg", pid, False
+        Skipped(
+            sha256=b"\x07" * 32,
+            reason="too_small",
+            original_format="JPEG",
+            original_width=9,
+            original_height=9,
+        ),
+        "https://img/s.jpg",
+        pid,
+        False,
     )
     return {"indexed": indexed, "pending": pending, "skipped": skipped}
 

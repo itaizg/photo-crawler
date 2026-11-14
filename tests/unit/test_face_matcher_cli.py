@@ -27,7 +27,13 @@ class OrderLog:
 
     def __init__(self, faces: int = 1) -> None:
         self.events: list[str] = []
-        self.index = FakeSearchIndex(pages=[PageMatch("https://cnn.test/a", 0.1, False, ("i",))])
+        self.index = FakeSearchIndex(
+            pages=[
+                PageMatch(
+                    url="https://cnn.test/a", best_distance=0.1, lead=False, image_urls=("i",)
+                )
+            ]
+        )
         self._embedder = FakeEmbedder(default_faces=faces)
 
     def index_factory(self) -> FakeSearchIndex:
@@ -57,11 +63,24 @@ def run(
 
 
 PAGES = [
-    PageMatch("https://cnn.test/close", 0.112, True, ("https://img.test/a.jpg",)),
     PageMatch(
-        "https://cnn.test/mid", 0.187, False, ("https://img.test/b.jpg", "https://img.test/c.jpg")
+        url="https://cnn.test/close",
+        best_distance=0.112,
+        lead=True,
+        image_urls=("https://img.test/a.jpg",),
     ),
-    PageMatch("https://cnn.test/far", 0.241, False, ("https://img.test/d.jpg",)),
+    PageMatch(
+        url="https://cnn.test/mid",
+        best_distance=0.187,
+        lead=False,
+        image_urls=("https://img.test/b.jpg", "https://img.test/c.jpg"),
+    ),
+    PageMatch(
+        url="https://cnn.test/far",
+        best_distance=0.241,
+        lead=False,
+        image_urls=("https://img.test/d.jpg",),
+    ),
 ]
 
 
@@ -114,13 +133,13 @@ def test_missing_file_hints_at_the_queries_folder(
 
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can read any file")
-def test_unreadable_file(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+def test_unreadable_file(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], request: pytest.FixtureRequest
+) -> None:
     path = photo_file(tmp_path)
     path.chmod(0o000)
-    try:
-        assert run([str(path)]) == face_matcher.EXIT_BAD_IMAGE
-    finally:
-        path.chmod(0o644)
+    request.addfinalizer(lambda: path.chmod(0o644))  # so pytest can remove tmp_path
+    assert run([str(path)]) == face_matcher.EXIT_BAD_IMAGE
     assert "cannot read" in capsys.readouterr().err
 
 
@@ -194,27 +213,17 @@ def test_the_index_is_checked_before_the_model_runs(tmp_path: Path) -> None:
     assert log.events == ["index", "embed"]
 
 
-def test_unexpected_errors_are_one_line(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_unexpected_errors_propagate_and_still_close_the_index(tmp_path: Path) -> None:
     class Broken:
         def embed(self, jpeg: bytes) -> list[DetectedFace]:
             raise ZeroDivisionError("boom")
 
-    monkeypatch.delenv("FACE_MATCHER_DEBUG", raising=False)
-    code = face_matcher.main(
-        [str(photo_file(tmp_path))], index_factory=FakeSearchIndex, embedder=Broken()
-    )
-    assert code == face_matcher.EXIT_UNAVAILABLE
-    err = capsys.readouterr().err
-    assert "error: unexpected ZeroDivisionError: boom" in err
-    assert "Traceback" not in err
-
-    monkeypatch.setenv("FACE_MATCHER_DEBUG", "1")
-    with pytest.raises(ZeroDivisionError):
+    index = FakeSearchIndex()
+    with pytest.raises(ZeroDivisionError, match="boom"):
         face_matcher.main(
-            [str(photo_file(tmp_path))], index_factory=FakeSearchIndex, embedder=Broken()
+            [str(photo_file(tmp_path))], index_factory=lambda: index, embedder=Broken()
         )
+    assert index.closed
 
 
 def test_the_script_does_not_import_airflow() -> None:
@@ -226,7 +235,11 @@ def test_the_script_does_not_import_airflow() -> None:
 def test_box_header_uses_the_face_box(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     class One:
         def embed(self, jpeg: bytes) -> list[DetectedFace]:
-            return [DetectedFace(Box(212, 96, 118, 151), 0.99, (0.0,) * 512)]
+            return [
+                DetectedFace(
+                    box=Box(x=212, y=96, w=118, h=151), confidence=0.99, embedding=(0.0,) * 512
+                )
+            ]
 
     face_matcher.main([str(photo_file(tmp_path))], index_factory=FakeSearchIndex, embedder=One())
     assert capsys.readouterr().out.startswith("# face 1 x=212 y=96 w=118 h=151: ")
@@ -368,16 +381,14 @@ def test_list_faces_conflicts_with_search_options(tmp_path: Path, extra: list[st
 
 @pytest.mark.skipif(os.geteuid() == 0, reason="root can write anywhere")
 def test_unwritable_folder_prints_the_list_then_exits_5(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], request: pytest.FixtureRequest
 ) -> None:
     folder = tmp_path / "ro"
     folder.mkdir()
     path = photo_file(folder, "group.jpg")
     folder.chmod(0o555)
-    try:
-        assert run([str(path), "--list-faces"], faces=1) == face_matcher.EXIT_CANNOT_WRITE
-    finally:
-        folder.chmod(0o755)
+    request.addfinalizer(lambda: folder.chmod(0o755))  # so pytest can remove tmp_path
+    assert run([str(path), "--list-faces"], faces=1) == face_matcher.EXIT_CANNOT_WRITE
     captured = capsys.readouterr()
     assert "1 x=4 y=4 w=16 h=16" in captured.out
     assert "cannot write" in captured.err

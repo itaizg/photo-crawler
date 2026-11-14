@@ -18,7 +18,9 @@ def decode(jpeg: bytes) -> Image.Image:
 
 def test_boxes_are_drawn_on_a_same_size_jpeg() -> None:
     source = images.photo(120, 80, seed=3)
-    out = draw_boxes(source, [("1", Box(10, 10, 30, 30)), ("2", Box(60, 20, 30, 30))])
+    out = draw_boxes(
+        source, [("1", Box(x=10, y=10, w=30, h=30)), ("2", Box(x=60, y=20, w=30, h=30))]
+    )
     picture = decode(out)
     assert picture.size == (120, 80)
     # The outline is red on the box edge.
@@ -53,4 +55,4 @@ def test_export_image_labels_faces_by_their_index(monkeypatch: pytest.MonkeyPatc
 
     monkeypatch.setattr(export_image, "draw_boxes", spy)
     export_image._with_boxes(exported)
-    assert seen == [[("0", Box(2, 2, 20, 20)), ("1", Box(30, 30, 20, 20))]]
+    assert seen == [[("0", Box(x=2, y=2, w=20, h=20)), ("1", Box(x=30, y=30, w=20, h=20))]]

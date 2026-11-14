@@ -87,7 +87,7 @@ The first line says `1 face` for a single face. The annotated copy is written ne
 | 5 | CANNOT_WRITE | `--list-faces` could not write the copy. The face list is still printed first | `error: cannot write queries/group.faces.jpg: Permission denied` |
 | 64 | USAGE | Bad arguments, threshold out of range, conflicting options, `--face N` beyond the face count | `error: --face 3, but only 2 faces were found` |
 
-Statuses 1 to 5 never come with a Python traceback. An unexpected exception is reported as `error: unexpected <Type>: <message>` with status 1, and the traceback appears only when `FACE_MATCHER_DEBUG=1`.
+Statuses 1 to 5 never come with a Python traceback. An unexpected exception is a bug, so the script does not catch it (constitution VIII): Python prints its traceback and exits with status 1. The index connection is closed first.
 
 ## Guarantees
 

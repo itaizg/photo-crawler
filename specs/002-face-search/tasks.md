@@ -21,10 +21,10 @@ description: "Task list for the Face Search Script"
 
 ## Conventions for every task
 
-- Python 3.13, everything type-annotated (constitution II). `Any` only for DB rows and DeepFace output, narrowed to dataclasses at once.
+- Python 3.13, everything type-annotated (constitution II). `Any` only for DB rows and DeepFace output, narrowed to frozen Pydantic models at once.
 - `ruff check`, `ruff format --check` and `ty check` pass after each task.
 - **No Airflow**: nothing under `src/face_index/` imports `airflow`.
-- **Ports and adapters**: `search.py` depends only on the protocols `SearchIndex`, `FaceEmbedder` and `ImageNormalizer`, plus dataclasses from `models.py`. It never imports `psycopg`, `PIL` or `deepface`. Only `search_store.py` touches SQL, and `face_matcher.py` does argument parsing, file I/O, printing and exit statuses.
+- **Ports and adapters**: `search.py` depends only on the protocols `SearchIndex`, `FaceEmbedder` and `ImageNormalizer`, plus frozen Pydantic models from `models.py`. It never imports `psycopg`, `PIL` or `deepface`. Only `search_store.py` touches SQL, and `face_matcher.py` does argument parsing, file I/O, printing and exit statuses.
 - **One place for constants** (DRY): the threshold is `model_profile.MATCH_THRESHOLD`, and limits come from `config.py`. Reuse `PillowNormalizer`, `DeepFaceEmbedder` and `db.connect` unchanged.
 - **Test types**:
   - Unit tests: no database, no model weights. Faces come from `FakeEmbedder`, the index from `FakeSearchIndex`.
@@ -132,7 +132,7 @@ description: "Task list for the Face Search Script"
   - Exit 1 when `index_factory` raises `InfrastructureError`, and the DSN text is not printed.
   - Exit 4 when the profile is missing or the face count is 0, with the message naming the profile key and "run the image_indexer pipeline first".
   - The index is contacted before the embedder is called, so a down database fails fast.
-  - An unexpected exception gives exit 1 with `error: unexpected <Type>` and no traceback, unless `FACE_MATCHER_DEBUG=1`.
+  - An unexpected exception is not caught (constitution VIII): Python prints its traceback and exits 1, after the index connection is closed.
   - `"airflow" not in sys.modules` after importing `face_index.face_matcher` in a subprocess.
 - [X] T018 [P] [US1] Write `tests/smoke/test_face_matcher_smoke.py` (marker `model`, skipped without `tests/fixtures/images/face_one.jpg`):
   - Index `face_one.jpg` into the test database through `PostgresIndexStore` and `DeepFaceEmbedder`, linked to one page.
@@ -157,7 +157,7 @@ description: "Task list for the Face Search Script"
     4. Run `prepare_query`, printing `loading face model…` to stderr.
     5. Run `search_faces`.
     6. Print the groups per the contract.
-  - Map every error to its status with one `error:` line on stderr, with a traceback only when `FACE_MATCHER_DEBUG=1`.
+  - Map every expected error to its status with one `error:` line on stderr, in one place (`_status`).
   - Always close the index.
   - End the module with `if __name__ == "__main__": raise SystemExit(main())`.
 - [ ] T021 [US1] Do the constitution's final check for US1. Rebuild and start the full stack (`docker compose up -d --build`), trigger `image_indexer`, and wait for the DAG run to succeed. Then run quickstart §2 on the index that run produced: `docker compose run --rm face-matcher queries/one.jpg`. Fix anything that differs from the contract. Record the real output for the README (used in T038).

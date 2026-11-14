@@ -88,7 +88,10 @@ def test_run_prints_a_report_and_returns_the_verdict(
     (tmp_path / "nobody.jpg").write_bytes(images.photo(200, 150, seed=2))
     labels = tmp_path / "labels.toml"
     labels.write_text(LABELS, encoding="utf-8")
-    pages = [PageMatch(f"https://cnn.test/{n}", 0.1, False, ("i",)) for n in range(1, 6)]
+    pages = [
+        PageMatch(url=f"https://cnn.test/{n}", best_distance=0.1, lead=False, image_urls=("i",))
+        for n in range(1, 6)
+    ]
 
     calls = {"n": 0}
 

@@ -7,6 +7,7 @@ query ``e0`` is exactly ``1 - cos(angle)``.
 import math
 import re
 from collections.abc import Iterator
+from contextlib import closing
 from pathlib import Path
 
 import numpy as np
@@ -53,14 +54,21 @@ class Seeder:
         self._seed += 1
         seed = self._seed
         image = NormalizedImage(
-            bytes([seed]) * 32, images.photo(64, 64, seed=seed), 64, 64, "JPEG", 64, 64
+            sha256=bytes([seed]) * 32,
+            jpeg=images.photo(64, 64, seed=seed),
+            width=64,
+            height=64,
+            original_format="JPEG",
+            original_width=64,
+            original_height=64,
         )
         image_id, _ = self.store.stage_image(
             image, url or f"https://img.test/{seed}.jpg", page_id, lead
         )
         if index:
             faces = [
-                DetectedFace(Box(1 + 10 * i, 1, 8, 8), 0.99, vec) for i, vec in enumerate(vectors)
+                DetectedFace(box=Box(x=1 + 10 * i, y=1, w=8, h=8), confidence=0.99, embedding=vec)
+                for i, vec in enumerate(vectors)
             ]
             self.store.process_pending(image_id, lambda _p: faces, self.profile_id)
         return image_id
@@ -209,12 +217,8 @@ def test_profile_lookup_and_face_count(seed: Seeder, index: PostgresSearchIndex)
 
 
 def test_empty_database_is_not_ready(db_dsn: str) -> None:
-    idx = PostgresSearchIndex(db_dsn)
-    try:
-        with pytest.raises(IndexNotReady):
-            idx.profile_id(model_profile.KEY)
-    finally:
-        idx.close()
+    with closing(PostgresSearchIndex(db_dsn)) as idx, pytest.raises(IndexNotReady):
+        idx.profile_id(model_profile.KEY)
 
 
 def test_session_is_read_only(seed: Seeder, index: PostgresSearchIndex) -> None:

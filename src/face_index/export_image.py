@@ -7,6 +7,8 @@ import argparse
 import hashlib
 import sys
 from collections.abc import Sequence
+from contextlib import closing
+from pathlib import Path
 from typing import NoReturn
 
 from face_index import config
@@ -48,20 +50,21 @@ def _is_hex(text: str) -> bool:
 
 def _with_boxes(image: ExportedImage) -> bytes:
     assert image.jpeg is not None
-    return draw_boxes(image.jpeg, [(str(i), Box(x, y, w, h)) for i, x, y, w, h in image.boxes])
+    return draw_boxes(
+        image.jpeg, [(str(i), Box(x=x, y=y, w=w, h=h)) for i, x, y, w, h in image.boxes]
+    )
 
 
 def main(argv: Sequence[str] | None = None, dsn: str | None = None) -> int:
     args = _parse(argv)
     selector = f"id={args.id}" if args.id is not None else f"sha256={args.sha256}"
-    store = PostgresIndexStore(dsn or config.database_dsn())
-    try:
-        found = store.export_image(args.id, bytes.fromhex(args.sha256) if args.sha256 else None)
-    except InfrastructureError as exc:
-        print(f"error: {exc}", file=sys.stderr)  # the message never contains the DSN
-        return EXIT_DB
-    finally:
-        store.close()
+    sha256 = bytes.fromhex(args.sha256) if args.sha256 else None
+    with closing(PostgresIndexStore(dsn or config.database_dsn())) as store:
+        try:
+            found = store.export_image(args.id, sha256)
+        except InfrastructureError as exc:
+            print(f"error: {exc}", file=sys.stderr)  # the message never contains the DSN
+            return EXIT_DB
     if found is None:
         print(f"no image with {selector}", file=sys.stderr)
         return EXIT_NOT_FOUND
@@ -76,8 +79,7 @@ def main(argv: Sequence[str] | None = None, dsn: str | None = None) -> int:
     if args.output == "-":
         sys.stdout.buffer.write(data)
     else:
-        with open(args.output, "wb") as handle:
-            handle.write(data)
+        Path(args.output).write_bytes(data)
     if args.boxes:
         print("note: --boxes output is a modified copy, not byte-identical", file=sys.stderr)
     print(
