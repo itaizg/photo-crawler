@@ -4,6 +4,7 @@ import importlib.util
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Final, LiteralString
 
 import pytest
 
@@ -11,7 +12,7 @@ from face_index.models import PageMatch
 from tests import images
 from tests.fakes import FakeEmbedder, FakeSearchIndex
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "evaluate_search.py"
+SCRIPT: Final[Path] = Path(__file__).resolve().parents[2] / "scripts" / "evaluate_search.py"
 
 
 def load() -> ModuleType:
@@ -24,9 +25,9 @@ def load() -> ModuleType:
     return module
 
 
-ev = load()
+ev: Final[ModuleType] = load()
 
-LABELS = """
+LABELS: Final[LiteralString] = """
 [[person]]
 name = "person-a"
 photo = "a.jpg"

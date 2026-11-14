@@ -6,6 +6,8 @@ same host, like people.com) each have a home page and two articles. Faces are de
 """
 
 import io
+from collections.abc import Mapping
+from typing import Final
 
 from PIL import Image
 
@@ -13,16 +15,20 @@ from face_index.config import Site
 from tests import images
 from tests.fakes import FakeEmbedder, MockSite, Reply, html_reply, robots_reply
 
-NEWS = Site(name="cnn", seed_url="https://news.test/", page_hosts=frozenset({"news.test"}))
-CELEB = Site(name="people", seed_url="https://celeb.test/", page_hosts=frozenset({"celeb.test"}))
-SITES = (NEWS, CELEB)
+NEWS: Final[Site] = Site(
+    name="cnn", seed_url="https://news.test/", page_hosts=frozenset({"news.test"})
+)
+CELEB: Final[Site] = Site(
+    name="people", seed_url="https://celeb.test/", page_hosts=frozenset({"celeb.test"})
+)
+SITES: Final[tuple[Site, ...]] = (NEWS, CELEB)
 
-FACE_ONE = images.photo(400, 300, seed=1)  # FakeEmbedder: 1 face
-FACE_TWO = images.photo(420, 300, seed=2)  # FakeEmbedder: 2 faces
-NO_FACE = images.photo(440, 300, seed=3)
-FACES_BY_SIZE = {"400x300": 1, "420x300": 2}
+FACE_ONE: Final[bytes] = images.photo(400, 300, seed=1)  # FakeEmbedder: 1 face
+FACE_TWO: Final[bytes] = images.photo(420, 300, seed=2)  # FakeEmbedder: 2 faces
+NO_FACE: Final[bytes] = images.photo(440, 300, seed=3)
+FACES_BY_SIZE: Final[Mapping[str, int]] = {"400x300": 1, "420x300": 2}
 
-URL = {
+URL: Final[Mapping[str, str]] = {
     "face_one": "https://img.news.test/face-one.jpg",
     "face_one_dup": "https://celeb.test/thmb/same-picture.jpg",  # same bytes, other URL and site
     "face_two": "https://img.news.test/face-two.jpg",
@@ -34,7 +40,7 @@ URL = {
     "error": "https://celeb.test/thmb/server-error.jpg",
 }
 
-JPEG = {"content-type": "image/jpeg"}
+JPEG: Final[Mapping[str, str]] = {"content-type": "image/jpeg"}
 
 
 def _page(lead: str, links: list[str], imgs: list[str]) -> Reply:

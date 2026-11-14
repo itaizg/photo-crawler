@@ -5,7 +5,7 @@ there is deliberately no timing assertion (constitution IV).
 """
 
 import logging
-from typing import LiteralString
+from typing import Final, LiteralString
 
 import psycopg
 import pytest
@@ -15,7 +15,7 @@ from tests.fixtures.minisite import minisite
 from tests.fixtures.minisite.minisite import URL
 from tests.smoke.runner import run_once
 
-pytestmark = pytest.mark.smoke
+pytestmark: Final[pytest.MarkDecorator] = pytest.mark.smoke
 
 
 def scalar(sql: psycopg.Connection, query: LiteralString, *args: object) -> object:

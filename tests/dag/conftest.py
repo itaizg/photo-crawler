@@ -5,10 +5,11 @@ import os
 import sys
 from pathlib import Path
 from types import ModuleType
+from typing import Final
 
 import pytest
 
-DAG_FILE = Path(__file__).resolve().parents[2] / "dags" / "image_indexer.py"
+DAG_FILE: Final[Path] = Path(__file__).resolve().parents[2] / "dags" / "image_indexer.py"
 
 
 @pytest.fixture(scope="session")

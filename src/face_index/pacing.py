@@ -15,6 +15,7 @@ import threading
 import time
 from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
+from typing import Final, LiteralString
 
 import psycopg
 
@@ -22,7 +23,7 @@ from face_index import db
 from face_index.errors import InfrastructureError
 from face_index.models import RequestKind
 
-_RESERVE_SQL = """
+_RESERVE_SQL: Final[LiteralString] = """
 INSERT INTO host_pace (host, kind, next_slot)
 VALUES (%(host)s, %(kind)s, clock_timestamp() + %(interval)s)
 ON CONFLICT (host, kind) DO UPDATE

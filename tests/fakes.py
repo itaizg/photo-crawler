@@ -2,13 +2,14 @@
 
 import hashlib
 from collections.abc import Callable, Mapping, Sequence
+from typing import Final, LiteralString
 
 import httpx
 
 from face_index.errors import ItemError
 from face_index.models import Box, DetectedFace, PageMatch, Record, RequestKind
 
-PUBLIC_IP = "93.184.216.34"
+PUBLIC_IP: Final[LiteralString] = "93.184.216.34"
 
 
 class FakeClock:

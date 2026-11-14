@@ -1,12 +1,14 @@
 """Narrowing of DeepFace-shaped results; no model is loaded."""
 
+from typing import Final
+
 import pytest
 
 from face_index import faces
 from face_index.errors import ItemError
 from face_index.faces import narrow_results
 
-VEC = [0.1] * 512
+VEC: Final[list[float]] = [0.1] * 512
 
 
 def entry(x: int, y: int, w: int = 50, h: int = 50, conf: float = 0.99) -> dict[str, object]:

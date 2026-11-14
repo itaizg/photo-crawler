@@ -2,13 +2,14 @@
 
 import io
 from collections.abc import Sequence
+from typing import Final
 
 from PIL import Image, ImageDraw
 
 from face_index import config
 from face_index.models import Box
 
-_RED = (255, 0, 0)
+_RED: Final[tuple[int, int, int]] = (255, 0, 0)
 
 
 def draw_boxes(jpeg: bytes, boxes: Sequence[tuple[str, Box]]) -> bytes:

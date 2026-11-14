@@ -1,5 +1,6 @@
 import hashlib
 import io
+from typing import Final
 
 import pytest
 from PIL import Image
@@ -9,7 +10,7 @@ from face_index.models import NormalizedImage, Skipped
 from face_index.normalize import PillowNormalizer
 from tests import images
 
-normalizer = PillowNormalizer()
+normalizer: Final[PillowNormalizer] = PillowNormalizer()
 
 
 def ok(data: bytes, content_type: str | None = None) -> NormalizedImage:

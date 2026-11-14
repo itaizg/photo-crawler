@@ -9,13 +9,15 @@ Trigger with optional params `depth`, `page_cap` (null = no cap), `page_rate`, `
 Every task is a thin wrapper around a `face_index.pipeline` function (research R3).
 """
 
+from collections.abc import Mapping
 from datetime import datetime, timedelta
+from typing import Final
 
-from airflow.sdk import Param, dag, get_current_context, task
+from airflow.sdk import DAG, Param, dag, get_current_context, task
 
 from face_index import config, pipeline
 
-PARAMS = {
+PARAMS: Final[Mapping[str, Param]] = {
     "depth": Param(
         config.DEFAULT_DEPTH,
         type="integer",
@@ -124,4 +126,4 @@ def image_indexer() -> None:
     summarize(downloads, detections)  # ty: ignore[invalid-argument-type]  # XComArgs at runtime
 
 
-image_indexer_dag = image_indexer()
+image_indexer_dag: Final[DAG] = image_indexer()

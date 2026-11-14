@@ -1,8 +1,10 @@
+from typing import Final
+
 import pytest
 
 from face_index.models import Skipped
 
-SHA = b"\x01" * 32
+SHA: Final[bytes] = b"\x01" * 32
 
 
 @pytest.mark.parametrize(("width", "height"), [(10, None), (None, 10)])

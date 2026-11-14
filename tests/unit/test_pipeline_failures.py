@@ -5,8 +5,9 @@ Uses an in-memory fake store, so these tests need no database.
 
 import logging
 import re
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import UTC, datetime
+from typing import Final, LiteralString
 
 import httpx
 import pytest
@@ -29,10 +30,10 @@ from face_index.ports import FaceEmbedder
 from tests import images
 from tests.fakes import FakeEmbedder, FakeResolver, MockSite, RecordingPacer, Reply, robots_reply
 
-SITE = pipeline.config.Site(
+SITE: Final[pipeline.config.Site] = pipeline.config.Site(
     name="cnn", seed_url="https://news.test/", page_hosts=frozenset({"news.test"})
 )
-JPEG = {"content-type": "image/jpeg"}
+JPEG: Final[Mapping[str, str]] = {"content-type": "image/jpeg"}
 
 
 class MemoryStore:
@@ -121,7 +122,7 @@ class MemoryStore:
 
 
 def deps(
-    store: MemoryStore, routes: dict[str, Reply], embedder: FaceEmbedder | None = None
+    store: MemoryStore, routes: Mapping[str, Reply], embedder: FaceEmbedder | None = None
 ) -> Deps:
     site = MockSite(
         {
@@ -149,8 +150,8 @@ def crawl_payload(refs: list[str]) -> dict[str, object]:
     return CrawlResult(site="cnn", pages=[page]).to_json()
 
 
-GOOD = "https://img.test/good.jpg"
-ROUTES = {
+GOOD: Final[LiteralString] = "https://img.test/good.jpg"
+ROUTES: Final[Mapping[str, Reply]] = {
     GOOD: Reply(status=200, body=images.photo(100, 100), headers=JPEG),
     "https://img.test/500.jpg": Reply(status=500),
     "https://img.test/slow.jpg": Reply(error=httpx.ReadTimeout),
@@ -166,7 +167,7 @@ ROUTES = {
     ),
     "https://img.test/icon.jpg": Reply(status=200, body=images.photo(40, 40), headers=JPEG),
 }
-FAILING = {
+FAILING: Final[Mapping[str, str]] = {
     "https://img.test/500.jpg": "http 500",
     "https://img.test/slow.jpg": "timeout",
     "https://img.test/corrupt.jpg": "decode error",

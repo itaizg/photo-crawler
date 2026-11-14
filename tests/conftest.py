@@ -7,6 +7,7 @@ Each test gets its own schema (``search_path = <schema>, public``); pgvector's t
 import os
 import uuid
 from collections.abc import Iterator
+from typing import Final
 
 import psycopg
 import pytest
@@ -16,7 +17,9 @@ from psycopg.sql import SQL, Identifier
 from face_index.store import PostgresIndexStore
 from tests.fakes import FakeClock, FakeEmbedder, FakeResolver
 
-TEST_DSN = os.environ.get("FACE_INDEX_TEST_DSN", "postgresql://faces@127.0.0.1:5432/faces_test")
+TEST_DSN: Final[str] = os.environ.get(
+    "FACE_INDEX_TEST_DSN", "postgresql://faces@127.0.0.1:5432/faces_test"
+)
 
 
 def _admin_connection() -> psycopg.Connection:

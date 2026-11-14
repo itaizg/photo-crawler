@@ -1,5 +1,7 @@
 """The search core (``face_index.search``) with fakes: no database, no model."""
 
+from typing import Final
+
 import pytest
 
 from face_index import config
@@ -106,12 +108,14 @@ def test_no_match_gives_an_empty_result() -> None:
 
 # -- threshold (US2, FR-005) ------------------------------------------------------------------
 
-CANNED = [
+CANNED: Final[list[PageMatch]] = [
     page("https://cnn.test/a", 0.10),
     page("https://cnn.test/b", 0.25),
     page("https://cnn.test/c", 0.29),
 ]
-ONE_FACE = [QueryFace(number=1, box=Box(x=1, y=1, w=8, h=8), embedding=(1.0,) * 512)]
+ONE_FACE: Final[list[QueryFace]] = [
+    QueryFace(number=1, box=Box(x=1, y=1, w=8, h=8), embedding=(1.0,) * 512)
+]
 
 
 def pages_at(threshold: float) -> list[str]:
@@ -159,7 +163,7 @@ def test_faces_with_equal_x_are_numbered_top_to_bottom() -> None:
     assert [(f.number, f.box.x, f.box.y) for f in faces] == [(1, 2, 70), (2, 30, 5), (3, 30, 50)]
 
 
-THREE = [
+THREE: Final[list[QueryFace]] = [
     QueryFace(number=n, box=Box(x=4 + 20 * (n - 1), y=4, w=16, h=16), embedding=(float(n),) * 512)
     for n in (1, 2, 3)
 ]

@@ -1,19 +1,20 @@
 """The one face model setup shared by the pipeline and the search script (FR-013, research R9)."""
 
 from importlib.metadata import PackageNotFoundError, version
+from typing import Final, LiteralString
 
 from face_index.models import Record
 
-DETECTOR = "retinaface"
-MODEL = "Facenet512"
-DIMENSIONS = 512
-DISTANCE = "cosine"
-ALIGN = True
-NORMALIZATION = "base"
-MIN_FACE_CONFIDENCE = 0.9
+DETECTOR: Final[LiteralString] = "retinaface"
+MODEL: Final[LiteralString] = "Facenet512"
+DIMENSIONS: Final[int] = 512
+DISTANCE: Final[LiteralString] = "cosine"
+ALIGN: Final[bool] = True
+NORMALIZATION: Final[LiteralString] = "base"
+MIN_FACE_CONFIDENCE: Final[float] = 0.9
 # Search: a stored face matches when its cosine distance is strictly below this. It equals
 # DeepFace's find_threshold("Facenet512", "cosine"); a model test keeps the two in step (R2).
-MATCH_THRESHOLD = 0.30
+MATCH_THRESHOLD: Final[float] = 0.30
 
 
 class ProfileRecord(Record):
@@ -56,4 +57,4 @@ def current_profile() -> ProfileRecord:
 
 
 # The key for the installed versions; the search script selects its profile row by it.
-KEY = current_profile().key
+KEY: Final[str] = current_profile().key

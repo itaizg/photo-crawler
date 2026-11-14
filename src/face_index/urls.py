@@ -1,12 +1,14 @@
 """URL normalization and crawl scope (FR-002, FR-007, research R5)."""
 
 import re
+from collections.abc import Mapping
+from typing import Final
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
 from face_index.config import TRACKING_PARAMS, TRACKING_PREFIXES, Site
 
-_DEFAULT_PORTS = {"http": 80, "https": 443}
-_SLASHES = re.compile(r"/{2,}")
+_DEFAULT_PORTS: Final[Mapping[str, int]] = {"http": 80, "https": 443}
+_SLASHES: Final[re.Pattern[str]] = re.compile(r"/{2,}")
 
 
 def _netloc(host: str, port: int | None, scheme: str) -> str:

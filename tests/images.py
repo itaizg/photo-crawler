@@ -3,6 +3,7 @@
 import io
 import struct
 import zlib
+from typing import Final
 
 from PIL import Image
 
@@ -46,7 +47,9 @@ def exif_rotated_jpeg() -> bytes:
     return encode(image, "JPEG", exif=exif.tobytes())
 
 
-SVG = b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"/>'
+SVG: Final[bytes] = (
+    b'<?xml version="1.0"?><svg xmlns="http://www.w3.org/2000/svg" width="100" height="100"/>'
+)
 
 
 def corrupt_jpeg() -> bytes:

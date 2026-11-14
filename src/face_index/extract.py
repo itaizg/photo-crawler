@@ -2,7 +2,7 @@
 
 import logging
 import re
-from typing import TypeIs
+from typing import Final, TypeIs
 from urllib.parse import urljoin
 
 from bs4 import BeautifulSoup
@@ -11,13 +11,15 @@ from bs4.element import Tag
 from face_index.models import PageExtract
 from face_index.urls import for_log
 
-log = logging.getLogger(__name__)
+log: Final[logging.Logger] = logging.getLogger(__name__)
 
-_LAZY_SRC = ("data-src", "data-original", "data-lazy-src")
-_SRCSET = ("srcset", "data-srcset")
-_CSS_URL = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
-_CSS_BACKGROUND = re.compile(r"background(?:-image)?\s*:([^;]+)", re.IGNORECASE)
-_DESCRIPTOR = re.compile(r"^(\d+(?:\.\d+)?)([wx])$")
+_LAZY_SRC: Final[tuple[str, ...]] = ("data-src", "data-original", "data-lazy-src")
+_SRCSET: Final[tuple[str, ...]] = ("srcset", "data-srcset")
+_CSS_URL: Final[re.Pattern[str]] = re.compile(r"url\(\s*(['\"]?)(.*?)\1\s*\)", re.IGNORECASE)
+_CSS_BACKGROUND: Final[re.Pattern[str]] = re.compile(
+    r"background(?:-image)?\s*:([^;]+)", re.IGNORECASE
+)
+_DESCRIPTOR: Final[re.Pattern[str]] = re.compile(r"^(\d+(?:\.\d+)?)([wx])$")
 
 
 def _attr(tag: Tag, name: str) -> str | None:

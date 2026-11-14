@@ -9,6 +9,7 @@ import re
 from collections.abc import Iterator
 from contextlib import closing
 from pathlib import Path
+from typing import Final
 
 import numpy as np
 import psycopg
@@ -21,8 +22,10 @@ from face_index.search_store import PostgresSearchIndex, search_sql
 from face_index.store import PostgresIndexStore
 from tests import images
 
-CONTRACT = Path(__file__).resolve().parents[2] / "specs/002-face-search/contracts/search-query.md"
-QUERY = (1.0,) + (0.0,) * 511
+CONTRACT: Final[Path] = (
+    Path(__file__).resolve().parents[2] / "specs/002-face-search/contracts/search-query.md"
+)
+QUERY: Final[tuple[float, ...]] = (1.0,) + (0.0,) * 511
 
 
 def at_distance(d: float) -> tuple[float, ...]:
@@ -31,7 +34,7 @@ def at_distance(d: float) -> tuple[float, ...]:
     return (c, math.sqrt(max(0.0, 1.0 - c * c))) + (0.0,) * 510
 
 
-ORTHOGONAL = (0.0, 1.0) + (0.0,) * 510  # distance exactly 1.0
+ORTHOGONAL: Final[tuple[float, ...]] = (0.0, 1.0) + (0.0,) * 510  # distance exactly 1.0
 
 
 class Seeder:

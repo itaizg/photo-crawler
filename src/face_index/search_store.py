@@ -9,6 +9,7 @@ block of ``specs/002-face-search/contracts/search-query.md`` (a test checks this
 from collections.abc import Generator, Sequence
 from contextlib import contextmanager
 from importlib.resources import files
+from typing import Final, LiteralString
 
 import numpy as np
 import psycopg
@@ -18,8 +19,8 @@ from face_index import db
 from face_index.errors import IndexNotReady, InfrastructureError
 from face_index.models import PageMatch
 
-_PROFILE_ID = "SELECT id FROM model_profile WHERE key = %s"
-_FACE_COUNT = """
+_PROFILE_ID: Final[LiteralString] = "SELECT id FROM model_profile WHERE key = %s"
+_FACE_COUNT: Final[LiteralString] = """
 SELECT count(*) FROM face f JOIN image i ON i.id = f.image_id
 WHERE f.model_profile_id = %s AND i.status = 'indexed'
 """

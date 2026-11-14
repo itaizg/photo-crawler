@@ -6,6 +6,7 @@ drift apart.
 
 import re
 from pathlib import Path
+from typing import Final, LiteralString
 
 import numpy as np
 import psycopg
@@ -16,11 +17,13 @@ from face_index.models import Box, DetectedFace, NormalizedImage
 from face_index.store import PostgresIndexStore
 from tests import images
 
-INSERT_FACE = (
+INSERT_FACE: Final[LiteralString] = (
     "INSERT INTO face (image_id, face_index, x, y, w, h, confidence, embedding, model_profile_id) "
     "VALUES (%s, 0, 1, 1, 10, 10, 0.99, %s, %s)"
 )
-CONTRACT = Path(__file__).resolve().parents[2] / "specs/001-image-indexer/contracts/index-read.md"
+CONTRACT: Final[Path] = (
+    Path(__file__).resolve().parents[2] / "specs/001-image-indexer/contracts/index-read.md"
+)
 
 
 def reference_query() -> str:

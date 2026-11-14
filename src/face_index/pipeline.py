@@ -15,7 +15,7 @@ import json
 import logging
 from collections import Counter
 from collections.abc import Mapping, Sequence
-from typing import Annotated
+from typing import Annotated, Final
 
 from pydantic import ConfigDict, Field, SkipValidation
 
@@ -27,7 +27,7 @@ from face_index.models import CrawledPage, DetectedFace, PendingImage, Record, S
 from face_index.ports import FaceEmbedder, Fetcher, ImageNormalizer, IndexStore
 from face_index.urls import for_log
 
-log = logging.getLogger(__name__)
+log: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 class RunParams(Record):
@@ -294,7 +294,7 @@ def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict
     return Summary.of(counts).to_json()
 
 
-SUMMARY_ROWS = (
+SUMMARY_ROWS: Final[tuple[tuple[str, str], ...]] = (
     ("pages crawled", "pages_crawled."),
     ("images found", "images_found"),
     ("downloaded", "downloaded"),

@@ -5,13 +5,14 @@ Weights land under `$DEEPFACE_HOME/.deepface/weights`.
 """
 
 import logging
+from typing import Final
 
 import numpy as np
 from deepface import DeepFace
 
 from face_index import model_profile
 
-log = logging.getLogger(__name__)
+log: Final[logging.Logger] = logging.getLogger(__name__)
 
 
 def main() -> None:

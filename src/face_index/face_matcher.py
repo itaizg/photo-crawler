@@ -8,10 +8,10 @@ Output formats and exit statuses: specs/002-face-search/contracts/face-matcher-c
 
 import argparse
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from contextlib import closing
 from pathlib import Path
-from typing import Annotated, NoReturn
+from typing import Annotated, Final, LiteralString, NoReturn
 
 from pydantic import Field, ValidationError
 
@@ -32,15 +32,15 @@ from face_index.search import (
 )
 from face_index.search_store import PostgresSearchIndex
 
-EXIT_OK = 0
-EXIT_UNAVAILABLE = 1
-EXIT_BAD_IMAGE = 2
-EXIT_NO_FACE = 3
-EXIT_INDEX_NOT_READY = 4
-EXIT_CANNOT_WRITE = 5
-EXIT_USAGE = 64
+EXIT_OK: Final[int] = 0
+EXIT_UNAVAILABLE: Final[int] = 1
+EXIT_BAD_IMAGE: Final[int] = 2
+EXIT_NO_FACE: Final[int] = 3
+EXIT_INDEX_NOT_READY: Final[int] = 4
+EXIT_CANNOT_WRITE: Final[int] = 5
+EXIT_USAGE: Final[int] = 64
 
-EPILOG = """exit statuses:
+EPILOG: Final[LiteralString] = """exit statuses:
   0   success, including faces with no matching pages
   1   database or face model unavailable
   2   query file problem (missing, unreadable, not a photo, too small or too large)
@@ -69,7 +69,7 @@ class Options(Record):
     details: bool = False
 
 
-_RULES = {
+_RULES: Final[Mapping[str, str]] = {
     "threshold": "the cosine distance threshold must be in (0, 2]",
     "face": "the face number must be 1 or more",
 }

@@ -14,7 +14,7 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager
 from datetime import datetime
 from importlib.resources import files
-from typing import Any
+from typing import Any, Final, LiteralString
 
 import numpy as np
 import psycopg
@@ -31,26 +31,26 @@ from face_index.models import (
     Skipped,
 )
 
-_UPSERT_PAGE = """
+_UPSERT_PAGE: Final[LiteralString] = """
 INSERT INTO page (url, site, depth) VALUES (%s, %s, %s)
 ON CONFLICT (url) DO UPDATE
   SET depth = least(page.depth, EXCLUDED.depth)
 RETURNING id
 """
 
-_LINK = """
+_LINK: Final[LiteralString] = """
 INSERT INTO page_image (page_id, image_id, is_lead) VALUES (%s, %s, %s)
 ON CONFLICT (page_id, image_id) DO UPDATE
   SET last_seen_at = now(), is_lead = page_image.is_lead OR EXCLUDED.is_lead
 """
 
 # A link the page's latest crawl did not refresh (index-read.md guarantee 6, FR-018).
-_OUTDATED_LINKS = """
+_OUTDATED_LINKS: Final[LiteralString] = """
 SELECT count(*) FROM page_image pi JOIN page p ON p.id = pi.page_id
 WHERE pi.page_id = %s AND pi.last_seen_at < p.last_crawled_at
 """
 
-_UPSERT_PROFILE = """
+_UPSERT_PROFILE: Final[LiteralString] = """
 INSERT INTO model_profile (key, detector, model, dimensions, distance, align, normalization,
                            min_face_confidence, deepface_version, tensorflow_version)
 VALUES (%(key)s, %(detector)s, %(model)s, %(dimensions)s, %(distance)s, %(align)s,
@@ -61,7 +61,7 @@ ON CONFLICT (key) DO UPDATE
 RETURNING id
 """
 
-_INSERT_PENDING = """
+_INSERT_PENDING: Final[LiteralString] = """
 INSERT INTO image (sha256, status, original_format, original_width, original_height,
                    width, height, jpeg)
 VALUES (%s, 'pending', %s, %s, %s, %s, %s, %s)
@@ -69,14 +69,14 @@ ON CONFLICT (sha256) DO NOTHING
 RETURNING id
 """
 
-_INSERT_SKIPPED = """
+_INSERT_SKIPPED: Final[LiteralString] = """
 INSERT INTO image (sha256, status, skip_reason, original_format, original_width, original_height)
 VALUES (%s, 'skipped', %s, %s, %s, %s)
 ON CONFLICT (sha256) DO NOTHING
 RETURNING id
 """
 
-_INSERT_FACE = """
+_INSERT_FACE: Final[LiteralString] = """
 INSERT INTO face (image_id, face_index, x, y, w, h, confidence, embedding, model_profile_id)
 VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
 ON CONFLICT (image_id, face_index) DO NOTHING
@@ -93,7 +93,7 @@ class ExportedImage(Record):
 
 
 # Returns the image the URL is mapped to, whether this insert or an earlier one mapped it.
-_MAP_URL = """
+_MAP_URL: Final[LiteralString] = """
 INSERT INTO image_url (url, image_id) VALUES (%s, %s)
 ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
 RETURNING image_id

@@ -7,6 +7,7 @@ live pages in any case.
 """
 
 from pathlib import Path
+from typing import Final
 
 import pytest
 
@@ -14,9 +15,9 @@ from face_index import model_profile
 from face_index.faces import DeepFaceEmbedder
 from tests import images
 
-pytestmark = pytest.mark.model
+pytestmark: Final[pytest.MarkDecorator] = pytest.mark.model
 
-FIXTURES = Path(__file__).resolve().parents[1] / "fixtures" / "images"
+FIXTURES: Final[Path] = Path(__file__).resolve().parents[1] / "fixtures" / "images"
 
 
 @pytest.fixture(scope="module")

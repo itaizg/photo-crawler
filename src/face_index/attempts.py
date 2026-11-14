@@ -1,12 +1,14 @@
 """The 3-attempt cap, in SQL (FR-023a, research R11a). Used only by ``PostgresIndexStore``."""
 
+from typing import Final, LiteralString
+
 import psycopg
 
 from face_index.models import RequestKind
 
-_MAX_ERROR_LEN = 200
+_MAX_ERROR_LEN: Final[int] = 200
 
-_RECORD_FAILURE = """
+_RECORD_FAILURE: Final[LiteralString] = """
 INSERT INTO fetch_attempt (url, kind, attempts, last_error, last_run_id)
 VALUES (%(url)s, %(kind)s, 1, %(error)s, %(run_id)s)
 ON CONFLICT (url, kind) DO UPDATE SET
@@ -19,7 +21,7 @@ ON CONFLICT (url, kind) DO UPDATE SET
   last_run_id = EXCLUDED.last_run_id
 """
 
-_RECORD_DETECT_FAILURE = """
+_RECORD_DETECT_FAILURE: Final[LiteralString] = """
 UPDATE image SET
   detect_attempts = least(
     detect_attempts + (detect_last_run_id IS DISTINCT FROM %(run_id)s)::int, 3),

@@ -1,4 +1,5 @@
 from pathlib import Path
+from typing import Final
 
 import psycopg
 import pytest
@@ -8,8 +9,8 @@ from face_index import model_profile
 from face_index.errors import InfrastructureError, ItemError
 from face_index.store import PostgresIndexStore, schema_sql
 
-ROOT = Path(__file__).resolve().parents[2]
-SHA = b"\x01" * 32
+ROOT: Final[Path] = Path(__file__).resolve().parents[2]
+SHA: Final[bytes] = b"\x01" * 32
 
 
 def test_schema_file_matches_contract() -> None:

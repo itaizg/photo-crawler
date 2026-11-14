@@ -2,11 +2,13 @@
 edition.cnn.com and people.com (responsive <picture>, lazy-loaded <img>, og:image), kept small and
 synthetic so no third-party pages are committed."""
 
+from typing import Final, LiteralString
+
 from face_index.extract import best_srcset_candidate, extract_page
 
-BASE = "https://edition.cnn.com/2026/11/10/world/story"
+BASE: Final[LiteralString] = "https://edition.cnn.com/2026/11/10/world/story"
 
-CNN_LIKE = """
+CNN_LIKE: Final[LiteralString] = """
 <html><head>
   <meta property="og:image" content="https://media.cnn.com/api/v1/images/lead.jpg?c=16x9">
 </head><body>
@@ -22,7 +24,7 @@ CNN_LIKE = """
 </body></html>
 """
 
-PEOPLE_LIKE = """
+PEOPLE_LIKE: Final[LiteralString] = """
 <html><head><meta name="twitter:image" content="/thmb/lead.jpg"></head><body>
   <img data-srcset="/thmb/x-400.jpg 400w, /thmb/x-1200.jpg 1200w" src="/thmb/placeholder.gif">
   <img data-original="/thmb/old.jpg">

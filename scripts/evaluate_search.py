@@ -24,6 +24,7 @@ import tomllib
 from collections.abc import Sequence
 from contextlib import closing
 from pathlib import Path
+from typing import Final
 
 from face_index import config, model_profile
 from face_index.faces import DeepFaceEmbedder
@@ -33,7 +34,7 @@ from face_index.ports import FaceEmbedder, SearchIndex
 from face_index.search import prepare_query, search_faces
 from face_index.search_store import PostgresSearchIndex
 
-MIN_RECALL = 0.80
+MIN_RECALL: Final[float] = 0.80
 
 
 class Person(Record):

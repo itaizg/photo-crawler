@@ -14,7 +14,7 @@ import ipaddress
 import logging
 import socket
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import closing
@@ -29,10 +29,10 @@ from face_index.errors import Disallowed, FetchRefused, ItemError
 from face_index.models import ImageResponse, PageResponse, RequestKind
 from face_index.ports import Pacer, Resolver
 
-log = logging.getLogger(__name__)
+log: Final[logging.Logger] = logging.getLogger(__name__)
 
-_REDIRECTS = {301, 302, 303, 307, 308}
-_DEFAULT_PORTS = {"http": 80, "https": 443}
+_REDIRECTS: Final[frozenset[int]] = frozenset({301, 302, 303, 307, 308})
+_DEFAULT_PORTS: Final[Mapping[str, int]] = {"http": 80, "https": 443}
 
 
 type _Lookup = Callable[[str], list[str]]

@@ -7,7 +7,7 @@ Only ports are used: a ``Fetcher`` for HTTP and, optionally, an ``IndexStore`` f
 import logging
 from collections import Counter, deque
 from collections.abc import Callable, Mapping
-from typing import Annotated
+from typing import Annotated, Final
 
 from pydantic import BeforeValidator
 
@@ -19,7 +19,7 @@ from face_index.models import CrawledPage, Record, Summary
 from face_index.ports import Fetcher
 from face_index.urls import for_log, in_scope, normalize_image_url, normalize_page_url
 
-log = logging.getLogger(__name__)
+log: Final[logging.Logger] = logging.getLogger(__name__)
 
 # One crawled page in the XCom payload: [url, depth, lead_ref, image_refs]. A list, not an
 # object, keeps large crawls under the XCom size limit.
@@ -56,9 +56,9 @@ class CrawlResult(Record):
         return cls(site=payload.site, pages=pages, summary=payload.summary)
 
 
-AttemptGate = Callable[[str], bool]  # url -> True if the link is abandoned
-FailureHook = Callable[[str, str], None]  # (url, reason) -> record a failed attempt
-SuccessHook = Callable[[str], None]
+type AttemptGate = Callable[[str], bool]  # url -> True if the link is abandoned
+type FailureHook = Callable[[str, str], None]  # (url, reason) -> record a failed attempt
+type SuccessHook = Callable[[str], None]
 
 
 def crawl_site(

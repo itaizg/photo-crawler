@@ -8,6 +8,7 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+from typing import Final
 
 import pytest
 from PIL import Image
@@ -19,7 +20,7 @@ from face_index.search_store import PostgresSearchIndex
 from tests import images
 from tests.fakes import FakeEmbedder, FakeSearchIndex
 
-SRC = Path(__file__).resolve().parents[2] / "src"
+SRC: Final[Path] = Path(__file__).resolve().parents[2] / "src"
 
 
 class OrderLog:
@@ -62,7 +63,7 @@ def run(
     )
 
 
-PAGES = [
+PAGES: Final[list[PageMatch]] = [
     PageMatch(
         url="https://cnn.test/close",
         best_distance=0.112,

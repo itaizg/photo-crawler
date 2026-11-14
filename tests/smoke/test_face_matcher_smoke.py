@@ -6,6 +6,7 @@ The query is a resized, re-encoded copy, so the match proves the embedding, not 
 
 import io
 from pathlib import Path
+from typing import Final
 
 import pytest
 from PIL import Image
@@ -17,9 +18,9 @@ from face_index.normalize import PillowNormalizer
 from face_index.search_store import PostgresSearchIndex
 from face_index.store import PostgresIndexStore
 
-pytestmark = pytest.mark.model
+pytestmark: Final[pytest.MarkDecorator] = pytest.mark.model
 
-FACE_ONE = Path(__file__).resolve().parents[1] / "fixtures" / "images" / "face_one.jpg"
+FACE_ONE: Final[Path] = Path(__file__).resolve().parents[1] / "fixtures" / "images" / "face_one.jpg"
 
 
 def test_a_resized_copy_finds_the_indexed_page(

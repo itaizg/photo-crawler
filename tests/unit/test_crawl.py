@@ -1,3 +1,6 @@
+from collections.abc import Mapping
+from typing import Final
+
 import pytest
 
 from face_index import config
@@ -7,7 +10,7 @@ from face_index.http import HttpFetcher
 from face_index.urls import in_scope
 from tests.fakes import FakeResolver, MockSite, RecordingPacer, Reply, html_reply, robots_reply
 
-SITE = config.Site(
+SITE: Final[config.Site] = config.Site(
     name="cnn", seed_url="https://edition.cnn.com/", page_hosts=frozenset({"edition.cnn.com"})
 )
 
@@ -18,7 +21,7 @@ def page(links: list[str], images: tuple[str, ...] = ()) -> Reply:
     return html_reply(f"<html><body>{body}</body></html>")
 
 
-ROUTES = {
+ROUTES: Final[Mapping[str, Reply]] = {
     "https://edition.cnn.com/robots.txt": robots_reply("User-agent: *\nDisallow: /private\n"),
     "https://edition.cnn.com/": page(
         ["/a", "/b", "https://www.example.org/off", "/private/x"], ("https://m.cnn.com/home.jpg",)

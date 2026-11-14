@@ -1,5 +1,7 @@
 import socket
 import threading
+from collections.abc import Mapping
+from typing import Final, LiteralString
 
 import httpx
 import pytest
@@ -19,9 +21,9 @@ from tests.fakes import (
     robots_reply,
 )
 
-CNN = config.SITES[0]
-HOME = "https://edition.cnn.com/"
-IMG = "https://media.cnn.com/a.jpg"
+CNN: Final[config.Site] = config.SITES[0]
+HOME: Final[LiteralString] = "https://edition.cnn.com/"
+IMG: Final[LiteralString] = "https://media.cnn.com/a.jpg"
 
 
 def make(
@@ -41,7 +43,7 @@ def make(
     return fetcher, site, pacer
 
 
-ROBOTS = {
+ROBOTS: Final[Mapping[str, Reply]] = {
     "https://edition.cnn.com/robots.txt": robots_reply("User-agent: *\nDisallow: /private\n"),
     "https://media.cnn.com/robots.txt": robots_reply(),
 }

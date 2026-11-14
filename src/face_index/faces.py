@@ -6,7 +6,7 @@ anything below the detector's standard confidence.
 """
 
 from collections.abc import Mapping, Sequence
-from typing import Any
+from typing import Any, Final
 
 from face_index import model_profile
 from face_index.errors import InfrastructureError, ItemError
@@ -97,7 +97,7 @@ class DeepFaceEmbedder:
 # TensorFlow errors that describe the runtime (memory, device, timeouts, cancelled work), not one
 # image. InvalidArgumentError, UnknownError and the like stay item errors: one bad input can
 # raise them, and as outages they would fail the task on every retry instead of being capped.
-_TF_OUTAGES = frozenset(
+_TF_OUTAGES: Final[frozenset[str]] = frozenset(
     {
         "ResourceExhaustedError",
         "InternalError",
