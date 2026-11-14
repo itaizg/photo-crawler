@@ -1,0 +1,66 @@
+[project]
+name = "photo-crawler"
+version = "0.1.0"
+description = "Crawls CNN and People, indexes every visible face for image-based search."
+readme = "README.md"
+requires-python = ">=3.13,<3.14"
+dependencies = [
+    # Versions shared with Airflow are bounded to what Airflow 3.4's constraints allow (research R1).
+    "beautifulsoup4>=4.12,<5",
+    "deepface>=0.0.104,<0.1",
+    "httpx>=0.28,<0.29",
+    "lxml>=6.0,<7",
+    "numpy>=2.0,<3",
+    "pgvector>=0.4,<0.6",
+    "pillow>=12.0,<14",
+    "psycopg[binary]>=3.2,<3.4",
+    "tensorflow>=2.20,<2.22",
+    "tf-keras>=2.20,<2.22",
+]
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+    "pytest>=9.0",
+    "pytest-timeout>=2.3",
+    "ruff>=0.17",
+    "ty>=0.0.100",
+]
+# Only for tests/dag: the DAG file imports the Airflow Task SDK. Production Airflow comes from the image.
+dag = ["apache-airflow==3.4.0"]
+
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/face_index"]
+
+[tool.uv]
+default-groups = ["dev"]  # add `--group dag` for the DAG tests
+
+[tool.ruff]
+line-length = 100
+target-version = "py313"
+src = ["src", "tests", "dags", "docker"]
+extend-exclude = [".specify", ".claude", ".agents"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PT"]
+
+[tool.ruff.lint.per-file-ignores]
+# Fixture builders and tests may use asserts and long literal tables.
+"tests/**" = ["ANN401"]
+
+[tool.ty.src]
+include = ["src", "dags", "tests", "docker"]
+exclude = [".specify", ".claude", ".agents"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--strict-markers -ra"
+markers = [
+    "smoke: full pipeline on tiny offline data",
+    "model: needs real DeepFace weights",
+]
+timeout = 300
