@@ -6,6 +6,7 @@ Every public method runs inside ``_guard()``, which turns driver connection erro
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
+from datetime import datetime
 from importlib.resources import files
 
 import numpy as np
@@ -26,7 +27,7 @@ from face_index.models import (
 _UPSERT_PAGE = """
 INSERT INTO page (url, site, depth) VALUES (%s, %s, %s)
 ON CONFLICT (url) DO UPDATE
-  SET last_crawled_at = now(), depth = least(page.depth, EXCLUDED.depth)
+  SET depth = least(page.depth, EXCLUDED.depth)
 RETURNING id
 """
 
@@ -166,6 +167,18 @@ class PostgresIndexStore:
             row = conn.execute(_UPSERT_PAGE, (url, site, depth)).fetchone()
             assert row is not None
             return int(row[0])
+
+    def clock(self) -> datetime:
+        with self._guard() as conn:
+            row = conn.execute("SELECT now()").fetchone()
+            assert row is not None
+            return row[0]
+
+    def finish_page(self, page_id: int, started_at: datetime) -> None:
+        with self._guard() as conn:
+            conn.execute(
+                "UPDATE page SET last_crawled_at = %s WHERE id = %s", (started_at, page_id)
+            )
 
     def reset_lead(self, page_id: int) -> None:
         """Clear the page's lead mark; used when this crawl linked no lead image."""

@@ -195,8 +195,13 @@ def test_outdated_links_are_ignored(
     seed.image(gone, [QUERY])
     assert urls(index, seed) == ["https://cnn.test/gone", "https://cnn.test/kept"]
 
-    # The page is crawled again and no longer links the image: its link is now outdated.
+    # The page is being crawled again: until that crawl finishes, its old link still counts.
+    started = seed.store.clock()
     seed.page("https://cnn.test/gone")
+    assert urls(index, seed) == ["https://cnn.test/gone", "https://cnn.test/kept"]
+
+    # The crawl finished without seeing the image: its link is now outdated.
+    seed.store.finish_page(gone, started)
     assert urls(index, seed) == ["https://cnn.test/kept"]
 
     # Same rule stated directly on the timestamps.

@@ -125,7 +125,9 @@ def test_reference_query_ignores_outdated_links(
         ],
         profile_id,
     )
-    store.upsert_page("https://people.com/gone", "people", 1)  # re-crawled, image not linked
+    started = store.clock()  # re-crawled, image not linked
+    store.upsert_page("https://people.com/gone", "people", 1)
+    store.finish_page(gone, started)
 
     with psycopg.connect(sql.info.dsn, autocommit=True) as raw:
         register_vector(raw)

@@ -6,6 +6,7 @@ Uses an in-memory fake store, so these tests need no database.
 import logging
 import re
 from collections.abc import Callable
+from datetime import UTC, datetime
 
 import httpx
 import pytest
@@ -49,9 +50,15 @@ class MemoryStore:
         if self.fail_on == what:
             raise InfrastructureError("database unavailable: OperationalError")
 
+    def clock(self) -> datetime:
+        return datetime(2026, 1, 1, tzinfo=UTC)
+
     def upsert_page(self, url: str, site: str, depth: int) -> int:
         self._maybe_fail("upsert_page")
         return 1
+
+    def finish_page(self, page_id: int, started_at: datetime) -> None:
+        self._maybe_fail("finish_page")
 
     def init_schema(self) -> int:
         return 1
@@ -180,7 +187,7 @@ def test_item_failures_are_logged_counted_and_isolated(caplog: pytest.LogCapture
     assert counts["skipped.too_small"] == 1
 
 
-@pytest.mark.parametrize("where", ["upsert_page", "find_image_by_sha256"])
+@pytest.mark.parametrize("where", ["upsert_page", "find_image_by_sha256", "finish_page"])
 def test_infrastructure_errors_fail_the_task(where: str) -> None:
     store = MemoryStore(fail_on=where)
     with pytest.raises(InfrastructureError):

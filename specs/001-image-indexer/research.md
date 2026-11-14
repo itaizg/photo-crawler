@@ -234,14 +234,15 @@ DeepFace.represent(img_path=<BGR ndarray>, model_name="Facenet512",
 
 **Decision**: `download[site]` handles the pages in crawl order. For each page:
 
-1. **Upsert the page** and get its ID. A conflict refreshes the crawl metadata and keeps the smallest depth:
-   `INSERT … ON CONFLICT (url) DO UPDATE SET last_crawled_at = now(), depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
+1. **Upsert the page** and get its ID, after reading the database clock (`SELECT now()`) as the crawl's start time. A conflict keeps the smallest depth and leaves `last_crawled_at` alone:
+   `INSERT … ON CONFLICT (url) DO UPDATE SET depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
 2. **Reset the lead mark**: `UPDATE page_image SET is_lead = false WHERE page_id = $p AND is_lead`. The page's *current* lead is set again in step 3 once its image resolves. A lead that changed or disappeared on the site is therefore cleared, and the one-lead-per-page index can never conflict.
 3. For each image reference on the page:
    1. Look up the normalized URL in `image_url`. **Known** → link it (below), with no download (FR-019).
    2. Unknown → robots and address checks, paced download, then fingerprint.
    3. Fingerprint already in `image` → insert `image_url` and link it. The image is reused, with no detection (FR-020).
    4. New → normalize, then in **one transaction** insert the `image` (`pending` with JPEG bytes and normalized dimensions, or `skipped` with a reason), its `image_url`, and its link.
+4. **Finish the page**: `UPDATE page SET last_crawled_at = <start time>`. Only now does the page count as re-crawled, so a task that stops partway through a page leaves it with its previous crawl time and all its earlier links (index-read.md guarantee 6).
 
 **Getting IDs when two inserts race** (`image` by `sha256`, `page` by `url`): use `INSERT … ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the insert lost the race, so `SELECT id … WHERE <natural key>`. Under READ COMMITTED, the losing insert waits for the winner to commit before it reports the conflict, so the follow-up `SELECT` always finds the winner's row. URL and page links are then written against that ID, so no association is lost.
 

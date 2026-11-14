@@ -50,14 +50,14 @@ Every open choice for feature 002, with the spec line it serves. Facts about the
 **Decision**: a link counts only if `page_image.last_seen_at >= page.last_crawled_at`.
 
 **Rationale**, checked in `pipeline.download` and `store.py`:
-- The download step calls `upsert_page` first. That sets `last_crawled_at = now()` in its own autocommit transaction. Only then does it link each image reference, and every `link` / `add_url_and_link` / `stage_image` sets `last_seen_at = now()` in a later transaction.
-- Both timestamps come from the same database clock, so every link refreshed in the latest crawl satisfies `>=`, and every link not seen in it is strictly older.
-- A page whose fetch failed never reaches `upsert_page`, so its `last_crawled_at` stays at the previous successful crawl and its links still count. That is the spec's "pages whose latest crawl failed keep their existing links".
+- The download step reads the database clock (`store.clock()`) before it touches a page, then calls `upsert_page`, which leaves an existing page's `last_crawled_at` alone. It links each image reference, and every `link` / `add_url_and_link` / `stage_image` sets `last_seen_at = now()` in a later transaction. Only after the page's last reference does `store.finish_page` set `last_crawled_at` to the start time.
+- Both timestamps come from the same database clock, so every link refreshed in the latest finished crawl satisfies `>=`, and every link not seen in it is strictly older.
+- A page whose fetch failed never reaches the download step, and a page whose download stopped partway never reaches `finish_page`. Either way its `last_crawled_at` stays at the previous finished crawl and all its links still count. That is the spec's "pages whose latest crawl failed keep their existing links".
 - A known image URL is linked without a download, so a temporary image server failure cannot make a link to an already-indexed image look outdated.
 
 **Measured** (2026-11-13, live index after two runs): 118 of the 5,727 page links are outdated by this rule. Those are the cases where clarification Q2 changes results.
 
-**Known gap**: if the download task dies mid-page, the page's later links look outdated until the next run. That happens when the database or model is lost (`InfrastructureError`), after `upsert_page`. Airflow retries the task (it re-processes every page from the crawl payload and refreshes the links), so the window is the retry delay. This is recorded in the README's known limitations. It is not worked around in search.
+**No window mid-crawl** (Sourcery review of #6, 2026-11-14): an earlier version set `last_crawled_at` in `upsert_page`, before the links were refreshed. While a page was being processed, and until a retry if the task died partway, search dropped that page's links not yet refreshed. Committing the crawl time in `finish_page` closes both.
 
 **Guarantee to record**: `index-read.md` gets guarantee 6, "a link refreshed in a page's latest crawl is never older than that crawl", and its reference query adds the filter. `test_index_read.py` gains an outdated-link case.
 

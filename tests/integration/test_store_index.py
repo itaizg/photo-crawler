@@ -140,7 +140,7 @@ def test_cosine_query_finds_the_face(store: PostgresIndexStore, sql: psycopg.Con
 # -- re-runs (US2) -------------------------------------------------------------------------------
 
 
-def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
+def test_page_upsert_keeps_smallest_depth_and_crawl_time(
     store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     pid = page(store, depth=2)
@@ -148,9 +148,19 @@ def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
     assert page(store, depth=1) == pid
     assert page(store, depth=3) == pid
     row = sql.execute(
-        "SELECT depth, last_crawled_at > %s FROM page WHERE id = %s", (first, pid)
+        "SELECT depth, last_crawled_at = %s FROM page WHERE id = %s", (first, pid)
     ).fetchone()
-    assert row == (1, True)
+    assert row == (1, True)  # only finish_page records a new crawl
+
+
+def test_finish_page_records_the_crawl_start(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    pid = page(store)
+    started = store.clock()
+    store.finish_page(pid, started)
+    row = sql.execute("SELECT last_crawled_at = %s FROM page WHERE id = %s", (started, pid))
+    assert row.fetchone() == (True,)
 
 
 def test_relink_refreshes_last_seen(store: PostgresIndexStore, sql: psycopg.Connection) -> None:
@@ -311,8 +321,11 @@ def test_outdated_links_counts_one_pages_stale_links_and_deletes_nothing(
     store.link(b, first, False)
     assert store.outdated_links(a) == 0  # fresh crawl: every link was just seen
 
-    store.upsert_page("https://cnn.test/a", "cnn", 1)  # re-crawled ...
+    started = store.clock()  # re-crawled ...
+    store.upsert_page("https://cnn.test/a", "cnn", 1)
     store.link(a, second, False)  # ... and only the second image is still there
+    assert store.outdated_links(a) == 0  # not finished yet: every old link still counts
+    store.finish_page(a, started)
     assert store.outdated_links(a) == 1
     assert store.outdated_links(b) == 0
     row = sql.execute("SELECT count(*) FROM page_image").fetchone()

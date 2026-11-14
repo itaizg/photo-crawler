@@ -124,6 +124,7 @@ def download(
     failed: set[str] = set()  # image URLs that already failed in this task: not asked again
     for page in result.pages:
         try:
+            started = deps.store.clock()  # before any link of this page is refreshed
             page_id = deps.store.upsert_page(page.url, site.name, page.depth)
             # A new lead replaces the old one atomically when it is linked (store._link), so the
             # old lead is cleared up front only when the page no longer declares one.
@@ -152,6 +153,8 @@ def download(
                 raise
             except Exception as exc:  # noqa: BLE001 - per-item isolation point: log, keep going
                 log.warning("page failed url=%s stage=lead reason=%s", page.url, exc)
+        # Only now does the page count as re-crawled: until here search keeps all its old links.
+        deps.store.finish_page(page_id, started)
         if outdated := _outdated_links(page.url, page_id, deps):
             counts["links.outdated"] += outdated
     return Summary.of(counts).to_json()
