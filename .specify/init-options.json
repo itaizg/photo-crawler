@@ -6,5 +6,25 @@
   "integration": "claude",
   "script": "py",
   "speckit_version": "unknown",
-  "team_ai_directives": "../team-ai-directive"
+  "team_ai_directives": "/root/team-ai-directives",
+  "team_ai_directives_mcp": {
+    "mcpServers": {
+      "context7": {
+        "args": [
+          "-y",
+          "@upstash/context7-mcp"
+        ],
+        "command": "npx"
+      }
+    },
+    "tools": {
+      "github": {
+        "baseUrl": "https://api.github.com",
+        "owner": "GITHUB_OWNER",
+        "repo": "GITHUB_REPO",
+        "tokenEnv": "GITHUB_TOKEN",
+        "type": "github"
+      }
+    }
+  }
 }

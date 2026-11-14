@@ -4,24 +4,6 @@ installed:
 settings:
   auto_execute_hooks: true
 hooks:
-  before_specify:
-  - extension: team-ai-directives
-    command: team.discover
-    enabled: true
-    optional: false
-    priority: 10
-    prompt: Execute adlc.team-ai-directives.discover?
-    description: Discover team context before specification
-    condition: null
-  before_plan:
-  - extension: team-ai-directives
-    command: team.discover
-    enabled: true
-    optional: false
-    priority: 10
-    prompt: Execute adlc.team-ai-directives.discover?
-    description: Discover team context before planning
-    condition: null
   after_specify:
   - extension: agent-context
     command: speckit.agent-context.update
@@ -39,4 +21,22 @@ hooks:
     priority: 10
     prompt: Execute speckit.agent-context.update?
     description: Refresh agent context after planning
+    condition: null
+  before_specify:
+  - extension: team-ai-directives
+    command: team.discover
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute adlc.team-ai-directives.discover?
+    description: Discover team context before specification
+    condition: null
+  before_plan:
+  - extension: team-ai-directives
+    command: team.discover
+    enabled: true
+    optional: false
+    priority: 10
+    prompt: Execute adlc.team-ai-directives.discover?
+    description: Discover team context before planning
     condition: null
