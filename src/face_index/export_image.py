@@ -1,6 +1,6 @@
 """Export a stored image to a .jpg file (FR-009a, contracts/export-image-cli.md).
 
-python -m face_index.export_image (--id N | --sha256 HEX) [--boxes] -o PATH
+uv run python -m face_index.export_image (--id N | --sha256 HEX) [--boxes] -o PATH
 """
 
 import argparse
@@ -28,7 +28,7 @@ class _Parser(argparse.ArgumentParser):
 
 
 def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
-    parser = _Parser(prog="python -m face_index.export_image", description=__doc__)
+    parser = _Parser(prog="uv run python -m face_index.export_image", description=__doc__)
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--id", type=int, help="image primary key")
     which.add_argument("--sha256", help="content fingerprint, 64 hex characters")

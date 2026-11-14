@@ -14,7 +14,7 @@ dependencies = [
     "pgvector>=0.4,<0.6",
     "pillow>=12.0,<14",
     "psycopg[binary]>=3.2,<3.4",
-    "pydantic>=2.14.3",
+    "pydantic>=2.14,<3",
     "tensorflow>=2.20,<2.22",
     "tf-keras>=2.20,<2.22",
 ]
@@ -39,6 +39,22 @@ packages = ["src/face_index"]
 
 [tool.uv]
 default-groups = ["dev"]  # add `--group dag` for the DAG tests
+# Airflow 3.4 constraint pins (constraints-3.13.txt) for packages the lock shares with Airflow.
+# They keep uv.lock installable into Airflow's interpreter as-is: the image installs the
+# exported lock under those constraints and the build fails if the two disagree.
+constraint-dependencies = [
+    "filelock==4.2.6",
+    "markdown-it-py==4.2.0",
+    "pandas==3.1.0",
+    "protobuf==6.33.6",
+    "psycopg==3.3.6",
+    "psycopg-binary==3.3.6",
+    "pydantic==2.14.2",
+    "pydantic-core==2.50.2",
+    "python-dateutil==2.9.0.post0",
+    "soupsieve==3.0.4",
+    "typing-inspection==0.4.4",
+]
 
 [tool.ruff]
 line-length = 100
