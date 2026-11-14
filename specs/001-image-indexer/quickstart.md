@@ -28,8 +28,8 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer
 ```
 
 **Expected**:
-- The run reaches `success` within 30 minutes with no manual action.
-- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored` for both sites.
+- The run reaches `success` with no manual action. The target is 30 minutes (SC-011), which is not yet met: the measured default run took 72 minutes for CNN alone (README, research R8). Use a smaller `page_cap` for a quicker check.
+- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored`. Faces come only from sites that accept the crawler: people.com currently answers HTTP 402, which shows up as a crawl failure in the table. Crawling it needs the site's permission.
 - Item failures, if any, appear in that table and in the `download`/`detect` logs with a URL and reason. They never show up as a failed task.
 
 ## 3. Check the stored data (SC-003, SC-005, SC-006)
@@ -53,7 +53,7 @@ The single quotes matter: `$POSTGRES_USER` is expanded *inside* the container, w
 ## 4. Spot-check faces (SC-004)
 
 ```bash
-docker compose exec airflow-scheduler python -m face_index.export_image --id <id> --boxes -o /tmp/check.jpg
+docker compose exec airflow-scheduler uv run --no-project python -m face_index.export_image --id <id> --boxes -o /tmp/check.jpg
 ```
 
 Then copy the file out with `docker compose cp`. Repeat for 50 random `indexed` IDs (`ORDER BY random() LIMIT 50`). **Expected**: every drawn box surrounds a face. Without `--boxes`, the file's SHA-256 matches `encode(sha256(jpeg),'hex')` from the database (FR-009a).
@@ -91,12 +91,15 @@ This is covered by automated tests that inject a 500 response, a timeout, a corr
 | Real model | `uv run pytest -m model` | ~1 min (first run downloads weights) | DeepFace finds 1, 2 and 0 faces on the fixture images; confidence filter; 512-d vectors |
 | Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
 
-`scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. It exits non-zero unless all of these hold:
+`scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. Its checks look only at pages crawled by this run and the image links this run saw on them, so rows from earlier runs cannot make them pass. The one exception is the orphan-face check, which covers the whole `face` table: links are never deleted, so an orphan face anywhere is a bug, and one left by an earlier run fails the smoke too. It exits non-zero unless all of these hold:
 - the run summary was logged, and any failed task belongs to a site that refused every request (people.com answers HTTP 402 to the crawler, which fails `crawl_people`);
-- both sites have exactly 1 crawled page;
-- at least 1 face is stored;
-- every stored image is JPEG ≤ 1024 px;
-- every face is linked to a page.
+- at least one site has a page crawled by this run (a site that refuses the crawler is reported as a warning);
+- at least 1 face is on this run's pages;
+- every stored image on this run's pages is JPEG ≤ 1024 px (skipped and `no_faces` images keep no bytes, so there is nothing to check);
+- every face on this run's pages has a 512-d embedding;
+- every face in the database is linked to a page.
+
+A site with no page this run is reported as `WARN`, with the failing links, but does not fail the check: a site that refuses the crawler (people.com answers HTTP 402) is not a pipeline fault.
 
 ## 8. Attempt cap (SC-012)
 
@@ -109,7 +112,7 @@ docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "SELECT
 ## Automated tests
 
 ```bash
-uv sync --locked
+uv sync --locked --group dag      # `dag` adds Airflow for the DAG tests
 ```
 
 ```bash

@@ -5,15 +5,16 @@ uv run python -m face_index.export_image (--id N | --sha256 HEX) [--boxes] -o PA
 
 import argparse
 import hashlib
-import io
 import sys
 from collections.abc import Sequence
+from contextlib import closing
+from pathlib import Path
 from typing import NoReturn
 
-from PIL import Image, ImageDraw
-
 from face_index import config
+from face_index.drawing import draw_boxes
 from face_index.errors import InfrastructureError
+from face_index.models import Box
 from face_index.store import ExportedImage, PostgresIndexStore
 
 EXIT_OK, EXIT_DB, EXIT_NOT_FOUND, EXIT_NO_BYTES, EXIT_USAGE = 0, 1, 2, 3, 64
@@ -49,27 +50,21 @@ def _is_hex(text: str) -> bool:
 
 def _with_boxes(image: ExportedImage) -> bytes:
     assert image.jpeg is not None
-    picture = Image.open(io.BytesIO(image.jpeg)).convert("RGB")
-    draw = ImageDraw.Draw(picture)
-    for index, x, y, w, h in image.boxes:
-        draw.rectangle((x, y, x + w - 1, y + h - 1), outline=(255, 0, 0), width=2)
-        draw.text((x + 3, y + 3), str(index), fill=(255, 0, 0))
-    out = io.BytesIO()
-    picture.save(out, format="JPEG", quality=config.JPEG_QUALITY)
-    return out.getvalue()
+    return draw_boxes(
+        image.jpeg, [(str(i), Box(x=x, y=y, w=w, h=h)) for i, x, y, w, h in image.boxes]
+    )
 
 
 def main(argv: Sequence[str] | None = None, dsn: str | None = None) -> int:
     args = _parse(argv)
     selector = f"id={args.id}" if args.id is not None else f"sha256={args.sha256}"
-    store = PostgresIndexStore(dsn or config.database_dsn())
-    try:
-        found = store.export_image(args.id, bytes.fromhex(args.sha256) if args.sha256 else None)
-    except InfrastructureError as exc:
-        print(f"error: {exc}", file=sys.stderr)  # the message never contains the DSN
-        return EXIT_DB
-    finally:
-        store.close()
+    sha256 = bytes.fromhex(args.sha256) if args.sha256 else None
+    with closing(PostgresIndexStore(dsn or config.database_dsn())) as store:
+        try:
+            found = store.export_image(args.id, sha256)
+        except InfrastructureError as exc:
+            print(f"error: {exc}", file=sys.stderr)  # the message never contains the DSN
+            return EXIT_DB
     if found is None:
         print(f"no image with {selector}", file=sys.stderr)
         return EXIT_NOT_FOUND
@@ -84,8 +79,7 @@ def main(argv: Sequence[str] | None = None, dsn: str | None = None) -> int:
     if args.output == "-":
         sys.stdout.buffer.write(data)
     else:
-        with open(args.output, "wb") as handle:
-            handle.write(data)
+        Path(args.output).write_bytes(data)
     if args.boxes:
         print("note: --boxes output is a modified copy, not byte-identical", file=sys.stderr)
     print(

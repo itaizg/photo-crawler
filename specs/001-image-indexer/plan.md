@@ -116,7 +116,7 @@ src/face_index/                # core library, no Airflow import
 ├── normalize.py               # bytes → NormalizedImage (JPEG ≤1024) or SkipReason
 ├── faces.py                   # FaceEmbedder protocol, DeepFaceEmbedder, result narrowing/filtering
 ├── ports.py                   # Protocols: IndexStore, ImageNormalizer (+ re-exports of Fetcher, Resolver, Pacer, FaceEmbedder)
-├── models.py                  # plain dataclasses passed across ports (PageRef, StagedImage, ImageRecord, …)
+├── models.py                  # frozen Pydantic records passed across ports (PageRef, StagedImage, ImageRecord, …)
 ├── store.py                   # PostgresIndexStore adapter: schema init, lookups, upserts, pending batches, atomic face commit, attempts
 ├── attempts.py                # 3-attempt cap: fetch_attempt bookkeeping, abandoned check (research R11a)
 ├── errors.py                  # InfrastructureError and item-level error types

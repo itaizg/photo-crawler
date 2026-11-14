@@ -227,3 +227,6 @@ smoke-output/
 .specify/feature.json
 smoke-output.log
 tests/fixtures/images/*.jpg
+# Query photos and annotated copies for the face matching script (README.md is kept)
+queries/*
+!queries/README.md

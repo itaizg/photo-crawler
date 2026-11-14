@@ -4,21 +4,27 @@ DAG params and environment variables only override these values.
 """
 
 import os
-from dataclasses import dataclass
+
+from face_index.models import Record
 
 __version__ = "0.1.0"
 
 
-@dataclass(frozen=True, slots=True)
-class Site:
+class Site(Record):
     name: str
     seed_url: str
     page_hosts: frozenset[str]
 
 
 SITES: tuple[Site, ...] = (
-    Site("cnn", "https://edition.cnn.com/", frozenset({"edition.cnn.com"})),
-    Site("people", "https://people.com/", frozenset({"people.com", "www.people.com"})),
+    Site(
+        name="cnn", seed_url="https://edition.cnn.com/", page_hosts=frozenset({"edition.cnn.com"})
+    ),
+    Site(
+        name="people",
+        seed_url="https://people.com/",
+        page_hosts=frozenset({"people.com", "www.people.com"}),
+    ),
 )
 
 # Crawl (FR-002, FR-003, FR-005, FR-005a)

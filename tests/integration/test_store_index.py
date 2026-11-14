@@ -16,11 +16,21 @@ from tests import images
 
 def normalized(seed: int = 1) -> NormalizedImage:
     jpeg = images.photo(64, 64, seed=seed)
-    return NormalizedImage(bytes([seed]) * 32, jpeg, 64, 64, "JPEG", 128, 128)
+    return NormalizedImage(
+        sha256=bytes([seed]) * 32,
+        jpeg=jpeg,
+        width=64,
+        height=64,
+        original_format="JPEG",
+        original_width=128,
+        original_height=128,
+    )
 
 
 def face(x: int, value: float = 0.5) -> DetectedFace:
-    return DetectedFace(Box(x, 1, 10, 10), 0.99, tuple([value] * 512))
+    return DetectedFace(
+        box=Box(x=x, y=1, w=10, h=10), confidence=0.99, embedding=tuple([value] * 512)
+    )
 
 
 def page(store: PostgresIndexStore, url: str = "https://people.com/a", depth: int = 1) -> int:
@@ -46,7 +56,16 @@ def test_stage_image_writes_image_url_and_link(
 
 def test_stage_skipped_has_no_bytes(store: PostgresIndexStore, sql: psycopg.Connection) -> None:
     image_id, _ = store.stage_image(
-        Skipped(b"\x09" * 32, "too_small", "JPEG", 40, 40), "https://img/i.jpg", page(store), False
+        Skipped(
+            sha256=b"\x09" * 32,
+            reason="too_small",
+            original_format="JPEG",
+            original_width=40,
+            original_height=40,
+        ),
+        "https://img/i.jpg",
+        page(store),
+        False,
     )
     row = sql.execute(
         "SELECT status, skip_reason, jpeg, width FROM image WHERE id = %s", (image_id,)
@@ -121,7 +140,7 @@ def test_cosine_query_finds_the_face(store: PostgresIndexStore, sql: psycopg.Con
 # -- re-runs (US2) -------------------------------------------------------------------------------
 
 
-def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
+def test_page_upsert_keeps_smallest_depth_and_crawl_time(
     store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     pid = page(store, depth=2)
@@ -129,9 +148,19 @@ def test_page_upsert_refreshes_time_and_keeps_smallest_depth(
     assert page(store, depth=1) == pid
     assert page(store, depth=3) == pid
     row = sql.execute(
-        "SELECT depth, last_crawled_at > %s FROM page WHERE id = %s", (first, pid)
+        "SELECT depth, last_crawled_at = %s FROM page WHERE id = %s", (first, pid)
     ).fetchone()
-    assert row == (1, True)
+    assert row == (1, True)  # only finish_page records a new crawl
+
+
+def test_finish_page_records_the_crawl_start(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    pid = page(store)
+    started = store.clock()
+    store.finish_page(pid, started)
+    row = sql.execute("SELECT last_crawled_at = %s FROM page WHERE id = %s", (started, pid))
+    assert row.fetchone() == (True,)
 
 
 def test_relink_refreshes_last_seen(store: PostgresIndexStore, sql: psycopg.Connection) -> None:
@@ -175,7 +204,7 @@ def test_faces_below_the_confidence_floor_are_not_stored(
     store: PostgresIndexStore, sql: psycopg.Connection
 ) -> None:
     image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
-    weak = DetectedFace(Box(1, 1, 10, 10), 0.5, tuple([0.5] * 512))
+    weak = DetectedFace(box=Box(x=1, y=1, w=10, h=10), confidence=0.5, embedding=tuple([0.5] * 512))
     assert store.process_pending(image_id, lambda p: [weak, face(30)], profile_id=1) == 1
     assert one(sql, "SELECT min(confidence) FROM face") == pytest.approx(0.99)
 
@@ -185,7 +214,7 @@ def test_size_skips_keep_original_dimensions(
 ) -> None:
     assert store is not None  # creates the schema
     with pytest.raises(ValueError, match="original dimensions"):
-        Skipped(b"\x09" * 32, "too_small", "JPEG")
+        Skipped(sha256=b"\x09" * 32, reason="too_small", original_format="JPEG")
     with pytest.raises(psycopg.errors.CheckViolation):
         sql.execute(
             "INSERT INTO image (sha256, status, skip_reason, original_format) "
@@ -278,6 +307,42 @@ def test_stored_faces_reports_only_finished_images(store: PostgresIndexStore) ->
     assert store.stored_faces(image_id) is None  # still pending
     store.process_pending(image_id, lambda p: [face(1), face(30)], profile_id=1)
     assert store.stored_faces(image_id) == 2
+
+
+def test_outdated_links_counts_one_pages_stale_links_and_deletes_nothing(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    """FR-018: a link not refreshed by the page's latest crawl is counted, never removed."""
+    store.init_schema()
+    a = store.upsert_page("https://cnn.test/a", "cnn", 1)
+    b = store.upsert_page("https://cnn.test/b", "cnn", 1)
+    first, _ = store.stage_image(_outdated_image(1), "https://img.test/1.jpg", a, False)
+    second, _ = store.stage_image(_outdated_image(2), "https://img.test/2.jpg", a, False)
+    store.link(b, first, False)
+    assert store.outdated_links(a) == 0  # fresh crawl: every link was just seen
+
+    started = store.clock()  # re-crawled ...
+    store.upsert_page("https://cnn.test/a", "cnn", 1)
+    store.link(a, second, False)  # ... and only the second image is still there
+    assert store.outdated_links(a) == 0  # not finished yet: every old link still counts
+    store.finish_page(a, started)
+    assert store.outdated_links(a) == 1
+    assert store.outdated_links(b) == 0
+    row = sql.execute("SELECT count(*) FROM page_image").fetchone()
+    assert row is not None
+    assert row[0] == 3
+
+
+def _outdated_image(seed: int) -> NormalizedImage:
+    return NormalizedImage(
+        sha256=bytes([100 + seed]) * 32,
+        jpeg=images.photo(64, 64, seed=seed),
+        width=64,
+        height=64,
+        original_format="JPEG",
+        original_width=64,
+        original_height=64,
+    )
 
 
 def test_one_url_staged_with_different_bytes_links_pages_to_the_urls_image(

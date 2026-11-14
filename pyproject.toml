@@ -14,6 +14,7 @@ dependencies = [
     "pgvector>=0.4,<0.6",
     "pillow>=12.0,<14",
     "psycopg[binary]>=3.2,<3.4",
+    "pydantic>=2.14,<3",
     "tensorflow>=2.20,<2.22",
     "tf-keras>=2.20,<2.22",
 ]
@@ -38,22 +39,45 @@ packages = ["src/face_index"]
 
 [tool.uv]
 default-groups = ["dev"]  # add `--group dag` for the DAG tests
+# Airflow 3.4 constraint pins (constraints-3.13.txt) for packages the lock shares with Airflow.
+# They keep uv.lock installable into Airflow's interpreter as-is: the image installs the
+# exported lock under those constraints and the build fails if the two disagree.
+constraint-dependencies = [
+    "filelock==4.2.6",
+    "markdown-it-py==4.2.0",
+    "pandas==3.1.0",
+    "protobuf==6.33.6",
+    "psycopg==3.3.6",
+    "psycopg-binary==3.3.6",
+    "pydantic==2.14.2",
+    "pydantic-core==2.50.2",
+    "python-dateutil==2.9.0.post0",
+    "soupsieve==3.0.4",
+    "typing-inspection==0.4.4",
+]
 
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["src", "tests", "dags", "docker"]
+src = ["src", "tests", "dags", "docker", "scripts"]
 extend-exclude = [".specify", ".claude", ".agents"]
 
 [tool.ruff.lint]
-select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PT"]
+# The second line enforces constitution VII (Pythonic) and VIII (exceptions at boundaries).
+select = [
+    "E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PT",
+    "C4", "PTH", "RET", "PIE", "PERF", "E722", "BLE", "TRY",
+]
+# TRY003: messages name the URL, limit or value at the raise site. A subclass per message
+# would add exception types no caller tells apart (constitution V, YAGNI).
+ignore = ["TRY003"]
 
 [tool.ruff.lint.per-file-ignores]
 # Fixture builders and tests may use asserts and long literal tables.
 "tests/**" = ["ANN401"]
 
 [tool.ty.src]
-include = ["src", "dags", "tests", "docker"]
+include = ["src", "dags", "tests", "docker", "scripts"]
 exclude = [".specify", ".claude", ".agents"]
 
 [tool.pytest.ini_options]

@@ -47,7 +47,11 @@ class PillowNormalizer:
     def normalize(self, data: bytes, content_type: str | None) -> NormalizedImage | Skipped:
         sha256 = hashlib.sha256(data).digest()
         if _is_svg(data, content_type):
-            return Skipped(sha256, "unsupported_format", content_type or "image/svg+xml")
+            return Skipped(
+                sha256=sha256,
+                reason="unsupported_format",
+                original_format=content_type or "image/svg+xml",
+            )
         try:
             with warnings.catch_warnings():
                 warnings.simplefilter("error", Image.DecompressionBombWarning)
@@ -55,13 +59,25 @@ class PillowNormalizer:
                 original_format = image.format or "UNKNOWN"
                 width, height = image.size
                 if width * height > self._max_pixels:
-                    return Skipped(sha256, "too_large", original_format, width, height)
+                    return Skipped(
+                        sha256=sha256,
+                        reason="too_large",
+                        original_format=original_format,
+                        original_width=width,
+                        original_height=height,
+                    )
                 if min(width, height) < self._min_side:
-                    return Skipped(sha256, "too_small", original_format, width, height)
+                    return Skipped(
+                        sha256=sha256,
+                        reason="too_small",
+                        original_format=original_format,
+                        original_width=width,
+                        original_height=height,
+                    )
                 image.seek(0)  # first frame of animated images
                 image.load()
         except (Image.DecompressionBombError, Image.DecompressionBombWarning):
-            return Skipped(sha256, "too_large", "UNKNOWN")
+            return Skipped(sha256=sha256, reason="too_large", original_format="UNKNOWN")
         except (UnidentifiedImageError, OSError, ValueError, SyntaxError) as exc:
             raise ItemError(f"decode error: {type(exc).__name__}") from exc
 

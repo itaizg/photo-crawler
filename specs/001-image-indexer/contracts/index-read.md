@@ -9,6 +9,7 @@ This is what the pipeline guarantees to the search script (feature 002). It is w
 3. **Distance**: cosine. pgvector's `<=>` operator returns the cosine *distance* (`1 − cosine similarity`), which is DeepFace's `cosine` metric directly. The DeepFace threshold for Facenet512 + cosine (0.30) applies unchanged.
 4. **Pages**: every page that shows an image is reachable through `page_image`. `is_lead` marks the page whose declared lead image it is.
 5. **Read-only**: the search needs only `SELECT`. A read-only role is optional (YAGNI); the shared `.env` connection settings are enough.
+6. **Link freshness**: the download step reads the database clock before it touches a page, then refreshes the page's links, and only after every image reference of the page was processed sets `page.last_crawled_at` to that start time (`finish_page`). Every link the step refreshes therefore has `last_seen_at >= last_crawled_at`, both from the database clock, and a link not seen in the page's latest finished crawl is strictly older. A page whose fetch failed, or whose download stopped partway, keeps its previous `last_crawled_at`, so all its earlier links still count. The search counts only links with `last_seen_at >= last_crawled_at` (feature 002, FR-006a), and the pipeline reports the others in its logs and run summary without deleting them (FR-018).
 
 ## Reference query: all pages with a matching face
 
@@ -22,6 +23,7 @@ FROM face f
 JOIN image i       ON i.id = f.image_id AND i.status = 'indexed'
 JOIN page_image pi ON pi.image_id = i.id
 JOIN page p        ON p.id = pi.page_id
+                  AND pi.last_seen_at >= p.last_crawled_at  -- guarantee 6
 WHERE f.model_profile_id = %(profile_id)s
   AND f.embedding <=> %(q)s < %(max_dist)s
 GROUP BY p.url

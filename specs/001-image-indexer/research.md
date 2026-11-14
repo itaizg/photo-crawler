@@ -8,6 +8,8 @@ Phase 0 output for [plan.md](plan.md). Each entry gives a **Decision**, its **Ra
 
 **Decision**: Use the latest Apache Airflow **3.x** patch whose official image ships a `-python3.13` tag, pinned exactly in `docker/airflow.Dockerfile` and installed with Airflow's constraints file. DAGs use the Airflow 3 Task SDK (`from airflow.sdk import dag, task, Param`). *Verify at implementation*: that the tag exists and that `tensorflow` + `deepface` install under the constraints on Python 3.13, on both arm64 and amd64.
 
+**Verified 2026-11-11 (T003)**: `apache/airflow:3.4.0-python3.13` exists for arm64 and amd64, Airflow's `constraints-3.4.0/constraints-3.13.txt` resolves together with `tensorflow` 2.21 and `deepface` 0.0.104, and the image builds and runs on Apple Silicon. No 3.12 fallback is needed.
+
 **Rationale**: The constitution fixes Python 3.13. Airflow 3.1+ supports 3.13, and TensorFlow 2.20+ ships 3.13 wheels for linux arm64 and amd64. Airflow 3 is the maintained line, and its Task SDK keeps DAG files light.
 
 **Alternatives**:
@@ -165,6 +167,24 @@ Skips are permanent because they depend only on the bytes, which the fingerprint
 
 **Total ≈ 17–20 min**, leaving headroom under 30 min. If a laptop measures slower, the levers in order are: raise `FACE_WORKERS` (needs RAM), lower the page cap, or set `MIN_SIDE` higher to skip thumbnails. The measured figure goes in the README.
 
+**Measured 2026-11-11 (T065)**, first default run, CNN only (people.com answered HTTP 402), on an Apple M-series machine with 14 cores and 8 GB for Docker. That is not the SC-011 reference machine (4 cores, 16 GB) and not both sites, so the numbers below show the scale of the problem rather than a verdict on SC-011:
+
+| Stage | Load | Time |
+|---|---|---|
+| `crawl_cnn` | 50 pages at 1 req/s | 0.9 min |
+| `download_cnn` | 5,575 image refs → 4,710 downloads at the 5 req/s image cap | 16.3 min |
+| `detect` (95 batches, 2 workers) | 4,704 images, about 1.4 s per image per worker | 54.8 min |
+| **Whole run** | 3,034 images with faces, 1,670 without, 9,346 faces | **72 min** |
+
+**Second default run**, right after the first: 2 min 10 s. 5,534 URLs were reused without downloading; 72 new images gave 63 newly indexed images and 138 faces (SC-007 confirmed on live data).
+
+The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open, and at risk**: the measured run took 72 min for one site, on a different machine from the reference, so it neither passes nor formally fails the criterion. Whether a both-site default run meets it on the reference machine is undetermined until it is measured there. Download alone took 16 min at the polite image rate. The levers, in order:
+1. A smaller default `page_cap`. Estimated from the per-image times above, not measured: about 15 pages fit 30 min for one site, about 10 per site with both sites (downloads run in parallel per host; detection is shared).
+2. More `FACE_WORKERS`, at about 1.5 GB of RAM each.
+3. A higher `MIN_SIDE`, to skip thumbnails before detection.
+
+Changing the default or the criterion is the user's decision. It is recorded in the README.
+
 ## R9. DeepFace usage (FR-011, FR-012, FR-013, FR-014)
 
 **Decision**: `DeepFaceEmbedder.embed(jpeg: NDArray) -> list[DetectedFace]` calls:
@@ -214,14 +234,15 @@ DeepFace.represent(img_path=<BGR ndarray>, model_name="Facenet512",
 
 **Decision**: `download[site]` handles the pages in crawl order. For each page:
 
-1. **Upsert the page** and get its ID. A conflict refreshes the crawl metadata and keeps the smallest depth:
-   `INSERT … ON CONFLICT (url) DO UPDATE SET last_crawled_at = now(), depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
+1. **Upsert the page** and get its ID, after reading the database clock (`SELECT now()`) as the crawl's start time. A conflict keeps the smallest depth and leaves `last_crawled_at` alone:
+   `INSERT … ON CONFLICT (url) DO UPDATE SET depth = least(page.depth, EXCLUDED.depth) RETURNING id`.
 2. **Reset the lead mark**: `UPDATE page_image SET is_lead = false WHERE page_id = $p AND is_lead`. The page's *current* lead is set again in step 3 once its image resolves. A lead that changed or disappeared on the site is therefore cleared, and the one-lead-per-page index can never conflict.
 3. For each image reference on the page:
    1. Look up the normalized URL in `image_url`. **Known** → link it (below), with no download (FR-019).
    2. Unknown → robots and address checks, paced download, then fingerprint.
    3. Fingerprint already in `image` → insert `image_url` and link it. The image is reused, with no detection (FR-020).
    4. New → normalize, then in **one transaction** insert the `image` (`pending` with JPEG bytes and normalized dimensions, or `skipped` with a reason), its `image_url`, and its link.
+4. **Finish the page**: `UPDATE page SET last_crawled_at = <start time>`. Only now does the page count as re-crawled, so a task that stops partway through a page leaves it with its previous crawl time and all its earlier links (index-read.md guarantee 6).
 
 **Getting IDs when two inserts race** (`image` by `sha256`, `page` by `url`): use `INSERT … ON CONFLICT DO NOTHING RETURNING id`. If no row comes back, the insert lost the race, so `SELECT id … WHERE <natural key>`. Under READ COMMITTED, the losing insert waits for the winner to commit before it reports the conflict, so the follow-up `SELECT` always finds the winner's row. URL and page links are then written against that ID, so no association is lost.
 
@@ -288,7 +309,7 @@ Download failures, decode errors included, store no image. The URL stays unknown
   - Skips are returned values, not exceptions, and are logged at INFO: `image skipped url=… reason=too_small`.
   - Item failures are logged at WARNING: `image failed url=… stage=download reason=…`.
   - Page failures and robots refusals are logged the same way.
-- Each stage function returns a typed summary dataclass, passed by XCom: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, failures by stage, and **abandoned** (links and detections at the attempt cap).
+- Each stage function counts into a local `Counter` and returns a frozen `Summary`, passed by XCom as JSON: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, failures by stage, and **abandoned** (links and detections at the attempt cap).
 
 **Rationale**: The constitution's failure isolation, plus FR-023's clarified split between item and infrastructure failures, plus FR-025. XCom carries only small counters, as Airflow recommends.
 
@@ -318,6 +339,8 @@ Download failures, decode errors included, store no image. The URL stays unknown
 5. `stack-smoke` (only on `workflow_dispatch`): `docker compose up -d --build`, then `scripts/smoke.sh`, then `docker compose down -v`.
 
 **Layout**: the `src/` layout with the `face_index` package (importable by the future `face_matcher.py`), `dags/` mounted into Airflow, `docker/` for images and initialization, and `tests/{unit,integration,dag,smoke,fixtures}`. pytest markers `smoke` and `model` are declared in `pyproject.toml` with `--strict-markers`.
+
+**Measured 2026-11-11**: offline smoke about 1 s for 3 tests; model smoke about 14 s (weights cached); stack smoke 108–249 s (depth 0, CNN home page with 196 images, sequential `airflow dags test`).
 
 **Rationale**: the user asked for quick pipeline runs on very small data. The offline smoke gives the full pipeline in seconds on every commit, without breaking constitution IV, and the stack smoke proves the real Compose, Airflow and DeepFace path in minutes, as the constitution's Quality Gates require before a deliverable is done.
 

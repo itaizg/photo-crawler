@@ -1,13 +1,12 @@
 """Test doubles for the ports, shared by unit, integration and smoke tests."""
 
 import hashlib
-from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from collections.abc import Callable, Mapping, Sequence
 
 import httpx
 
 from face_index.errors import ItemError
-from face_index.models import Box, DetectedFace, RequestKind
+from face_index.models import Box, DetectedFace, PageMatch, Record, RequestKind
 
 PUBLIC_IP = "93.184.216.34"
 
@@ -45,11 +44,10 @@ class RecordingPacer:
         self.calls.append((host, kind))
 
 
-@dataclass
-class Reply:
+class Reply(Record):
     status: int = 200
     body: bytes = b""
-    headers: dict[str, str] = field(default_factory=dict)
+    headers: Mapping[str, str] = {}
     error: type[httpx.TransportError] | None = None  # e.g. httpx.ReadTimeout
 
 
@@ -89,11 +87,13 @@ class MockSite:
 
 
 def html_reply(body: str) -> Reply:
-    return Reply(200, body.encode(), {"content-type": "text/html; charset=utf-8"})
+    return Reply(
+        status=200, body=body.encode(), headers={"content-type": "text/html; charset=utf-8"}
+    )
 
 
 def robots_reply(text: str = "User-agent: *\nAllow: /\n") -> Reply:
-    return Reply(200, text.encode(), {"content-type": "text/plain"})
+    return Reply(status=200, body=text.encode(), headers={"content-type": "text/plain"})
 
 
 class FakeEmbedder:
@@ -130,3 +130,48 @@ class FakeEmbedder:
             )
             for i in range(count)
         ]
+
+
+class FakeSearchIndex:
+    """In-memory ``SearchIndex``: canned pages, filtered by the threshold like the real query.
+
+    ``pages`` holds the candidate pages for every face; ``pages_by_face`` overrides that with a
+    function of ``(embedding, max_distance)``. Every ``matching_pages`` call is recorded.
+    """
+
+    def __init__(
+        self,
+        profiles: Mapping[str, int] | None = None,
+        face_count: int = 10,
+        pages: Sequence[PageMatch] = (),
+        pages_by_face: Callable[[Sequence[float], float], list[PageMatch]] | None = None,
+        raise_on_connect: Exception | None = None,
+    ) -> None:
+        self._profiles = dict(profiles) if profiles is not None else None
+        self._face_count = face_count
+        self._pages = list(pages)
+        self._pages_by_face = pages_by_face
+        self._raise = raise_on_connect
+        self.calls: list[tuple[tuple[float, ...], float, int]] = []
+        self.closed = False
+
+    def profile_id(self, key: str) -> int | None:
+        if self._raise is not None:
+            raise self._raise
+        if self._profiles is None:
+            return 1  # any key is known
+        return self._profiles.get(key)
+
+    def indexed_face_count(self, profile_id: int) -> int:
+        return self._face_count
+
+    def matching_pages(
+        self, embedding: Sequence[float], max_distance: float, profile_id: int
+    ) -> list[PageMatch]:
+        self.calls.append((tuple(embedding), max_distance, profile_id))
+        if self._pages_by_face is not None:
+            return self._pages_by_face(embedding, max_distance)
+        return [p for p in self._pages if p.best_distance < max_distance]
+
+    def close(self) -> None:
+        self.closed = True

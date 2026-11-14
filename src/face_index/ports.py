@@ -5,13 +5,15 @@ adapters (``HttpFetcher``, ``PostgresPacer``, ``PillowNormalizer``, ``DeepFaceEm
 ``PostgresIndexStore``) import network, image, model or database libraries.
 """
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from datetime import datetime
 from typing import Protocol
 
 from face_index.models import (
     DetectedFace,
     ImageResponse,
     NormalizedImage,
+    PageMatch,
     PageResponse,
     PendingImage,
     RequestKind,
@@ -52,7 +54,22 @@ class IndexStore(Protocol):
         """Create the schema if needed and return the current model profile id."""
         ...
 
-    def upsert_page(self, url: str, site: str, depth: int) -> int: ...
+    def clock(self) -> datetime:
+        """The database's current time, the clock every crawl and link timestamp uses."""
+        ...
+
+    def upsert_page(self, url: str, site: str, depth: int) -> int:
+        """Insert or find the page. An existing page's ``last_crawled_at`` is not changed."""
+        ...
+
+    def finish_page(self, page_id: int, started_at: datetime) -> None:
+        """Record a finished crawl of the page: ``last_crawled_at = started_at``.
+
+        Called after every image reference of the page was processed, with the ``clock()``
+        value read before ``upsert_page``. Links refreshed in this crawl are never older than
+        ``started_at``; links it did not see are (index-read.md guarantee 6).
+        """
+        ...
 
     def reset_lead(self, page_id: int) -> None: ...
 
@@ -101,6 +118,10 @@ class IndexStore(Protocol):
         """Faces stored for an image whose detection is done, or None while it is pending."""
         ...
 
+    def outdated_links(self, page_id: int) -> int:
+        """Links of this page not seen in its latest crawl (FR-018). Read-only; deletes nothing."""
+        ...
+
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool: ...
 
     def record_failure(self, url: str, kind: RequestKind, error: str, run_id: str) -> None: ...
@@ -108,3 +129,27 @@ class IndexStore(Protocol):
     def record_success(self, url: str, kind: RequestKind) -> None: ...
 
     def record_detect_failure(self, image_id: int, run_id: str) -> None: ...
+
+
+class SearchIndex(Protocol):
+    """Read-only access to the face index for the search script (feature 002).
+
+    Implementations raise only ``InfrastructureError`` (database unavailable) or
+    ``IndexNotReady`` (schema or profile row missing).
+    """
+
+    def profile_id(self, key: str) -> int | None:
+        """The ``model_profile`` id for this key, or None if the index has none."""
+        ...
+
+    def indexed_face_count(self, profile_id: int) -> int:
+        """Faces on ``indexed`` images under this profile."""
+        ...
+
+    def matching_pages(
+        self, embedding: Sequence[float], max_distance: float, profile_id: int
+    ) -> list[PageMatch]:
+        """Pages with a face strictly closer than ``max_distance``, closest first."""
+        ...
+
+    def close(self) -> None: ...

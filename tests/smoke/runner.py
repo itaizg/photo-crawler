@@ -1,14 +1,14 @@
 """Runs every pipeline stage in DAG order, in-process, against the mini-site (research R13)."""
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from contextlib import closing
 from typing import Any
 
 from face_index import pipeline
 from face_index.config import Site
 from face_index.errors import StageFailed
 from face_index.http import HttpFetcher
-from face_index.models import RequestKind
+from face_index.models import Record, RequestKind
 from face_index.normalize import PillowNormalizer
 from face_index.pacing import PostgresPacer
 from face_index.pipeline import Deps, RunParams
@@ -24,11 +24,10 @@ FAST: dict[RequestKind, float] = {
 }  # pacing adds no meaningful delay
 
 
-@dataclass
-class RunOutcome:
+class RunOutcome(Record):
     summary: dict[str, int]
     crawl: dict[str, dict[str, object]]
-    failed_stages: list[str]
+    failed_stages: tuple[str, ...] = ()
 
 
 def run_once(
@@ -62,7 +61,7 @@ def run_once(
             failed.append(name)
             return None
 
-    try:
+    with closing(pacer), closing(store):
         profile_id = pipeline.init_schema(deps_for(None))
         summaries: list[dict[str, int] | None] = []
         crawls: dict[str, dict[str, object]] = {}
@@ -77,10 +76,11 @@ def run_once(
                 stage(f"download_{s.name}", pipeline.download, s, crawled, deps, run_id)
             )
         deps = deps_for(None)
-        for batch in pipeline.plan_batches(deps):
-            summaries.append(stage("detect", pipeline.detect, batch, profile_id, deps, run_id))
+        summaries.extend(
+            stage("detect", pipeline.detect, batch, profile_id, deps, run_id)
+            for batch in pipeline.plan_batches(deps)
+        )
         done = [part for part in summaries if part is not None]
-        return RunOutcome(pipeline.summarize(done, deps), crawls, failed)
-    finally:
-        pacer.close()
-        store.close()
+        return RunOutcome(
+            summary=pipeline.summarize(done, deps), crawl=crawls, failed_stages=tuple(failed)
+        )
