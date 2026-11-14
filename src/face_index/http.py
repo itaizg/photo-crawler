@@ -12,12 +12,12 @@ import codecs
 import ipaddress
 import logging
 import socket
-import threading
 import time
 from collections.abc import Callable
-from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
 from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import closing
+from typing import Final
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
 
@@ -36,6 +36,8 @@ _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 type _Lookup = Callable[[str], list[str]]
 
+_DNS_POOL: Final = ThreadPoolExecutor(max_workers=8, thread_name_prefix="dns")
+
 
 def _getaddrinfo(host: str) -> list[str]:
     infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
@@ -45,9 +47,9 @@ def _getaddrinfo(host: str) -> list[str]:
 class SystemResolver:
     """Resolves through the operating system, giving up after ``timeout`` seconds.
 
-    ``getaddrinfo`` cannot be interrupted, so the lookup runs on a daemon thread; a lookup that
-    outlives the timeout is abandoned (the thread ends when the OS resolver does) and the item
-    fails with ``dns timeout`` instead of blocking the task.
+    ``getaddrinfo`` cannot be interrupted, so the lookup runs on a small shared thread pool; a
+    lookup that outlives the timeout is abandoned (its worker is freed when the OS resolver
+    gives up) and the item fails with ``dns timeout`` instead of blocking the task.
     """
 
     def __init__(self, timeout: float = config.DNS_TIMEOUT, lookup: _Lookup = _getaddrinfo) -> None:
@@ -55,17 +57,8 @@ class SystemResolver:
         self._lookup = lookup
 
     def resolve(self, host: str) -> list[str]:
-        result: Future[list[str]] = Future()
-
-        def run() -> None:
-            try:
-                result.set_result(self._lookup(host))
-            except BaseException as exc:  # handed to the waiting caller below
-                result.set_exception(exc)
-
-        threading.Thread(target=run, name=f"dns-{host}", daemon=True).start()
         try:
-            return result.result(timeout=self._timeout)
+            return _DNS_POOL.submit(self._lookup, host).result(timeout=self._timeout)
         except FutureTimeout as exc:
             raise ItemError("dns timeout") from exc
         except socket.gaierror as exc:
