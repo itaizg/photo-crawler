@@ -97,9 +97,11 @@ def image_indexer() -> None:
         params, run_id = _context()
         return pipeline.detect(ids, profile_id, _deps(params), run_id)
 
-    @task(trigger_rule="none_failed")
+    # all_done: the summary is logged even when a stage failed; pipeline.summarize then fails
+    # this task too, so the run is still marked failed.
+    @task(trigger_rule="all_done")
     def summarize(
-        downloads: list[dict[str, int]], detections: list[dict[str, int]]
+        downloads: list[dict[str, int] | None], detections: list[dict[str, int] | None]
     ) -> dict[str, int]:
         params, _ = _context()
         return pipeline.summarize([*downloads, *detections], _deps(params))

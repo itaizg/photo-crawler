@@ -5,7 +5,9 @@ place, ``build_default_deps``; tests pass fakes or a Postgres store on a test da
 
 Failure handling per item: ``InfrastructureError`` propagates (Airflow retries the task);
 ``Disallowed`` is a logged policy skip; any other exception is logged with its URL, counted, and
-recorded as one attempt toward the 3-attempt cap.
+recorded as one attempt toward the 3-attempt cap. A task in which items were attempted and every
+one failed raises ``StageFailed`` at the end, after the failures are recorded. URLs are logged
+through ``urls.for_log`` so signed query values never reach the logs.
 """
 
 import hashlib
@@ -17,9 +19,10 @@ from dataclasses import dataclass
 from face_index import config
 from face_index.config import Site
 from face_index.crawl import CrawlResult, crawl_site
-from face_index.errors import Disallowed, InfrastructureError, ItemError
-from face_index.models import CrawledPage, Skipped, Summary
+from face_index.errors import Disallowed, InfrastructureError, ItemError, StageFailed
+from face_index.models import CrawledPage, DetectedFace, PendingImage, Skipped, Summary
 from face_index.ports import FaceEmbedder, Fetcher, ImageNormalizer, IndexStore
+from face_index.urls import for_log
 
 log = logging.getLogger(__name__)
 
@@ -39,11 +42,17 @@ class RunParams:
                 raise ValueError(f"{name} must be a number")
             return float(value)
 
-        depth = int(number("depth", config.DEFAULT_DEPTH))
+        def integer(name: str, default: int) -> int:
+            value = number(name, default)
+            if not value.is_integer():  # 1.5 pages would silently become 1
+                raise ValueError(f"{name} must be a whole number")
+            return int(value)
+
+        depth = integer("depth", config.DEFAULT_DEPTH)
         page_cap = (
             None
             if params.get("page_cap", config.DEFAULT_PAGE_CAP) is None
-            else int(number("page_cap", config.DEFAULT_PAGE_CAP or 0))
+            else integer("page_cap", config.DEFAULT_PAGE_CAP or 0)
         )
         result = cls(
             depth=depth,
@@ -130,6 +139,7 @@ def download(
     summary = Summary()
     summary.merge(result.summary)
     failed: set[str] = set()  # image URLs that already failed in this task: not asked again
+    linked = 0
     for page in result.pages:
         try:
             page_id = deps.store.upsert_page(page.url, site.name, page.depth)
@@ -140,20 +150,26 @@ def download(
         except InfrastructureError:
             raise
         except Exception as exc:  # this page cannot be recorded; keep the run going
-            log.warning("page failed url=%s stage=download reason=%s", page.url, exc)
+            reason = exc.reason if isinstance(exc, ItemError) else type(exc).__name__
+            log.warning("page failed url=%s stage=download reason=%s", for_log(page.url), reason)
             summary.add("failures.download")
             continue
         lead_linked = False
         for ref in page.image_refs:
-            linked = _index_ref(ref, page, page_id, deps, run_id, summary, failed)
-            lead_linked |= linked and ref == page.lead_ref
+            ok = _index_ref(ref, page, page_id, deps, run_id, summary, failed)
+            linked += ok
+            lead_linked |= ok and ref == page.lead_ref
         if page.lead_ref is not None and not lead_linked:
             try:  # the declared lead could not be stored this time: do not keep a stale lead
                 deps.store.reset_lead(page_id)
             except InfrastructureError:
                 raise
             except Exception as exc:
-                log.warning("page failed url=%s stage=lead reason=%s", page.url, exc)
+                reason = exc.reason if isinstance(exc, ItemError) else type(exc).__name__
+                log.warning("page failed url=%s stage=lead reason=%s", for_log(page.url), reason)
+    failures = summary.counts.get("failures.download", 0)
+    if failures and not linked:
+        raise StageFailed(f"download for {site.name}: all {failures} attempted items failed")
     return summary.to_json()
 
 
@@ -176,10 +192,13 @@ def _index_ref(
         known = store.find_image_by_url(ref)
         if known is not None:
             store.link(page_id, known, is_lead)
+            store.record_success(ref, "image")  # clears a failure left by an interrupted task
             summary.add("reused_by_url")
             return True
         if store.is_abandoned(ref, "image", config.MAX_ATTEMPTS):
-            log.info("link abandoned url=%s kind=image attempts=%d", ref, config.MAX_ATTEMPTS)
+            log.info(
+                "link abandoned url=%s kind=image attempts=%d", for_log(ref), config.MAX_ATTEMPTS
+            )
             summary.add("abandoned.image")
             return False
         response = deps.fetcher.get_image(ref)
@@ -195,7 +214,7 @@ def _index_ref(
         _, created = store.stage_image(normalized, ref, page_id, is_lead)
         store.record_success(ref, "image")
         if isinstance(normalized, Skipped):
-            log.info("image skipped url=%s reason=%s", ref, normalized.reason)
+            log.info("image skipped url=%s reason=%s", for_log(ref), normalized.reason)
             summary.add(f"skipped.{normalized.reason}")
         elif created:
             summary.add("staged")
@@ -205,7 +224,7 @@ def _index_ref(
     except InfrastructureError:
         raise
     except Disallowed as exc:
-        log.info("image skipped url=%s reason=%s", ref, exc.reason)
+        log.info("image skipped url=%s reason=%s", for_log(ref), exc.reason)
         summary.add(f"skipped.{exc.reason}")
     except ItemError as exc:
         failed.add(ref)
@@ -217,7 +236,7 @@ def _index_ref(
 
 
 def _image_failed(ref: str, reason: str, deps: Deps, run_id: str, summary: Summary) -> None:
-    log.warning("image failed url=%s stage=download reason=%s", ref, reason)
+    log.warning("image failed url=%s stage=download reason=%s", for_log(ref), reason)
     summary.add("failures.download")
     deps.store.record_failure(ref, "image", reason, run_id)
 
@@ -237,32 +256,46 @@ def plan_batches(deps: Deps) -> list[list[int]]:
 
 def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict[str, int]:
     summary = Summary()
+    failures = 0
+    store = deps.store
+
+    def embed(pending: PendingImage) -> list[DetectedFace]:
+        return deps.embedder.embed(pending.jpeg)
+
     for image_id in ids:
         try:
-            faces = deps.store.process_pending(
-                image_id, lambda pending: deps.embedder.embed(pending.jpeg), profile_id
-            )
+            faces = store.process_pending(image_id, embed, profile_id)
+            if faces is None:
+                stored = store.stored_faces(image_id)
+                if stored is not None:
+                    # Already stored, by an earlier try of this task whose result Airflow lost:
+                    # count what it stored so the run summary stays complete.
+                    summary.add("detect.recovered")
+                    faces = stored
+                else:
+                    # Still pending: another worker holds the image. Wait for it; if it fails,
+                    # the image is processed here instead of being reported as done.
+                    faces = store.process_pending(image_id, embed, profile_id, wait=True)
+                    if faces is None:
+                        done = store.stored_faces(image_id) is not None
+                        summary.add("detect.already_done" if done else "detect.locked_elsewhere")
+                        continue
         except InfrastructureError:
             raise
         except Exception as exc:
             reason = exc.reason if isinstance(exc, ItemError) else f"unexpected {exc!r}"
             log.warning("image failed id=%d stage=detect reason=%s", image_id, reason)
             summary.add("failures.detect")
-            deps.store.record_detect_failure(image_id, run_id)
+            failures += 1
+            store.record_detect_failure(image_id, run_id)
             continue
-        if faces is None:
-            # Already stored, by an earlier try of this task whose result Airflow lost: count
-            # what it stored so the run summary stays complete.
-            faces = deps.store.stored_faces(image_id)
-            if faces is None:  # locked by another worker, which counts it
-                summary.add("detect.already_done")
-                continue
-            summary.add("detect.recovered")
         if faces == 0:
             summary.add("images_no_faces")
         else:
             summary.add("images_indexed")
             summary.add("faces_stored", faces)
+    if failures and failures == len(ids):
+        raise StageFailed(f"detection: all {failures} images in the batch failed")
     return summary.to_json()
 
 
@@ -279,12 +312,24 @@ SUMMARY_ROWS = (
     ("faces stored", "faces_stored"),
     ("failures", "failures."),
     ("abandoned (3 attempts)", "abandoned."),
+    ("pages left by the cap", "pages_left_by_cap."),
 )
 
 
-def summarize(summaries: Sequence[Mapping[str, int]], deps: Deps | None = None) -> dict[str, int]:
+def summarize(
+    summaries: Sequence[Mapping[str, int] | None], deps: Deps | None = None
+) -> dict[str, int]:
+    """Merge and log the stage summaries.
+
+    A ``None`` part is a stage that failed or was skipped (the summary task runs whatever its
+    upstreams did). The rest is still logged, then the task fails so the run is marked failed.
+    """
     total = Summary()
+    missing = 0
     for part in summaries:
+        if part is None:
+            missing += 1
+            continue
         total.merge(Summary.from_json(dict(part)))
     if deps is not None:
         abandoned = deps.store.abandoned_pending(config.MAX_ATTEMPTS)
@@ -299,5 +344,9 @@ def summarize(summaries: Sequence[Mapping[str, int]], deps: Deps | None = None) 
             lines.extend(f"  {k[len(key) :]:<32}{v:>8}" for k, v in matched.items())
         else:
             lines.append(f"{label:<34}{counts.get(key, 0):>8}")
+    if missing:
+        lines.append(f"{'stages with no result (failed)':<34}{missing:>8}")
     log.info("\n".join(lines))
+    if missing:
+        raise StageFailed(f"{missing} stage(s) produced no result; see the failed tasks")
     return counts

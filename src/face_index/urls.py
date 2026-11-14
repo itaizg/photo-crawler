@@ -56,3 +56,17 @@ def host_of(url: str) -> str:
 def in_scope(url: str, site: Site) -> bool:
     parts = urlsplit(url)
     return parts.scheme in {"http", "https"} and (parts.hostname or "").lower() in site.page_hosts
+
+
+def for_log(url: str) -> str:
+    """A URL safe to log: no userinfo, and every query value masked (signed URLs carry secrets).
+
+    Query keys are kept, so a log line still tells renditions apart by their parameter names.
+    """
+    try:
+        parts = urlsplit(url)
+        netloc = _netloc(parts.hostname or "", parts.port, parts.scheme) if parts.netloc else ""
+    except ValueError:  # malformed (bad port, bad IPv6): log only what cannot leak a secret
+        return "<malformed url>"
+    query = "&".join(f"{key}=…" for key, _ in parse_qsl(parts.query, keep_blank_values=True))
+    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))

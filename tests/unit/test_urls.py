@@ -1,7 +1,7 @@
 import pytest
 
 from face_index.config import SITES, Site
-from face_index.urls import in_scope, normalize_image_url, normalize_page_url
+from face_index.urls import for_log, in_scope, normalize_image_url, normalize_page_url
 
 CNN, PEOPLE = SITES
 
@@ -59,3 +59,21 @@ def test_normalize_image_url_keeps_query_and_drops_fragment() -> None:
 )
 def test_in_scope(url: str, site: Site, expected: bool) -> None:
     assert in_scope(url, site) is expected
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://u:secret@img.test/a.jpg?sig=abc&w=200", "https://img.test/a.jpg?sig=…&w=…"),
+        (
+            "https://img.test/a.jpg?X-Amz-Signature=deadbeef",
+            "https://img.test/a.jpg?X-Amz-Signature=…",
+        ),
+        ("https://img.test/a.jpg#frag", "https://img.test/a.jpg"),
+        ("https://img.test:8443/a.jpg", "https://img.test:8443/a.jpg"),
+        ("https://img.test:bad/a.jpg?token=t", "<malformed url>"),
+        ("http://[::1/a.jpg?token=t", "<malformed url>"),
+    ],
+)
+def test_for_log_masks_secrets(raw: str, expected: str) -> None:
+    assert for_log(raw) == expected

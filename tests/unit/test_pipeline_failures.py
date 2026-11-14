@@ -11,7 +11,7 @@ import pytest
 
 from face_index import pipeline
 from face_index.crawl import CrawlResult
-from face_index.errors import InfrastructureError
+from face_index.errors import InfrastructureError, StageFailed
 from face_index.http import HttpFetcher
 from face_index.models import (
     CrawledPage,
@@ -91,7 +91,12 @@ class MemoryStore:
         self.detect_failures.append(image_id)
 
     def process_pending(
-        self, image_id: int, detect: Callable[[PendingImage], list[DetectedFace]], profile_id: int
+        self,
+        image_id: int,
+        detect: Callable[[PendingImage], list[DetectedFace]],
+        profile_id: int,
+        *,
+        wait: bool = False,
     ) -> int | None:
         return len(detect(PendingImage(image_id, images.photo(64, 64), 64, 64)))
 
@@ -178,9 +183,9 @@ def test_infrastructure_errors_fail_the_task(where: str) -> None:
 def test_detection_failure_is_counted_and_recorded(caplog: pytest.LogCaptureFixture) -> None:
     store = MemoryStore()
     failing = FakeEmbedder(default_faces=1, fail_on={""})  # every image fails
-    counts = pipeline.detect([7, 8], 1, deps(store, {}, failing), "run-1")
-    assert counts["failures.detect"] == 2
-    assert store.detect_failures == [7, 8]
+    with pytest.raises(StageFailed, match="all 2 images"):  # nothing succeeded: Airflow retries
+        pipeline.detect([7, 8], 1, deps(store, {}, failing), "run-1")
+    assert store.detect_failures == [7, 8]  # recorded before the task fails
     assert "image failed id=7 stage=detect" in caplog.text
 
 
@@ -229,6 +234,8 @@ def test_an_image_that_failed_is_not_requested_again_in_the_same_task() -> None:
     broken = "https://img.test/500.jpg"
     pages = [CrawledPage(f"https://news.test/{i}", 1, (broken,), None) for i in range(3)]
     payload = CrawlResult(site="cnn", pages=pages).to_json()
+    pages.append(CrawledPage("https://news.test/ok", 1, (GOOD,), None))
+    payload = CrawlResult(site="cnn", pages=pages).to_json()
     the_deps = deps(store, ROUTES)
     counts = pipeline.download(SITE, payload, the_deps, "run-1")
     assert counts["failures.download"] == 1
@@ -255,6 +262,8 @@ def test_a_redelivered_detection_recovers_its_counts() -> None:
             image_id: int,
             detect: Callable[[PendingImage], list[DetectedFace]],
             profile_id: int,
+            *,
+            wait: bool = False,
         ) -> int | None:
             return None
 
@@ -271,3 +280,121 @@ def test_rates_below_the_floor_are_rejected(rate: float) -> None:
         pipeline.RunParams.from_mapping({"page_rate": rate})
     with pytest.raises(ValueError, match="image_rate"):
         pipeline.RunParams.from_mapping({"image_rate": rate})
+
+
+def test_a_download_where_every_attempted_image_failed_fails_the_task() -> None:
+    store = MemoryStore()
+    refs = ["https://img.test/500.jpg", "http://img.test/good.jpg"]  # one failure, one skip
+    with pytest.raises(StageFailed, match="all 1 attempted items failed"):
+        pipeline.download(SITE, crawl_payload(refs), deps(store, ROUTES), "run-1")
+    assert [u for u, _, _ in store.failures] == ["https://img.test/500.jpg"]
+
+
+def test_a_download_with_only_skips_does_not_fail() -> None:
+    counts = pipeline.download(
+        SITE, crawl_payload(["https://img.test/brand.svg"]), deps(MemoryStore(), ROUTES), "run-1"
+    )
+    assert counts["skipped.unsupported_format"] == 1
+
+
+def test_plain_http_images_are_skipped_not_failed() -> None:
+    store = MemoryStore()
+    counts = pipeline.download(
+        SITE, crawl_payload(["http://img.test/good.jpg", GOOD]), deps(store, ROUTES), "run-1"
+    )
+    assert counts["skipped.insecure_scheme"] == 1
+    assert store.failures == []
+
+
+def test_reuse_by_url_clears_a_stale_failure() -> None:
+    class Known(MemoryStore):
+        def __init__(self) -> None:
+            super().__init__()
+            self.by_url[GOOD] = 5
+            self.successes: list[str] = []
+
+        def record_success(self, url: str, kind: RequestKind) -> None:
+            self.successes.append(url)
+
+    store = Known()
+    counts = pipeline.download(SITE, crawl_payload([GOOD]), deps(store, {}), "run-1")
+    assert counts["reused_by_url"] == 1
+    assert store.successes == [GOOD]
+
+
+def test_signed_urls_are_masked_in_logs(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    signed = "https://img.test/500.jpg?token=s3cr3t"
+    routes = {**ROUTES, signed: Reply(500)}
+    pipeline.download(SITE, crawl_payload([signed, GOOD]), deps(MemoryStore(), routes), "run-1")
+    assert "s3cr3t" not in caplog.text
+    assert "image failed url=https://img.test/500.jpg?token=… stage=download" in caplog.text
+
+
+class Locked(MemoryStore):
+    """The image is locked by another worker on the first, non-waiting try."""
+
+    def __init__(self, after_wait: int | None, done_after_wait: bool) -> None:
+        super().__init__()
+        self.after_wait = after_wait
+        self.done_after_wait = done_after_wait
+        self.waited = False
+
+    def process_pending(
+        self,
+        image_id: int,
+        detect: Callable[[PendingImage], list[DetectedFace]],
+        profile_id: int,
+        *,
+        wait: bool = False,
+    ) -> int | None:
+        if not wait:
+            return None
+        self.waited = True
+        return self.after_wait
+
+    def stored_faces(self, image_id: int) -> int | None:
+        return 0 if self.waited and self.done_after_wait else None
+
+
+@pytest.mark.parametrize(
+    ("store", "expected"),
+    [
+        (Locked(after_wait=2, done_after_wait=False), {"images_indexed": 1, "faces_stored": 2}),
+        (Locked(after_wait=None, done_after_wait=True), {"detect.already_done": 1}),
+        (Locked(after_wait=None, done_after_wait=False), {"detect.locked_elsewhere": 1}),
+    ],
+    ids=["holder-failed-we-process", "holder-finished", "lock-timeout"],
+)
+def test_a_locked_image_is_waited_for_not_counted_as_done(
+    store: Locked, expected: dict[str, int]
+) -> None:
+    assert pipeline.detect([1], 1, deps(store, {}), "run-1") == expected
+    assert store.waited
+
+
+@pytest.mark.parametrize("name", ["depth", "page_cap"])
+def test_fractional_limits_are_rejected(name: str) -> None:
+    with pytest.raises(ValueError, match=f"{name} must be a whole number"):
+        pipeline.RunParams.from_mapping({name: 1.5})
+
+
+def test_integral_floats_are_accepted() -> None:
+    params = pipeline.RunParams.from_mapping({"depth": 2.0, "page_cap": 10.0})
+    assert (params.depth, params.page_cap) == (2, 10)
+
+
+def test_summary_logs_failed_stages_then_fails(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    with pytest.raises(StageFailed, match="1 stage"):
+        pipeline.summarize([{"pages_crawled.cnn": 2, "pages_left_by_cap.cnn": 7}, None])
+    assert "pages crawled" in caplog.text
+    assert "pages left by the cap" in caplog.text
+    assert "stages with no result (failed)" in caplog.text
+
+
+def test_summary_shows_pages_left_by_the_cap(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    pipeline.summarize([{"pages_left_by_cap.people": 4}])
+    assert "pages left by the cap" in caplog.text
+    assert "people" in caplog.text

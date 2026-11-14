@@ -94,7 +94,9 @@ class DeepFaceEmbedder:
         return narrow_results(entries, width, height)
 
 
-# TensorFlow errors that describe the runtime (memory, device, cancelled work), not one image.
+# TensorFlow errors that describe the runtime (memory, device, timeouts, cancelled work), not one
+# image. InvalidArgumentError, UnknownError and the like stay item errors: one bad input can
+# raise them, and as outages they would fail the task on every retry instead of being capped.
 _TF_OUTAGES = frozenset(
     {
         "ResourceExhaustedError",
@@ -102,6 +104,7 @@ _TF_OUTAGES = frozenset(
         "UnavailableError",
         "AbortedError",
         "CancelledError",
+        "DeadlineExceededError",
     }
 )
 

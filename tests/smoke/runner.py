@@ -1,9 +1,12 @@
 """Runs every pipeline stage in DAG order, in-process, against the mini-site (research R13)."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any
 
 from face_index import pipeline
 from face_index.config import Site
+from face_index.errors import StageFailed
 from face_index.http import HttpFetcher
 from face_index.models import RequestKind
 from face_index.normalize import PillowNormalizer
@@ -25,6 +28,7 @@ FAST: dict[RequestKind, float] = {
 class RunOutcome:
     summary: dict[str, int]
     crawl: dict[str, dict[str, object]]
+    failed_stages: list[str]
 
 
 def run_once(
@@ -48,18 +52,35 @@ def run_once(
         )
         return Deps(store=store, fetcher=fetcher, normalizer=normalizer, embedder=embedder)
 
+    failed: list[str] = []
+
+    def stage(name: str, run: Callable[..., dict[str, Any]], *args: Any) -> dict[str, Any] | None:
+        """Like an Airflow task: a stage whose items all failed has no result, the run goes on."""
+        try:
+            return run(*args)
+        except StageFailed:
+            failed.append(name)
+            return None
+
     try:
         profile_id = pipeline.init_schema(deps_for(None))
-        summaries: list[dict[str, int]] = []
+        summaries: list[dict[str, int] | None] = []
         crawls: dict[str, dict[str, object]] = {}
         for s in minisite.SITES:
             deps = deps_for(s)
-            crawls[s.name] = pipeline.crawl(s, params, deps, run_id)
-            summaries.append(pipeline.download(s, crawls[s.name], deps, run_id))
+            crawled = stage(f"crawl_{s.name}", pipeline.crawl, s, params, deps, run_id)
+            if crawled is None:  # download is upstream_failed in Airflow
+                summaries.append(None)
+                continue
+            crawls[s.name] = crawled
+            summaries.append(
+                stage(f"download_{s.name}", pipeline.download, s, crawled, deps, run_id)
+            )
         deps = deps_for(None)
         for batch in pipeline.plan_batches(deps):
-            summaries.append(pipeline.detect(batch, profile_id, deps, run_id))
-        return RunOutcome(pipeline.summarize(summaries, deps), crawls)
+            summaries.append(stage("detect", pipeline.detect, batch, profile_id, deps, run_id))
+        done = [part for part in summaries if part is not None]
+        return RunOutcome(pipeline.summarize(done, deps), crawls, failed)
     finally:
         pacer.close()
         store.close()
