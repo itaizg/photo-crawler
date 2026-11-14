@@ -111,7 +111,7 @@ docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "SELECT
 ## Automated tests
 
 ```bash
-uv sync --locked
+uv sync --locked --group dag      # `dag` adds Airflow for the DAG tests
 ```
 
 ```bash
