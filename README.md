@@ -47,7 +47,7 @@ If you re-run a single task by hand in the Airflow UI, clear it **with downstrea
 To look at a stored image, byte-identical to the database copy, or with its face boxes drawn:
 
 ```bash
-docker compose exec airflow-scheduler python -m face_index.export_image --id 42 --boxes -o /tmp/42.jpg
+docker compose exec airflow-scheduler uv run --no-project python -m face_index.export_image --id 42 --boxes -o /tmp/42.jpg
 docker compose cp airflow-scheduler:/tmp/42.jpg .
 ```
 

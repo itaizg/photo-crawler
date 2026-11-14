@@ -62,7 +62,7 @@ services:
       - |
         set -euo pipefail
         if [ ! -s /opt/airflow/secrets/jwt_secret ]; then
-          python -c "import secrets; print(secrets.token_urlsafe(48))" > /opt/airflow/secrets/jwt_secret
+          uv run --no-project python -c "import secrets; print(secrets.token_urlsafe(48))" > /opt/airflow/secrets/jwt_secret
           chmod 600 /opt/airflow/secrets/jwt_secret
         fi
         airflow db migrate
@@ -127,7 +127,7 @@ services:
       dockerfile: docker/airflow.Dockerfile
     image: photo-crawler-airflow:latest
     profiles: [tools]
-    entrypoint: ["python", "-m", "face_index.face_matcher"]
+    entrypoint: ["uv", "run", "--no-project", "python", "-m", "face_index.face_matcher"]
     working_dir: /work
     environment:
       FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
