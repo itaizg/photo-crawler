@@ -1,14 +1,25 @@
-"""Plain data passed across the ports. No driver types appear here."""
+"""Plain data passed across the ports. No driver types appear here.
 
-from dataclasses import dataclass, field
-from typing import Literal
+Every record is a frozen Pydantic model (constitution IX): built once, validated at
+construction, never mutated. A changed record is a new one (``model_copy(update=...)``).
+"""
 
-RequestKind = Literal["page", "image"]
-SkipReason = Literal["unsupported_format", "too_small", "too_large"]
+from collections.abc import Mapping
+from typing import Literal, Self
+
+from pydantic import BaseModel, ConfigDict, model_validator
+
+type RequestKind = Literal["page", "image"]
+type SkipReason = Literal["unsupported_format", "too_small", "too_large"]
 
 
-@dataclass(frozen=True, slots=True)
-class PageExtract:
+class Record(BaseModel):
+    """Base for every data record: frozen, so a record is never changed after it is built."""
+
+    model_config = ConfigDict(frozen=True)
+
+
+class PageExtract(Record):
     """What one HTML page yields: links to follow, image references, and its lead image."""
 
     links: tuple[str, ...]
@@ -16,30 +27,26 @@ class PageExtract:
     lead_ref: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class CrawledPage:
+class CrawledPage(Record):
     url: str
     depth: int
     image_refs: tuple[str, ...]
     lead_ref: str | None
 
 
-@dataclass(frozen=True, slots=True)
-class PageResponse:
+class PageResponse(Record):
     url: str
     content_type: str
     text: str | None  # None when the response is not HTML
 
 
-@dataclass(frozen=True, slots=True)
-class ImageResponse:
+class ImageResponse(Record):
     url: str
     content_type: str | None
     body: bytes
 
 
-@dataclass(frozen=True, slots=True)
-class NormalizedImage:
+class NormalizedImage(Record):
     sha256: bytes
     jpeg: bytes
     width: int
@@ -49,60 +56,75 @@ class NormalizedImage:
     original_height: int
 
 
-@dataclass(frozen=True, slots=True)
-class Skipped:
+class Skipped(Record):
     sha256: bytes
     reason: SkipReason
     original_format: str
     original_width: int | None = None
     original_height: int | None = None
 
-    def __post_init__(self) -> None:
+    @model_validator(mode="after")
+    def _too_small_has_dimensions(self) -> Self:
         # Dimensions may be unknown only when the header could not be read for its size.
         if self.reason == "too_small" and self.original_width is None:
             raise ValueError("a too_small skip must carry its original dimensions")
+        return self
 
 
-@dataclass(frozen=True, slots=True)
-class Box:
+class Box(Record):
     x: int
     y: int
     w: int
     h: int
 
 
-@dataclass(frozen=True, slots=True)
-class DetectedFace:
+class DetectedFace(Record):
     box: Box
     confidence: float
     embedding: tuple[float, ...]
 
 
-@dataclass(frozen=True, slots=True)
-class PendingImage:
+class QueryFace(Record):
+    """One face in the search query photo, numbered from 1 left to right (FR-010)."""
+
+    number: int
+    box: Box
+    embedding: tuple[float, ...]
+
+
+class PageMatch(Record):
+    """One page whose images contain a face matching a query face (contracts/search-query.md)."""
+
+    url: str
+    best_distance: float
+    lead: bool
+    image_urls: tuple[str, ...]
+
+
+class FaceResult(Record):
+    face: QueryFace
+    pages: tuple[PageMatch, ...]  # closest first; empty means "no matching pages"
+
+
+class PendingImage(Record):
     id: int
     jpeg: bytes
     width: int
     height: int
 
 
-@dataclass(slots=True)
-class Summary:
-    """Counters returned by every stage and merged by ``summarize`` (FR-025)."""
+class Summary(Record):
+    """Counters returned by every stage and merged by ``summarize`` (FR-025).
 
-    counts: dict[str, int] = field(default_factory=dict)
+    Stages count into a local ``Counter`` and freeze it with ``Summary.of`` when they return.
+    ``counts`` is sorted by key, so equal counts give equal summaries and the same JSON.
+    """
 
-    def add(self, key: str, n: int = 1) -> None:
-        self.counts[key] = self.counts.get(key, 0) + n
-
-    def merge(self, other: "Summary") -> "Summary":
-        for key, value in other.counts.items():
-            self.add(key, value)
-        return self
-
-    def to_json(self) -> dict[str, int]:
-        return dict(sorted(self.counts.items()))
+    counts: tuple[tuple[str, int], ...] = ()
 
     @classmethod
-    def from_json(cls, data: dict[str, int]) -> "Summary":
-        return cls(counts={str(k): int(v) for k, v in data.items()})
+    def of(cls, counts: Mapping[str, int]) -> Self:
+        return cls(counts=tuple(sorted(counts.items())))
+
+    def to_json(self) -> dict[str, int]:
+        return dict(self.counts)

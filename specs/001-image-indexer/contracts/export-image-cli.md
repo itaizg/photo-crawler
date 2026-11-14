@@ -6,8 +6,10 @@ This writes a stored normalized image to a `.jpg` file that is byte-identical to
 
 ```bash
 docker compose exec airflow-scheduler \
-  python -m face_index.export_image (--id <image_id> | --sha256 <hex>) [--boxes] -o <path.jpg>
+  uv run --no-project python -m face_index.export_image (--id <image_id> | --sha256 <hex>) [--boxes] -o <path.jpg>
 ```
+
+`--no-project` runs it in the image's Airflow interpreter, where `face_index` is installed (there is no `pyproject.toml` in the container's working directory). From a checkout on the host, `uv run python -m face_index.export_image …` does the same against the project's environment.
 
 | Argument | Required | Meaning |
 |---|---|---|

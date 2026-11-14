@@ -1,11 +1,11 @@
 """Runs every pipeline stage in DAG order, in-process, against the mini-site (research R13)."""
 
-from dataclasses import dataclass
+from contextlib import closing
 
 from face_index import pipeline
 from face_index.config import Site
 from face_index.http import HttpFetcher
-from face_index.models import RequestKind
+from face_index.models import Record, RequestKind
 from face_index.normalize import PillowNormalizer
 from face_index.pacing import PostgresPacer
 from face_index.pipeline import Deps, RunParams
@@ -21,8 +21,7 @@ FAST: dict[RequestKind, float] = {
 }  # pacing adds no meaningful delay
 
 
-@dataclass
-class RunOutcome:
+class RunOutcome(Record):
     summary: dict[str, int]
     crawl: dict[str, dict[str, object]]
 
@@ -48,7 +47,7 @@ def run_once(
         )
         return Deps(store=store, fetcher=fetcher, normalizer=normalizer, embedder=embedder)
 
-    try:
+    with closing(pacer), closing(store):
         profile_id = pipeline.init_schema(deps_for(None))
         summaries: list[dict[str, int]] = []
         crawls: dict[str, dict[str, object]] = {}
@@ -57,9 +56,8 @@ def run_once(
             crawls[s.name] = pipeline.crawl(s, params, deps, run_id)
             summaries.append(pipeline.download(s, crawls[s.name], deps, run_id))
         deps = deps_for(None)
-        for batch in pipeline.plan_batches(deps):
-            summaries.append(pipeline.detect(batch, profile_id, deps, run_id))
-        return RunOutcome(pipeline.summarize(summaries, deps), crawls)
-    finally:
-        pacer.close()
-        store.close()
+        summaries.extend(
+            pipeline.detect(batch, profile_id, deps, run_id)
+            for batch in pipeline.plan_batches(deps)
+        )
+        return RunOutcome(summary=pipeline.summarize(summaries, deps), crawl=crawls)

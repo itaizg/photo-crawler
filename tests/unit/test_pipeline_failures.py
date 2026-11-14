@@ -4,6 +4,7 @@ Uses an in-memory fake store, so these tests need no database.
 """
 
 import logging
+import re
 from collections.abc import Callable
 
 import httpx
@@ -27,7 +28,9 @@ from face_index.ports import FaceEmbedder
 from tests import images
 from tests.fakes import FakeEmbedder, FakeResolver, MockSite, RecordingPacer, Reply, robots_reply
 
-SITE = pipeline.config.Site("cnn", "https://news.test/", frozenset({"news.test"}))
+SITE = pipeline.config.Site(
+    name="cnn", seed_url="https://news.test/", page_hosts=frozenset({"news.test"})
+)
 JPEG = {"content-type": "image/jpeg"}
 
 
@@ -40,6 +43,7 @@ class MemoryStore:
         self.by_url: dict[str, int] = {}
         self.by_sha: dict[bytes, int] = {}
         self.fail_on = fail_on
+        self.outdated = 0  # what outdated_links reports for every page (FR-018)
 
     def _maybe_fail(self, what: str) -> None:
         if self.fail_on == what:
@@ -93,10 +97,15 @@ class MemoryStore:
     def process_pending(
         self, image_id: int, detect: Callable[[PendingImage], list[DetectedFace]], profile_id: int
     ) -> int | None:
-        return len(detect(PendingImage(image_id, images.photo(64, 64), 64, 64)))
+        return len(
+            detect(PendingImage(id=image_id, jpeg=images.photo(64, 64), width=64, height=64))
+        )
 
     def stored_faces(self, image_id: int) -> int | None:
         return None
+
+    def outdated_links(self, page_id: int) -> int:
+        return self.outdated
 
 
 def deps(
@@ -124,22 +133,26 @@ def deps(
 
 
 def crawl_payload(refs: list[str]) -> dict[str, object]:
-    page = CrawledPage("https://news.test/", 0, tuple(refs), None)
+    page = CrawledPage(url="https://news.test/", depth=0, image_refs=tuple(refs), lead_ref=None)
     return CrawlResult(site="cnn", pages=[page]).to_json()
 
 
 GOOD = "https://img.test/good.jpg"
 ROUTES = {
-    GOOD: Reply(200, images.photo(100, 100), JPEG),
-    "https://img.test/500.jpg": Reply(500),
+    GOOD: Reply(status=200, body=images.photo(100, 100), headers=JPEG),
+    "https://img.test/500.jpg": Reply(status=500),
     "https://img.test/slow.jpg": Reply(error=httpx.ReadTimeout),
-    "https://img.test/corrupt.jpg": Reply(200, images.corrupt_jpeg(), JPEG),
-    "https://img.test/huge.jpg": Reply(200, b"x", {"content-length": "999999", **JPEG}),
-    "https://img.test/redirect.jpg": Reply(
-        302, headers={"location": "https://internal.test/x.jpg"}
+    "https://img.test/corrupt.jpg": Reply(status=200, body=images.corrupt_jpeg(), headers=JPEG),
+    "https://img.test/huge.jpg": Reply(
+        status=200, body=b"x", headers={"content-length": "999999", **JPEG}
     ),
-    "https://img.test/brand.svg": Reply(200, images.SVG, {"content-type": "image/svg+xml"}),
-    "https://img.test/icon.jpg": Reply(200, images.photo(40, 40), JPEG),
+    "https://img.test/redirect.jpg": Reply(
+        status=302, headers={"location": "https://internal.test/x.jpg"}
+    ),
+    "https://img.test/brand.svg": Reply(
+        status=200, body=images.SVG, headers={"content-type": "image/svg+xml"}
+    ),
+    "https://img.test/icon.jpg": Reply(status=200, body=images.photo(40, 40), headers=JPEG),
 }
 FAILING = {
     "https://img.test/500.jpg": "http 500",
@@ -227,7 +240,10 @@ def test_summary_merges_and_logs_every_counter(caplog: pytest.LogCaptureFixture)
 def test_an_image_that_failed_is_not_requested_again_in_the_same_task() -> None:
     store = MemoryStore()
     broken = "https://img.test/500.jpg"
-    pages = [CrawledPage(f"https://news.test/{i}", 1, (broken,), None) for i in range(3)]
+    pages = [
+        CrawledPage(url=f"https://news.test/{i}", depth=1, image_refs=(broken,), lead_ref=None)
+        for i in range(3)
+    ]
     payload = CrawlResult(site="cnn", pages=pages).to_json()
     the_deps = deps(store, ROUTES)
     counts = pipeline.download(SITE, payload, the_deps, "run-1")
@@ -268,6 +284,31 @@ def test_a_redelivered_detection_recovers_its_counts() -> None:
 @pytest.mark.parametrize("rate", [0.0, 0.01, 1e-9])
 def test_rates_below_the_floor_are_rejected(rate: float) -> None:
     with pytest.raises(ValueError, match="page_rate"):
-        pipeline.RunParams.from_mapping({"page_rate": rate})
+        pipeline.RunParams.model_validate({"page_rate": rate})
     with pytest.raises(ValueError, match="image_rate"):
-        pipeline.RunParams.from_mapping({"image_rate": rate})
+        pipeline.RunParams.model_validate({"image_rate": rate})
+
+
+# -- FR-018: outdated page links are reported, never deleted ----------------------------------
+
+
+def test_download_logs_and_counts_outdated_links(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    store = MemoryStore()
+    store.outdated = 2
+    counts = pipeline.download(SITE, crawl_payload([GOOD]), deps(store, ROUTES), "run-1")
+    assert counts["links.outdated"] == 2
+    assert "outdated links page=https://news.test/ count=2" in caplog.text
+
+
+def test_no_outdated_links_means_no_log_and_no_counter(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    counts = pipeline.download(SITE, crawl_payload([GOOD]), deps(MemoryStore(), ROUTES), "run-1")
+    assert "links.outdated" not in counts
+    assert "outdated links" not in caplog.text
+
+
+def test_summary_shows_outdated_links(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    pipeline.summarize([{"links.outdated": 2}, {"links.outdated": 3}])
+    assert re.search(r"outdated page links \(ignored by search\)\s+5", caplog.text)

@@ -13,6 +13,10 @@ class InfrastructureError(Exception):
     """A shared dependency (database, face model) is unavailable."""
 
 
+class IndexNotReady(Exception):
+    """The schema, the current model profile row, or indexed faces are missing (search, R5)."""
+
+
 class ItemError(Exception):
     """One page or image failed; the run continues."""
 

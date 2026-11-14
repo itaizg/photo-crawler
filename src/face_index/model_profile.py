@@ -1,7 +1,8 @@
 """The one face model setup shared by the pipeline and the search script (FR-013, research R9)."""
 
-from dataclasses import dataclass
 from importlib.metadata import PackageNotFoundError, version
+
+from face_index.models import Record
 
 DETECTOR = "retinaface"
 MODEL = "Facenet512"
@@ -10,10 +11,12 @@ DISTANCE = "cosine"
 ALIGN = True
 NORMALIZATION = "base"
 MIN_FACE_CONFIDENCE = 0.9
+# Search: a stored face matches when its cosine distance is strictly below this. It equals
+# DeepFace's find_threshold("Facenet512", "cosine"); a model test keeps the two in step (R2).
+MATCH_THRESHOLD = 0.30
 
 
-@dataclass(frozen=True, slots=True)
-class ProfileRecord:
+class ProfileRecord(Record):
     key: str
     deepface_version: str
     tensorflow_version: str

@@ -306,7 +306,7 @@ Download failures, decode errors included, store no image. The URL stays unknown
   - Skips are returned values, not exceptions, and are logged at INFO: `image skipped url=… reason=too_small`.
   - Item failures are logged at WARNING: `image failed url=… stage=download reason=…`.
   - Page failures and robots refusals are logged the same way.
-- Each stage function returns a typed summary dataclass, passed by XCom: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, failures by stage, and **abandoned** (links and detections at the attempt cap).
+- Each stage function counts into a local `Counter` and returns a frozen `Summary`, passed by XCom as JSON: small dicts of counts, never image data. `summarize` merges them and logs one table: pages crawled per site, images found, skipped by reason, newly indexed, reused by URL, reused by fingerprint, faces stored, failures by stage, and **abandoned** (links and detections at the attempt cap).
 
 **Rationale**: The constitution's failure isolation, plus FR-023's clarified split between item and infrastructure failures, plus FR-025. XCom carries only small counters, as Airflow recommends.
 

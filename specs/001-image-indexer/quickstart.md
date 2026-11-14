@@ -53,7 +53,7 @@ The single quotes matter: `$POSTGRES_USER` is expanded *inside* the container, w
 ## 4. Spot-check faces (SC-004)
 
 ```bash
-docker compose exec airflow-scheduler python -m face_index.export_image --id <id> --boxes -o /tmp/check.jpg
+docker compose exec airflow-scheduler uv run --no-project python -m face_index.export_image --id <id> --boxes -o /tmp/check.jpg
 ```
 
 Then copy the file out with `docker compose cp`. Repeat for 50 random `indexed` IDs (`ORDER BY random() LIMIT 50`). **Expected**: every drawn box surrounds a face. Without `--boxes`, the file's SHA-256 matches `encode(sha256(jpeg),'hex')` from the database (FR-009a).

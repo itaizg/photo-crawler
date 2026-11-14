@@ -40,11 +40,10 @@ def db_dsn(pg_extension: None) -> Iterator[str]:
     schema = f"t_{uuid.uuid4().hex[:12]}"
     with _admin_connection() as conn:
         conn.execute(SQL("CREATE SCHEMA {}").format(Identifier(schema)))
-    try:
-        yield make_conninfo(TEST_DSN, options=f"-c search_path={schema},public")
-    finally:
-        with _admin_connection() as conn:
-            conn.execute(SQL("DROP SCHEMA {} CASCADE").format(Identifier(schema)))
+    # pytest runs the code after `yield` even when the test fails.
+    yield make_conninfo(TEST_DSN, options=f"-c search_path={schema},public")
+    with _admin_connection() as conn:
+        conn.execute(SQL("DROP SCHEMA {} CASCADE").format(Identifier(schema)))
 
 
 @pytest.fixture

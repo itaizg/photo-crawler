@@ -11,66 +11,59 @@ recorded as one attempt toward the 3-attempt cap.
 import hashlib
 import json
 import logging
+from collections import Counter
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass
+from typing import Annotated
+
+from pydantic import ConfigDict, Field, SkipValidation
 
 from face_index import config
 from face_index.config import Site
 from face_index.crawl import CrawlResult, crawl_site
 from face_index.errors import Disallowed, InfrastructureError, ItemError
-from face_index.models import CrawledPage, Skipped, Summary
+from face_index.models import CrawledPage, Record, Skipped, Summary
 from face_index.ports import FaceEmbedder, Fetcher, ImageNormalizer, IndexStore
 
 log = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True, slots=True)
-class RunParams:
-    depth: int = config.DEFAULT_DEPTH
-    page_cap: int | None = config.DEFAULT_PAGE_CAP
-    page_rate: float = config.DEFAULT_PAGE_RATE
-    image_rate: float = config.DEFAULT_IMAGE_RATE
+class RunParams(Record):
+    """One run's settings: the config defaults, overridden by DAG params (constitution IX).
 
-    @classmethod
-    def from_mapping(cls, params: Mapping[str, object]) -> "RunParams":
-        def number(name: str, default: float) -> float:
-            value = params.get(name, default)
-            if not isinstance(value, int | float) or isinstance(value, bool):
-                raise ValueError(f"{name} must be a number")
-            return float(value)
+    Strict, so a string or a boolean is rejected instead of being coerced. Built from the DAG's
+    params with ``RunParams.model_validate``; a bad value raises ``ValidationError``, which is
+    a ``ValueError`` that names the field.
+    """
 
-        depth = int(number("depth", config.DEFAULT_DEPTH))
-        page_cap = (
-            None
-            if params.get("page_cap", config.DEFAULT_PAGE_CAP) is None
-            else int(number("page_cap", config.DEFAULT_PAGE_CAP or 0))
-        )
-        result = cls(
-            depth=depth,
-            page_cap=page_cap,
-            page_rate=number("page_rate", config.DEFAULT_PAGE_RATE),
-            image_rate=number("image_rate", config.DEFAULT_IMAGE_RATE),
-        )
-        result.validate()
-        return result
+    model_config = ConfigDict(frozen=True, strict=True)
 
-    def validate(self) -> None:
-        if not 0 <= self.depth <= config.MAX_DEPTH:
-            raise ValueError(f"depth must be between 0 and {config.MAX_DEPTH}")
-        if self.page_cap is not None and self.page_cap < 1:
-            raise ValueError("page_cap must be at least 1 or None")
-        if not config.MIN_RATE <= self.page_rate <= config.MAX_PAGE_RATE:
-            raise ValueError(f"page_rate must be in [{config.MIN_RATE}, {config.MAX_PAGE_RATE}]")
-        if not config.MIN_RATE <= self.image_rate <= config.MAX_IMAGE_RATE:
-            raise ValueError(f"image_rate must be in [{config.MIN_RATE}, {config.MAX_IMAGE_RATE}]")
+    depth: Annotated[int, Field(ge=0, le=config.MAX_DEPTH)] = config.DEFAULT_DEPTH
+    page_cap: Annotated[int, Field(ge=1)] | None = config.DEFAULT_PAGE_CAP
+    page_rate: Annotated[float, Field(ge=config.MIN_RATE, le=config.MAX_PAGE_RATE)] = (
+        config.DEFAULT_PAGE_RATE
+    )
+    image_rate: Annotated[float, Field(ge=config.MIN_RATE, le=config.MAX_IMAGE_RATE)] = (
+        config.DEFAULT_IMAGE_RATE
+    )
 
 
-@dataclass(frozen=True, slots=True)
-class Deps:
-    store: IndexStore
-    fetcher: Fetcher
-    normalizer: ImageNormalizer
-    embedder: FaceEmbedder
+class Deps(Record):
+    """The adapters a stage uses, typed by their ports. ty checks that they conform."""
+
+    model_config = ConfigDict(frozen=True, arbitrary_types_allowed=True)
+
+    store: SkipValidation[IndexStore]
+    fetcher: SkipValidation[Fetcher]
+    normalizer: SkipValidation[ImageNormalizer]
+    embedder: SkipValidation[FaceEmbedder]
+
+
+class _RefOutcome(Record):
+    """What indexing one image reference did: the counters to add, and whether it linked."""
+
+    counts: tuple[str, ...]
+    linked: bool = False
+    failed: bool = False  # this URL failed; it is not requested again in the same task
 
 
 def build_default_deps(dsn: str, params: RunParams, site: Site | None = None) -> Deps:
@@ -126,9 +119,8 @@ def crawl(site: Site, params: RunParams, deps: Deps, run_id: str) -> dict[str, o
 def download(
     site: Site, crawl_payload: Mapping[str, object], deps: Deps, run_id: str
 ) -> dict[str, int]:
-    result = CrawlResult.from_json(dict(crawl_payload))
-    summary = Summary()
-    summary.merge(result.summary)
+    result = CrawlResult.from_json(crawl_payload)
+    counts: Counter[str] = Counter(result.summary.to_json())
     failed: set[str] = set()  # image URLs that already failed in this task: not asked again
     for page in result.pages:
         try:
@@ -139,87 +131,93 @@ def download(
                 deps.store.reset_lead(page_id)
         except InfrastructureError:
             raise
-        except Exception as exc:  # this page cannot be recorded; keep the run going
+        except Exception as exc:  # noqa: BLE001 - per-item isolation point: count, keep going
             log.warning("page failed url=%s stage=download reason=%s", page.url, exc)
-            summary.add("failures.download")
+            counts["failures.download"] += 1
             continue
         lead_linked = False
         for ref in page.image_refs:
-            linked = _index_ref(ref, page, page_id, deps, run_id, summary, failed)
-            lead_linked |= linked and ref == page.lead_ref
+            if ref in failed:
+                counts["skipped.failed_earlier_in_run"] += 1
+                continue
+            outcome = _index_ref(ref, page, page_id, deps, run_id)
+            counts.update(outcome.counts)
+            if outcome.failed:
+                failed.add(ref)
+            lead_linked |= outcome.linked and ref == page.lead_ref
         if page.lead_ref is not None and not lead_linked:
             try:  # the declared lead could not be stored this time: do not keep a stale lead
                 deps.store.reset_lead(page_id)
             except InfrastructureError:
                 raise
-            except Exception as exc:
+            except Exception as exc:  # noqa: BLE001 - per-item isolation point: log, keep going
                 log.warning("page failed url=%s stage=lead reason=%s", page.url, exc)
-    return summary.to_json()
+        if outdated := _outdated_links(page.url, page_id, deps):
+            counts["links.outdated"] += outdated
+    return Summary.of(counts).to_json()
 
 
-def _index_ref(
-    ref: str,
-    page: CrawledPage,
-    page_id: int,
-    deps: Deps,
-    run_id: str,
-    summary: Summary,
-    failed: set[str],
-) -> bool:
-    """Index one image reference; returns True when the page was linked to an image."""
+def _outdated_links(url: str, page_id: int, deps: Deps) -> int:
+    """Log and count the page's links this crawl did not see; search ignores them (FR-018, R4)."""
+    try:
+        outdated = deps.store.outdated_links(page_id)
+    except InfrastructureError:
+        raise
+    except Exception as exc:  # noqa: BLE001 - per-item isolation point: log, keep going
+        log.warning("page failed url=%s stage=outdated_links reason=%s", url, exc)
+        return 0
+    if outdated:
+        log.info("outdated links page=%s count=%d", url, outdated)
+    return outdated
+
+
+def _index_ref(ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: str) -> _RefOutcome:
+    """Index one image reference and report what it did."""
     store = deps.store
     is_lead = ref == page.lead_ref
-    if ref in failed:
-        summary.add("skipped.failed_earlier_in_run")
-        return False
+    done: list[str] = []  # counted so far; kept when a later step of this image fails
     try:
         known = store.find_image_by_url(ref)
         if known is not None:
             store.link(page_id, known, is_lead)
-            summary.add("reused_by_url")
-            return True
+            return _RefOutcome(counts=("reused_by_url",), linked=True)
         if store.is_abandoned(ref, "image", config.MAX_ATTEMPTS):
             log.info("link abandoned url=%s kind=image attempts=%d", ref, config.MAX_ATTEMPTS)
-            summary.add("abandoned.image")
-            return False
+            return _RefOutcome(counts=("abandoned.image",))
         response = deps.fetcher.get_image(ref)
-        summary.add("downloaded")
+        done.append("downloaded")
         sha256 = hashlib.sha256(response.body).digest()
         same_content = store.find_image_by_sha256(sha256)
         if same_content is not None:
             store.add_url_and_link(same_content, ref, page_id, is_lead)
             store.record_success(ref, "image")
-            summary.add("reused_by_fingerprint")
-            return True
+            return _RefOutcome(counts=(*done, "reused_by_fingerprint"), linked=True)
         normalized = deps.normalizer.normalize(response.body, response.content_type)
         _, created = store.stage_image(normalized, ref, page_id, is_lead)
         store.record_success(ref, "image")
-        if isinstance(normalized, Skipped):
-            log.info("image skipped url=%s reason=%s", ref, normalized.reason)
-            summary.add(f"skipped.{normalized.reason}")
-        elif created:
-            summary.add("staged")
-        else:
-            summary.add("reused_by_fingerprint")
-        return True
     except InfrastructureError:
         raise
     except Disallowed as exc:
         log.info("image skipped url=%s reason=%s", ref, exc.reason)
-        summary.add(f"skipped.{exc.reason}")
+        return _RefOutcome(counts=(*done, f"skipped.{exc.reason}"))
     except ItemError as exc:
-        failed.add(ref)
-        _image_failed(ref, exc.reason, deps, run_id, summary)
-    except Exception as exc:  # unexpected per-item error: count it, keep the run going
-        failed.add(ref)
-        _image_failed(ref, f"unexpected {type(exc).__name__}: {exc}", deps, run_id, summary)
-    return False
+        return _image_failed(ref, exc.reason, deps, run_id, done)
+    except Exception as exc:  # noqa: BLE001 - per-item isolation point: count, keep going
+        return _image_failed(ref, f"unexpected {type(exc).__name__}: {exc}", deps, run_id, done)
+    if isinstance(normalized, Skipped):
+        log.info("image skipped url=%s reason=%s", ref, normalized.reason)
+        outcome = f"skipped.{normalized.reason}"
+    else:
+        outcome = "staged" if created else "reused_by_fingerprint"
+    return _RefOutcome(counts=(*done, outcome), linked=True)
 
 
-def _image_failed(ref: str, reason: str, deps: Deps, run_id: str, summary: Summary) -> None:
+def _image_failed(
+    ref: str, reason: str, deps: Deps, run_id: str, done: Sequence[str]
+) -> _RefOutcome:
     log.warning("image failed url=%s stage=download reason=%s", ref, reason)
-    summary.add("failures.download")
     deps.store.record_failure(ref, "image", reason, run_id)
+    return _RefOutcome(counts=(*done, "failures.download"), failed=True)
 
 
 def plan_batches(deps: Deps) -> list[list[int]]:
@@ -236,7 +234,7 @@ def plan_batches(deps: Deps) -> list[list[int]]:
 
 
 def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict[str, int]:
-    summary = Summary()
+    counts: Counter[str] = Counter()
     for image_id in ids:
         try:
             faces = deps.store.process_pending(
@@ -244,10 +242,10 @@ def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict
             )
         except InfrastructureError:
             raise
-        except Exception as exc:
+        except Exception as exc:  # noqa: BLE001 - per-item isolation point: count, keep going
             reason = exc.reason if isinstance(exc, ItemError) else f"unexpected {exc!r}"
             log.warning("image failed id=%d stage=detect reason=%s", image_id, reason)
-            summary.add("failures.detect")
+            counts["failures.detect"] += 1
             deps.store.record_detect_failure(image_id, run_id)
             continue
         if faces is None:
@@ -255,15 +253,15 @@ def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict
             # what it stored so the run summary stays complete.
             faces = deps.store.stored_faces(image_id)
             if faces is None:  # locked by another worker, which counts it
-                summary.add("detect.already_done")
+                counts["detect.already_done"] += 1
                 continue
-            summary.add("detect.recovered")
+            counts["detect.recovered"] += 1
         if faces == 0:
-            summary.add("images_no_faces")
+            counts["images_no_faces"] += 1
         else:
-            summary.add("images_indexed")
-            summary.add("faces_stored", faces)
-    return summary.to_json()
+            counts["images_indexed"] += 1
+            counts["faces_stored"] += faces
+    return Summary.of(counts).to_json()
 
 
 SUMMARY_ROWS = (
@@ -279,18 +277,17 @@ SUMMARY_ROWS = (
     ("faces stored", "faces_stored"),
     ("failures", "failures."),
     ("abandoned (3 attempts)", "abandoned."),
+    ("outdated page links (ignored by search)", "links.outdated"),
 )
 
 
 def summarize(summaries: Sequence[Mapping[str, int]], deps: Deps | None = None) -> dict[str, int]:
-    total = Summary()
+    total = Counter[str]()
     for part in summaries:
-        total.merge(Summary.from_json(dict(part)))
-    if deps is not None:
-        abandoned = deps.store.abandoned_pending(config.MAX_ATTEMPTS)
-        if abandoned:
-            total.add("abandoned.detect", abandoned)
-    counts = total.to_json()
+        total.update(part)  # unlike ``+``, ``update`` keeps zero counts
+    if deps is not None and (abandoned := deps.store.abandoned_pending(config.MAX_ATTEMPTS)):
+        total["abandoned.detect"] += abandoned
+    counts = Summary.of(total).to_json()
     lines = ["run summary", f"{'metric':<34}{'count':>8}"]
     for label, key in SUMMARY_ROWS:
         if key.endswith("."):

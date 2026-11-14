@@ -5,8 +5,7 @@ Every public method runs inside ``_guard()``, which turns driver connection erro
 """
 
 from collections.abc import Callable, Generator
-from contextlib import contextmanager, suppress
-from dataclasses import dataclass
+from contextlib import contextmanager
 from importlib.resources import files
 
 import numpy as np
@@ -19,6 +18,7 @@ from face_index.models import (
     DetectedFace,
     NormalizedImage,
     PendingImage,
+    Record,
     RequestKind,
     Skipped,
 )
@@ -34,6 +34,12 @@ _LINK = """
 INSERT INTO page_image (page_id, image_id, is_lead) VALUES (%s, %s, %s)
 ON CONFLICT (page_id, image_id) DO UPDATE
   SET last_seen_at = now(), is_lead = page_image.is_lead OR EXCLUDED.is_lead
+"""
+
+# A link the page's latest crawl did not refresh (index-read.md guarantee 6, FR-018).
+_OUTDATED_LINKS = """
+SELECT count(*) FROM page_image pi JOIN page p ON p.id = pi.page_id
+WHERE pi.page_id = %s AND pi.last_seen_at < p.last_crawled_at
 """
 
 _UPSERT_PROFILE = """
@@ -69,8 +75,7 @@ ON CONFLICT (image_id, face_index) DO NOTHING
 """
 
 
-@dataclass(frozen=True, slots=True)
-class ExportedImage:
+class ExportedImage(Record):
     id: int
     status: str
     jpeg: bytes | None
@@ -105,8 +110,10 @@ class PostgresIndexStore:
     def _connection(self) -> psycopg.Connection:
         if self._conn is None or self._conn.closed:
             conn = db.connect(self._dsn)
-            # Before init_schema creates the extension this fails; init_schema registers it then.
-            with suppress(psycopg.ProgrammingError):
+            # Before init_schema creates the extension there is no vector type to register;
+            # init_schema registers it then.
+            row = conn.execute("SELECT to_regtype('vector') IS NOT NULL").fetchone()
+            if row is not None and row[0]:
                 register_vector(conn)
             self._conn = conn
         return self._conn
@@ -265,7 +272,9 @@ class PostgresIndexStore:
             ).fetchone()
             if row is None:
                 return None
-            pending = PendingImage(int(row[0]), bytes(row[1]), int(row[2]), int(row[3]))
+            pending = PendingImage(
+                id=int(row[0]), jpeg=bytes(row[1]), width=int(row[2]), height=int(row[3])
+            )
             # Only faces at or above the profile's confidence floor are stored and searchable.
             faces = [
                 f for f in detect(pending) if f.confidence >= model_profile.MIN_FACE_CONFIDENCE
@@ -317,6 +326,11 @@ class PostgresIndexStore:
         return int(row[1])
 
     # -- attempt cap ------------------------------------------------------------------------
+
+    def outdated_links(self, page_id: int) -> int:
+        with self._guard() as conn:
+            row = conn.execute(_OUTDATED_LINKS, (page_id,)).fetchone()
+            return int(row[0]) if row else 0
 
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool:
         with self._guard() as conn:

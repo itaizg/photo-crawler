@@ -38,7 +38,7 @@ def narrow_results(raw: Sequence[Mapping[str, Any]], width: int, height: int) ->
             continue
         faces.append(
             DetectedFace(
-                box=Box(x, y, w, h),
+                box=Box(x=x, y=y, w=w, h=h),
                 confidence=confidence,
                 embedding=tuple(float(v) for v in embedding),
             )

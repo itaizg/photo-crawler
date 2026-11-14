@@ -80,9 +80,13 @@ class HttpFetcher:
                 raise ItemError(f"http {response.status_code}", final_url)
             content_type = response.headers.get("content-type", "")
             if "html" not in content_type.lower():
-                return PageResponse(final_url, content_type, None)
+                return PageResponse(url=final_url, content_type=content_type, text=None)
             body = self._read(response, config.MAX_PAGE_BYTES, final_url)
-            return PageResponse(final_url, content_type, _decode(body, response.charset_encoding))
+            return PageResponse(
+                url=final_url,
+                content_type=content_type,
+                text=_decode(body, response.charset_encoding),
+            )
 
     def get_image(self, url: str) -> ImageResponse:
         final_url, response = self._open(url, "image", config.IMAGE_ACCEPT, check_scope=False)
@@ -90,7 +94,9 @@ class HttpFetcher:
             if response.status_code != 200:
                 raise ItemError(f"http {response.status_code}", final_url)
             body = self._read(response, self._max_download, final_url)
-            return ImageResponse(final_url, response.headers.get("content-type"), body)
+            return ImageResponse(
+                url=final_url, content_type=response.headers.get("content-type"), body=body
+            )
 
     def close(self) -> None:
         for client in self._clients.values():

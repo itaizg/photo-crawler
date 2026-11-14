@@ -13,8 +13,8 @@ from face_index.config import Site
 from tests import images
 from tests.fakes import FakeEmbedder, MockSite, Reply, html_reply, robots_reply
 
-NEWS = Site("cnn", "https://news.test/", frozenset({"news.test"}))
-CELEB = Site("people", "https://celeb.test/", frozenset({"celeb.test"}))
+NEWS = Site(name="cnn", seed_url="https://news.test/", page_hosts=frozenset({"news.test"}))
+CELEB = Site(name="people", seed_url="https://celeb.test/", page_hosts=frozenset({"celeb.test"}))
 SITES = (NEWS, CELEB)
 
 FACE_ONE = images.photo(400, 300, seed=1)  # FakeEmbedder: 1 face
@@ -59,15 +59,17 @@ def routes() -> dict[str, Reply]:
         ),
         "https://celeb.test/b1": _page(URL["face_one_dup"], [], [URL["face_one_dup"]]),
         "https://celeb.test/b2": _page(URL["no_face"], [], [URL["error"]]),
-        URL["face_one"]: Reply(200, FACE_ONE, JPEG),
-        URL["face_one_dup"]: Reply(200, FACE_ONE, JPEG),
-        URL["face_two"]: Reply(200, FACE_TWO, JPEG),
-        URL["no_face"]: Reply(200, NO_FACE, JPEG),
-        URL["alpha"]: Reply(200, images.rgba_png(), {"content-type": "image/png"}),
-        URL["svg"]: Reply(200, images.SVG, {"content-type": "image/svg+xml"}),
-        URL["icon"]: Reply(200, images.photo(40, 40), JPEG),
-        URL["corrupt"]: Reply(200, images.corrupt_jpeg(), JPEG),
-        URL["error"]: Reply(500),
+        URL["face_one"]: Reply(status=200, body=FACE_ONE, headers=JPEG),
+        URL["face_one_dup"]: Reply(status=200, body=FACE_ONE, headers=JPEG),
+        URL["face_two"]: Reply(status=200, body=FACE_TWO, headers=JPEG),
+        URL["no_face"]: Reply(status=200, body=NO_FACE, headers=JPEG),
+        URL["alpha"]: Reply(
+            status=200, body=images.rgba_png(), headers={"content-type": "image/png"}
+        ),
+        URL["svg"]: Reply(status=200, body=images.SVG, headers={"content-type": "image/svg+xml"}),
+        URL["icon"]: Reply(status=200, body=images.photo(40, 40), headers=JPEG),
+        URL["corrupt"]: Reply(status=200, body=images.corrupt_jpeg(), headers=JPEG),
+        URL["error"]: Reply(status=500),
     }
 
 

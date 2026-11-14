@@ -94,17 +94,15 @@ def _from_img(img: Tag) -> str | None:
 
 
 def _image_refs(soup: BeautifulSoup) -> list[str]:
-    refs: list[str] = []
-    for img in soup.find_all("img"):
-        if isinstance(img, Tag) and _usable(chosen := _from_img(img)):
-            refs.append(chosen)
-    for source in soup.select("picture source"):
-        if _usable(chosen := _from_srcset(source)):
-            refs.append(chosen)
-    for tag in soup.find_all(style=True):
-        if isinstance(tag, Tag):
-            refs.extend(u for u in _css_urls(_attr(tag, "style") or "") if _usable(u))
-    return refs
+    from_img = (_from_img(img) for img in soup.find_all("img") if isinstance(img, Tag))
+    from_sources = (_from_srcset(source) for source in soup.select("picture source"))
+    from_styles = (
+        url
+        for tag in soup.find_all(style=True)
+        if isinstance(tag, Tag)
+        for url in _css_urls(_attr(tag, "style") or "")
+    )
+    return [ref for ref in (*from_img, *from_sources, *from_styles) if _usable(ref)]
 
 
 def _lead_ref(soup: BeautifulSoup) -> str | None:

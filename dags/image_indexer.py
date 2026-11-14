@@ -48,7 +48,7 @@ PARAMS = {
 
 def _context() -> tuple[pipeline.RunParams, str]:
     context = get_current_context()
-    params = pipeline.RunParams.from_mapping(dict(context["params"]))
+    params = pipeline.RunParams.model_validate(dict(context["params"]))
     return params, str(context["run_id"])
 
 

@@ -21,7 +21,7 @@ description: "Task list for the Image Indexer Pipeline"
 
 ## Conventions for every task
 
-- Python 3.13, everything type-annotated (constitution II). `Any` only at trust boundaries, narrowed to dataclasses at once.
+- Python 3.13, everything type-annotated (constitution II). `Any` only at trust boundaries, narrowed to frozen Pydantic models at once.
 - `ruff check`, `ruff format` and `ty check` pass after each task.
 - `src/face_index/` never imports Airflow. `dags/` only wires tasks to `face_index.pipeline` functions.
 - **Ports and adapters** (constitution II, VI): `pipeline.py` and `crawl.py` depend only on the protocols `Fetcher`, `Resolver`, `Pacer`, `ImageNormalizer`, `FaceEmbedder` and `IndexStore`, plus plain dataclasses. They never import `psycopg`, `httpx`, `PIL` or `deepface`. Only the adapters (`PostgresIndexStore`, `HttpFetcher`, `PillowNormalizer`, `DeepFaceEmbedder`, `PostgresPacer`) import drivers. Production adapters are built in one place, `pipeline.build_default_deps(dsn)`.

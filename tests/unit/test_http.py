@@ -56,14 +56,21 @@ def test_page_fetch_sets_headers_and_pins_ip() -> None:
 
 
 def test_image_accept_header_prefers_decodable_formats() -> None:
-    fetcher, site, _ = make({**ROBOTS, IMG: Reply(200, b"x", {"content-type": "image/jpeg"})})
+    fetcher, site, _ = make(
+        {**ROBOTS, IMG: Reply(status=200, body=b"x", headers={"content-type": "image/jpeg"})}
+    )
     fetcher.get_image(IMG)
     _, request = next((u, r) for u, r in site.requests if u == IMG)
     assert request.headers["accept"] == config.IMAGE_ACCEPT
 
 
 def test_non_html_page_returns_no_text() -> None:
-    fetcher, _, _ = make({**ROBOTS, HOME: Reply(200, b"%PDF", {"content-type": "application/pdf"})})
+    fetcher, _, _ = make(
+        {
+            **ROBOTS,
+            HOME: Reply(status=200, body=b"%PDF", headers={"content-type": "application/pdf"}),
+        }
+    )
     assert fetcher.get_page(HOME).text is None
 
 
@@ -90,7 +97,7 @@ def test_robots_404_allows_all() -> None:
     assert fetcher.get_page(HOME).text == "ok"
 
 
-@pytest.mark.parametrize("reply", [Reply(503), Reply(error=httpx.ConnectError)])
+@pytest.mark.parametrize("reply", [Reply(status=503), Reply(error=httpx.ConnectError)])
 def test_robots_5xx_or_network_error_disallows_host(reply: Reply) -> None:
     fetcher, site, _ = make({"https://edition.cnn.com/robots.txt": reply, HOME: html_reply("ok")})
     with pytest.raises(Disallowed):
@@ -101,7 +108,11 @@ def test_robots_5xx_or_network_error_disallows_host(reply: Reply) -> None:
 def test_redirect_hops_are_checked_and_followed() -> None:
     target = "https://edition.cnn.com/final"
     fetcher, _, pacer = make(
-        {**ROBOTS, HOME: Reply(301, headers={"location": "/final"}), target: html_reply("done")}
+        {
+            **ROBOTS,
+            HOME: Reply(status=301, headers={"location": "/final"}),
+            target: html_reply("done"),
+        }
     )
     page = fetcher.get_page(HOME)
     assert page.url == target
@@ -110,7 +121,7 @@ def test_redirect_hops_are_checked_and_followed() -> None:
 
 def test_page_redirect_out_of_scope_is_not_followed() -> None:
     elsewhere = "https://www.example.org/x"
-    fetcher, site, _ = make({**ROBOTS, HOME: Reply(302, headers={"location": elsewhere})})
+    fetcher, site, _ = make({**ROBOTS, HOME: Reply(status=302, headers={"location": elsewhere})})
     with pytest.raises(Disallowed):
         fetcher.get_page(HOME)
     assert not site.requested(elsewhere)
@@ -123,7 +134,11 @@ def test_redirect_to_non_public_address_is_refused_before_request(ip: str) -> No
     resolver = FakeResolver({"internal.example": [ip]})
     evil = "https://internal.example/x.jpg"
     fetcher, site, _ = make(
-        {**ROBOTS, IMG: Reply(302, headers={"location": evil}), evil: Reply(200, b"x")},
+        {
+            **ROBOTS,
+            IMG: Reply(status=302, headers={"location": evil}),
+            evil: Reply(status=200, body=b"x"),
+        },
         resolver=resolver,
     )
     with pytest.raises(FetchRefused, match="non-public"):
@@ -140,7 +155,7 @@ def test_literal_private_ip_is_refused() -> None:
 
 def test_any_private_address_in_dns_answer_is_refused() -> None:
     resolver = FakeResolver({"media.cnn.com": [PUBLIC_IP, "10.1.1.1"]})
-    fetcher, _, _ = make({**ROBOTS, IMG: Reply(200, b"x")}, resolver=resolver)
+    fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=200, body=b"x")}, resolver=resolver)
     with pytest.raises(FetchRefused):
         fetcher.get_image(IMG)
 
@@ -153,20 +168,20 @@ def test_only_http_https_on_default_ports(url: str) -> None:
 
 
 def test_download_limit_by_content_length() -> None:
-    reply = Reply(200, b"x" * 10, {"content-length": "999999"})
+    reply = Reply(status=200, body=b"x" * 10, headers={"content-length": "999999"})
     fetcher, _, _ = make({**ROBOTS, IMG: reply}, max_download=100)
     with pytest.raises(FetchRefused, match="too large"):
         fetcher.get_image(IMG)
 
 
 def test_download_limit_while_streaming() -> None:
-    fetcher, _, _ = make({**ROBOTS, IMG: Reply(200, b"x" * 500)}, max_download=100)
+    fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=200, body=b"x" * 500)}, max_download=100)
     with pytest.raises(FetchRefused, match="too large"):
         fetcher.get_image(IMG)
 
 
 def test_http_error_and_timeout_are_item_errors() -> None:
-    fetcher, _, _ = make({**ROBOTS, IMG: Reply(500), HOME: Reply(error=httpx.ReadTimeout)})
+    fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=500), HOME: Reply(error=httpx.ReadTimeout)})
     with pytest.raises(ItemError, match="http 500"):
         fetcher.get_image(IMG)
     with pytest.raises(ItemError, match="timeout"):
@@ -174,7 +189,7 @@ def test_http_error_and_timeout_are_item_errors() -> None:
 
 
 def test_too_many_redirects() -> None:
-    loop = Reply(302, headers={"location": HOME})
+    loop = Reply(status=302, headers={"location": HOME})
     fetcher, _, _ = make({**ROBOTS, HOME: loop})
     with pytest.raises(ItemError, match="redirects"):
         fetcher.get_page(HOME)
@@ -204,8 +219,12 @@ def test_each_host_gets_its_own_connection_pool_and_no_cookies_are_kept() -> Non
     fetcher, site, _ = make(
         {
             **ROBOTS,
-            IMG: Reply(200, b"x", {"content-type": "image/jpeg", "set-cookie": "s=1; Path=/"}),
-            other: Reply(200, b"y", {"content-type": "image/jpeg"}),
+            IMG: Reply(
+                status=200,
+                body=b"x",
+                headers={"content-type": "image/jpeg", "set-cookie": "s=1; Path=/"},
+            ),
+            other: Reply(status=200, body=b"y", headers={"content-type": "image/jpeg"}),
         }
     )
     fetcher.get_image(IMG)
@@ -230,6 +249,8 @@ def test_robots_rules_are_kept_per_scheme() -> None:
 
 
 def test_unknown_charset_falls_back_to_utf8() -> None:
-    reply = Reply(200, "café".encode(), {"content-type": "text/html; charset=x-made-up"})
+    reply = Reply(
+        status=200, body="café".encode(), headers={"content-type": "text/html; charset=x-made-up"}
+    )
     fetcher, _, _ = make({**ROBOTS, HOME: reply})
     assert fetcher.get_page(HOME).text == "café"
