@@ -97,3 +97,30 @@ def test_reference_query_returns_each_matching_page_once(
     assert by_url["https://people.com/a"][2] is True  # lead mark reported
     assert by_url["https://people.com/b"][2] is False
     assert all(r[3] == 1 for r in rows)  # one matching image per page
+
+
+def test_reference_query_ignores_outdated_links(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    """Guarantee 6: a link the page's latest crawl did not refresh no longer counts."""
+    profile_id = store.init_schema()
+    kept = store.upsert_page("https://people.com/kept", "people", 1)
+    gone = store.upsert_page("https://people.com/gone", "people", 1)
+    img, _ = store.stage_image(image(4), "https://img/four.jpg", kept, False)
+    store.link(gone, img, False)
+    store.process_pending(
+        img, lambda p: [DetectedFace(Box(1, 1, 10, 10), 0.99, vec(0.0))], profile_id
+    )
+    store.upsert_page("https://people.com/gone", "people", 1)  # re-crawled, image not linked
+
+    with psycopg.connect(sql.info.dsn, autocommit=True) as raw:
+        register_vector(raw)
+        rows = raw.execute(
+            reference_query().encode(),
+            {
+                "q": np.asarray(vec(0.0), dtype=np.float32),
+                "max_dist": 0.30,
+                "profile_id": profile_id,
+            },
+        ).fetchall()
+    assert [r[0] for r in rows] == ["https://people.com/kept"]

@@ -278,3 +278,30 @@ def test_stored_faces_reports_only_finished_images(store: PostgresIndexStore) ->
     assert store.stored_faces(image_id) is None  # still pending
     store.process_pending(image_id, lambda p: [face(1), face(30)], profile_id=1)
     assert store.stored_faces(image_id) == 2
+
+
+def test_outdated_links_counts_one_pages_stale_links_and_deletes_nothing(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    """FR-018: a link not refreshed by the page's latest crawl is counted, never removed."""
+    store.init_schema()
+    a = store.upsert_page("https://cnn.test/a", "cnn", 1)
+    b = store.upsert_page("https://cnn.test/b", "cnn", 1)
+    first, _ = store.stage_image(_outdated_image(1), "https://img.test/1.jpg", a, False)
+    second, _ = store.stage_image(_outdated_image(2), "https://img.test/2.jpg", a, False)
+    store.link(b, first, False)
+    assert store.outdated_links(a) == 0  # fresh crawl: every link was just seen
+
+    store.upsert_page("https://cnn.test/a", "cnn", 1)  # re-crawled ...
+    store.link(a, second, False)  # ... and only the second image is still there
+    assert store.outdated_links(a) == 1
+    assert store.outdated_links(b) == 0
+    row = sql.execute("SELECT count(*) FROM page_image").fetchone()
+    assert row is not None
+    assert row[0] == 3
+
+
+def _outdated_image(seed: int) -> NormalizedImage:
+    return NormalizedImage(
+        bytes([100 + seed]) * 32, images.photo(64, 64, seed=seed), 64, 64, "JPEG", 64, 64
+    )

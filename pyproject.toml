@@ -42,7 +42,7 @@ default-groups = ["dev"]  # add `--group dag` for the DAG tests
 [tool.ruff]
 line-length = 100
 target-version = "py313"
-src = ["src", "tests", "dags", "docker"]
+src = ["src", "tests", "dags", "docker", "scripts"]
 extend-exclude = [".specify", ".claude", ".agents"]
 
 [tool.ruff.lint]
@@ -53,7 +53,7 @@ select = ["E", "F", "I", "UP", "B", "SIM", "RUF", "ANN", "PT"]
 "tests/**" = ["ANN401"]
 
 [tool.ty.src]
-include = ["src", "dags", "tests", "docker"]
+include = ["src", "dags", "tests", "docker", "scripts"]
 exclude = [".specify", ".claude", ".agents"]
 
 [tool.pytest.ini_options]

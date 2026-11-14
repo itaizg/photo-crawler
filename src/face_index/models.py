@@ -79,6 +79,31 @@ class DetectedFace:
 
 
 @dataclass(frozen=True, slots=True)
+class QueryFace:
+    """One face in the search query photo, numbered from 1 left to right (FR-010)."""
+
+    number: int
+    box: Box
+    embedding: tuple[float, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class PageMatch:
+    """One page whose images contain a face matching a query face (contracts/search-query.md)."""
+
+    url: str
+    best_distance: float
+    lead: bool
+    image_urls: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class FaceResult:
+    face: QueryFace
+    pages: tuple[PageMatch, ...]  # closest first; empty means "no matching pages"
+
+
+@dataclass(frozen=True, slots=True)
 class PendingImage:
     id: int
     jpeg: bytes

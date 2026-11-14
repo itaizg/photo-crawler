@@ -118,6 +118,28 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
+  # The face matching script (feature 002). Not started by `up`; run it on demand:
+  #   docker compose run --rm face-matcher queries/<photo>
+  # It reuses the pipeline image, so queries are embedded by the same model runtime as the index.
+  face-matcher:
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    image: photo-crawler-airflow:latest
+    profiles: [tools]
+    entrypoint: ["python", "-m", "face_index.face_matcher"]
+    working_dir: /work
+    environment:
+      FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
+      DEEPFACE_HOME: /opt/deepface
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    volumes:
+      - ./queries:/work/queries
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres-data:
   airflow-logs:

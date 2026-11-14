@@ -4,6 +4,7 @@ Uses an in-memory fake store, so these tests need no database.
 """
 
 import logging
+import re
 from collections.abc import Callable
 
 import httpx
@@ -40,6 +41,7 @@ class MemoryStore:
         self.by_url: dict[str, int] = {}
         self.by_sha: dict[bytes, int] = {}
         self.fail_on = fail_on
+        self.outdated = 0  # what outdated_links reports for every page (FR-018)
 
     def _maybe_fail(self, what: str) -> None:
         if self.fail_on == what:
@@ -97,6 +99,9 @@ class MemoryStore:
 
     def stored_faces(self, image_id: int) -> int | None:
         return None
+
+    def outdated_links(self, page_id: int) -> int:
+        return self.outdated
 
 
 def deps(
@@ -271,3 +276,28 @@ def test_rates_below_the_floor_are_rejected(rate: float) -> None:
         pipeline.RunParams.from_mapping({"page_rate": rate})
     with pytest.raises(ValueError, match="image_rate"):
         pipeline.RunParams.from_mapping({"image_rate": rate})
+
+
+# -- FR-018: outdated page links are reported, never deleted ----------------------------------
+
+
+def test_download_logs_and_counts_outdated_links(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    store = MemoryStore()
+    store.outdated = 2
+    counts = pipeline.download(SITE, crawl_payload([GOOD]), deps(store, ROUTES), "run-1")
+    assert counts["links.outdated"] == 2
+    assert "outdated links page=https://news.test/ count=2" in caplog.text
+
+
+def test_no_outdated_links_means_no_log_and_no_counter(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    counts = pipeline.download(SITE, crawl_payload([GOOD]), deps(MemoryStore(), ROUTES), "run-1")
+    assert "links.outdated" not in counts
+    assert "outdated links" not in caplog.text
+
+
+def test_summary_shows_outdated_links(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    pipeline.summarize([{"links.outdated": 2}, {"links.outdated": 3}])
+    assert re.search(r"outdated page links \(ignored by search\)\s+5", caplog.text)

@@ -10,6 +10,9 @@ DISTANCE = "cosine"
 ALIGN = True
 NORMALIZATION = "base"
 MIN_FACE_CONFIDENCE = 0.9
+# Search: a stored face matches when its cosine distance is strictly below this. It equals
+# DeepFace's find_threshold("Facenet512", "cosine"); a model test keeps the two in step (R2).
+MATCH_THRESHOLD = 0.30
 
 
 @dataclass(frozen=True, slots=True)

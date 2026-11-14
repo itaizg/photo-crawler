@@ -154,7 +154,22 @@ def download(
                 raise
             except Exception as exc:
                 log.warning("page failed url=%s stage=lead reason=%s", page.url, exc)
+        _report_outdated(page.url, page_id, deps, summary)
     return summary.to_json()
+
+
+def _report_outdated(url: str, page_id: int, deps: Deps, summary: Summary) -> None:
+    """Log the page's links this crawl did not see; search ignores them (FR-018, R4)."""
+    try:
+        outdated = deps.store.outdated_links(page_id)
+    except InfrastructureError:
+        raise
+    except Exception as exc:
+        log.warning("page failed url=%s stage=outdated_links reason=%s", url, exc)
+        return
+    if outdated:
+        log.info("outdated links page=%s count=%d", url, outdated)
+        summary.add("links.outdated", outdated)
 
 
 def _index_ref(
@@ -279,6 +294,7 @@ SUMMARY_ROWS = (
     ("faces stored", "faces_stored"),
     ("failures", "failures."),
     ("abandoned (3 attempts)", "abandoned."),
+    ("outdated page links (ignored by search)", "links.outdated"),
 )
 
 

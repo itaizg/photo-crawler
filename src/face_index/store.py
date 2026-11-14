@@ -36,6 +36,12 @@ ON CONFLICT (page_id, image_id) DO UPDATE
   SET last_seen_at = now(), is_lead = page_image.is_lead OR EXCLUDED.is_lead
 """
 
+# A link the page's latest crawl did not refresh (index-read.md guarantee 6, FR-018).
+_OUTDATED_LINKS = """
+SELECT count(*) FROM page_image pi JOIN page p ON p.id = pi.page_id
+WHERE pi.page_id = %s AND pi.last_seen_at < p.last_crawled_at
+"""
+
 _UPSERT_PROFILE = """
 INSERT INTO model_profile (key, detector, model, dimensions, distance, align, normalization,
                            min_face_confidence, deepface_version, tensorflow_version)
@@ -317,6 +323,11 @@ class PostgresIndexStore:
         return int(row[1])
 
     # -- attempt cap ------------------------------------------------------------------------
+
+    def outdated_links(self, page_id: int) -> int:
+        with self._guard() as conn:
+            row = conn.execute(_OUTDATED_LINKS, (page_id,)).fetchone()
+            return int(row[0]) if row else 0
 
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool:
         with self._guard() as conn:

@@ -5,15 +5,14 @@ python -m face_index.export_image (--id N | --sha256 HEX) [--boxes] -o PATH
 
 import argparse
 import hashlib
-import io
 import sys
 from collections.abc import Sequence
 from typing import NoReturn
 
-from PIL import Image, ImageDraw
-
 from face_index import config
+from face_index.drawing import draw_boxes
 from face_index.errors import InfrastructureError
+from face_index.models import Box
 from face_index.store import ExportedImage, PostgresIndexStore
 
 EXIT_OK, EXIT_DB, EXIT_NOT_FOUND, EXIT_NO_BYTES, EXIT_USAGE = 0, 1, 2, 3, 64
@@ -49,14 +48,7 @@ def _is_hex(text: str) -> bool:
 
 def _with_boxes(image: ExportedImage) -> bytes:
     assert image.jpeg is not None
-    picture = Image.open(io.BytesIO(image.jpeg)).convert("RGB")
-    draw = ImageDraw.Draw(picture)
-    for index, x, y, w, h in image.boxes:
-        draw.rectangle((x, y, x + w - 1, y + h - 1), outline=(255, 0, 0), width=2)
-        draw.text((x + 3, y + 3), str(index), fill=(255, 0, 0))
-    out = io.BytesIO()
-    picture.save(out, format="JPEG", quality=config.JPEG_QUALITY)
-    return out.getvalue()
+    return draw_boxes(image.jpeg, [(str(i), Box(x, y, w, h)) for i, x, y, w, h in image.boxes])
 
 
 def main(argv: Sequence[str] | None = None, dsn: str | None = None) -> int:
