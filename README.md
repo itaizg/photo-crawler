@@ -192,7 +192,7 @@ analyzed, no faces                       9
 faces stored                           138
 ```
 
-**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages:
+**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages and the links it saw on them, except the orphan-face check, which covers the whole `face` table:
 
 ```
 INFO: cnn crawled (1 page)

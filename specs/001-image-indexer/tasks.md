@@ -242,7 +242,7 @@ description: "Task list for the Image Indexer Pipeline"
 - [X] T044 [US1] Implement `src/face_index/export_image.py` (`python -m face_index.export_image`) per `contracts/export-image-cli.md`, with argparse, exit codes 0/1/2/3/64, the `--boxes` overlay drawn with `PIL.ImageDraw`, and no DSN in error messages. Makes T032 pass
 - [X] T045 [US1] Create `scripts/smoke.sh` (bash, `set -euo pipefail`):
   - runs `docker compose exec -T airflow-scheduler airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'`
-  - then runs SQL through `docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -tAc …'`, asserting: 1 page per site, ≥ 1 face, 0 images over 1024 px or not JPEG, 0 faces without a page link
+  - then runs SQL through `docker compose exec -T postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -tAc …'`, asserting: ≥ 1 site crawled this run (a site that refuses the crawler, as people.com does with HTTP 402, is a warning, not a failure), ≥ 1 face on this run's pages, 0 stored images on them over 1024 px or not JPEG, 0 faces on them without a 512-d embedding, and 0 faces in the whole table without a page link. "This run's pages" are pages crawled since the run started, with only the links the run saw on them
   - prints a one-line PASS/FAIL per check and exits non-zero on any failure
 - [ ] T046 [US1] Run the US1 end-to-end checks:
   - `uv run pytest -m "smoke or not model"` passes

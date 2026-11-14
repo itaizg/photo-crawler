@@ -178,7 +178,7 @@ Skips are permanent because they depend only on the bytes, which the fingerprint
 
 **Second default run**, right after the first: 2 min 10 s. 5,534 URLs were reused without downloading; 72 new images gave 63 newly indexed images and 138 faces (SC-007 confirmed on live data).
 
-The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open**: the measured run took 72 min for one site on a faster machine than the reference, so the defaults would not meet it on the reference machine either. Download alone takes 16 min at the polite image rate. The levers, in order:
+The estimate above was off by about 4×: CNN article pages carry about 100 images each, not 20, so one site alone gave 4,707 unique images. **SC-011 (≤ 30 min with defaults) stays open, and at risk**: the measured run took 72 min for one site, on a different machine from the reference, so it neither passes nor formally fails the criterion. Whether a both-site default run meets it on the reference machine is undetermined until it is measured there. Download alone took 16 min at the polite image rate. The levers, in order:
 1. A smaller default `page_cap`. Estimated from the per-image times above, not measured: about 15 pages fit 30 min for one site, about 10 per site with both sites (downloads run in parallel per host; detection is shared).
 2. More `FACE_WORKERS`, at about 1.5 GB of RAM each.
 3. A higher `MIN_SIDE`, to skip thumbnails before detection.
