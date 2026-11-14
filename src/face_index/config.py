@@ -29,6 +29,7 @@ DEFAULT_PAGE_RATE = 1.0
 DEFAULT_IMAGE_RATE = 5.0
 MAX_PAGE_RATE = 10.0
 MAX_IMAGE_RATE = 20.0
+MIN_RATE = 0.1  # one request per 10 s; a smaller rate would hold a host's shared slot for long
 
 # HTTP (research R4)
 USER_AGENT = f"photo-crawler/{__version__} (+https://github.com/itaizg/photo-crawler)"
@@ -70,7 +71,11 @@ MAX_PIXELS = 50_000_000
 
 # Detection and retries (research R3, R11a)
 DETECT_BATCH_SIZE = 50
+MAX_DETECT_BATCHES = 1000  # below Airflow's default mapping limit (1024); the rest waits a run
 MAX_ATTEMPTS = 3
+# How long a duplicate detection task waits for another worker's lock on the same image before
+# leaving the image pending for the next run.
+DETECT_LOCK_TIMEOUT_S = 120
 MAX_XCOM_BYTES = 10 * 1024 * 1024
 
 

@@ -8,12 +8,13 @@ from collections.abc import Callable, Generator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from importlib.resources import files
+from typing import Any
 
 import numpy as np
 import psycopg
 from pgvector.psycopg import register_vector
 
-from face_index import attempts, db, model_profile
+from face_index import attempts, config, db, model_profile
 from face_index.errors import InfrastructureError, ItemError
 from face_index.models import (
     DetectedFace,
@@ -77,6 +78,14 @@ class ExportedImage:
     width: int | None
     height: int | None
     boxes: tuple[tuple[int, int, int, int, int], ...]  # (face_index, x, y, w, h)
+
+
+# Returns the image the URL is mapped to, whether this insert or an earlier one mapped it.
+_MAP_URL = """
+INSERT INTO image_url (url, image_id) VALUES (%s, %s)
+ON CONFLICT (url) DO UPDATE SET url = EXCLUDED.url
+RETURNING image_id
+"""
 
 
 def schema_sql() -> str:
@@ -226,10 +235,15 @@ class PostgresIndexStore:
                 ).fetchone()
                 assert row is not None
             image_id = int(row[0])
-            conn.execute(
-                "INSERT INTO image_url (url, image_id) VALUES (%s, %s) ON CONFLICT DO NOTHING",
-                (url, image_id),
-            )
+            # The URL keeps the image it was first mapped to. A concurrent writer may have mapped
+            # it to other bytes (the server answered differently); the page then links to that
+            # image too, so a later crawl resolves the URL to the image the page shows.
+            mapped = conn.execute(_MAP_URL, (url, image_id)).fetchone()
+            assert mapped is not None
+            if int(mapped[0]) != image_id:
+                if created:  # our new row lost the URL and nothing else refers to it yet
+                    conn.execute("DELETE FROM image WHERE id = %s", (image_id,))
+                image_id, created = int(mapped[0]), False
             _link(conn, page_id, image_id, is_lead)
             return image_id, created
 
@@ -256,13 +270,11 @@ class PostgresIndexStore:
         image_id: int,
         detect: Callable[[PendingImage], list[DetectedFace]],
         profile_id: int,
+        *,
+        wait: bool = False,
     ) -> int | None:
         with self._guard() as conn, conn.transaction():
-            row = conn.execute(
-                "SELECT id, jpeg, width, height FROM image "
-                "WHERE id = %s AND status = 'pending' FOR UPDATE SKIP LOCKED",
-                (image_id,),
-            ).fetchone()
+            row = self._lock_pending(conn, image_id, wait=wait)
             if row is None:
                 return None
             pending = PendingImage(int(row[0]), bytes(row[1]), int(row[2]), int(row[3]))
@@ -304,6 +316,36 @@ class PostgresIndexStore:
                     (image_id,),
                 )
             return len(faces)
+
+    @staticmethod
+    def _lock_pending(
+        conn: psycopg.Connection, image_id: int, *, wait: bool
+    ) -> tuple[Any, ...] | None:
+        """Lock a pending image row. Without ``wait`` a row locked elsewhere is skipped; with it,
+        the lock is awaited for at most ``DETECT_LOCK_TIMEOUT_S`` (None if it is still held)."""
+        select = "SELECT id, jpeg, width, height FROM image WHERE id = %s AND status = 'pending' "
+        if not wait:
+            return conn.execute(select + "FOR UPDATE SKIP LOCKED", (image_id,)).fetchone()
+        conn.execute(
+            "SELECT set_config('lock_timeout', %s, true)",
+            (f"{round(config.DETECT_LOCK_TIMEOUT_S * 1000)}ms",),
+        )
+        try:
+            with conn.transaction():  # a savepoint: a lock timeout leaves the outer one usable
+                return conn.execute(select + "FOR UPDATE", (image_id,)).fetchone()
+        except psycopg.errors.LockNotAvailable:
+            return None
+
+    def stored_faces(self, image_id: int) -> int | None:
+        with self._guard() as conn:
+            row = conn.execute(
+                "SELECT i.status, (SELECT count(*) FROM face f WHERE f.image_id = i.id) "
+                "FROM image i WHERE i.id = %s",
+                (image_id,),
+            ).fetchone()
+        if row is None or row[0] not in ("indexed", "no_faces"):
+            return None
+        return int(row[1])
 
     # -- attempt cap ------------------------------------------------------------------------
 
