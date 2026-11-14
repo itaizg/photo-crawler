@@ -1,0 +1,60 @@
+"""The one face model setup shared by the pipeline and the search script (FR-013, research R9)."""
+
+from importlib.metadata import PackageNotFoundError, version
+from typing import Final, LiteralString
+
+from face_index.models import Record
+
+DETECTOR: Final[LiteralString] = "retinaface"
+MODEL: Final[LiteralString] = "Facenet512"
+DIMENSIONS: Final[int] = 512
+DISTANCE: Final[LiteralString] = "cosine"
+ALIGN: Final[bool] = True
+NORMALIZATION: Final[LiteralString] = "base"
+MIN_FACE_CONFIDENCE: Final[float] = 0.9
+# Search: a stored face matches when its cosine distance is strictly below this. It equals
+# DeepFace's find_threshold("Facenet512", "cosine"); a model test keeps the two in step (R2).
+MATCH_THRESHOLD: Final[float] = 0.30
+
+
+class ProfileRecord(Record):
+    key: str
+    deepface_version: str
+    tensorflow_version: str
+
+
+def _installed(package: str) -> str:
+    try:
+        return version(package)
+    except PackageNotFoundError:
+        return "0.0.0"
+
+
+def _major_minor(full: str) -> str:
+    parts = full.split(".")
+    # DeepFace uses 0.0.x numbering, so for it the full version is the "major.minor".
+    if parts[:2] == ["0", "0"]:
+        return ".".join(parts[:3])
+    return ".".join(parts[:2])
+
+
+def profile_key(deepface_version: str, tensorflow_version: str) -> str:
+    align = "align" if ALIGN else "noalign"
+    return (
+        f"{DETECTOR}+{MODEL}+{DISTANCE}+{align}+{NORMALIZATION}"
+        f"@deepface{_major_minor(deepface_version)}/tf{_major_minor(tensorflow_version)}"
+    )
+
+
+def current_profile() -> ProfileRecord:
+    deepface_version = _installed("deepface")
+    tensorflow_version = _installed("tensorflow")
+    return ProfileRecord(
+        key=profile_key(deepface_version, tensorflow_version),
+        deepface_version=deepface_version,
+        tensorflow_version=tensorflow_version,
+    )
+
+
+# The key for the installed versions; the search script selects its profile row by it.
+KEY: Final[str] = current_profile().key

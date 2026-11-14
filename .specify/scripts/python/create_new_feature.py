@@ -378,9 +378,7 @@ def _discover_skills(
         skills_block = manifest.get("skills", {}) if isinstance(manifest, dict) else {}
         if isinstance(skills_block, dict):
             for group in ("required", "recommended"):
-                for skill_id, info in _manifest_skill_ids(
-                    skills_block.get(group)
-                ):
+                for skill_id, info in _manifest_skill_ids(skills_block.get(group)):
                     url = info.get("url") if isinstance(info, dict) else None
                     if url:
                         cache_dir = skills_cache_dir / Path(skill_id).name
@@ -389,10 +387,9 @@ def _discover_skills(
                             required_skills.append(skill_id)
                     elif skill_id.startswith("local:"):
                         required_skills.append(skill_id)
-                    elif (
-                        (skills_cache_dir / skill_id).is_dir()
-                        and (skills_cache_dir / skill_id / "SKILL.md").is_file()
-                    ):
+                    elif (skills_cache_dir / skill_id).is_dir() and (
+                        skills_cache_dir / skill_id / "SKILL.md"
+                    ).is_file():
                         required_skills.append(skill_id)
             blocked = skills_block.get("blocked")
             if isinstance(blocked, list):
@@ -424,7 +421,7 @@ def _discover_skills(
         if skill_id in blocked_skills:
             continue
         if skill_id.startswith("local:"):
-            skill_path = team_directives_dir / skill_id[len("local:"):]
+            skill_path = team_directives_dir / skill_id[len("local:") :]
             skill_name = Path(skill_path).name
         else:
             skill_path = skills_cache_dir / skill_id
@@ -444,7 +441,7 @@ def _discover_skills(
     candidates: list[dict] = []
     for skill_id in candidate_list[:max_skills]:
         skill_name = (
-            skill_id[len("required:"):]
+            skill_id[len("required:") :]
             if skill_id.startswith("required:")
             else skill_id
         )
@@ -461,9 +458,9 @@ def _discover_skills(
 
     return {
         "candidates": candidates,
-        "last_refresh": datetime.datetime.now(
-            datetime.timezone.utc
-        ).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "last_refresh": datetime.datetime.now(datetime.timezone.utc).strftime(
+            "%Y-%m-%dT%H:%M:%SZ"
+        ),
     }
 
 
@@ -604,9 +601,7 @@ def main(argv: list[str] | None = None) -> int:
         needs_spec = not spec_file.is_file()
         if needs_spec:
             try:
-                template_content = resolve_template_content(
-                    "spec-template", repo_root
-                )
+                template_content = resolve_template_content("spec-template", repo_root)
             except TemplateResolutionError as exc:
                 print(f"Error: {exc}", file=sys.stderr)
                 return 1

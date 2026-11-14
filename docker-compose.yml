@@ -1,0 +1,183 @@
+# One command starts everything: `docker compose up -d --build` (FR-026, research R2).
+# No .env is required: every variable has a non-secret default. See .env.example to override.
+#
+# Database credentials: generated, never committed (constitution XIV). The one-shot `db-secrets`
+# service writes random passwords and a libpq `pgpass` file into the `db-secrets` volume on first
+# start. Postgres reads them as files and the Airflow containers find them through PGPASSFILE, so
+# no password appears in this file, in the environment or in logs. Roles: `faces` (owner; Airflow
+# metadata), `faces_writer` (the pipeline) and `faces_reader` (SELECT only; search).
+# `docker compose down -v` removes the volumes together, so secrets and data stay in step.
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: docker/airflow.Dockerfile
+  image: photo-crawler-airflow:latest
+  environment: &airflow-env
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-faces}@postgres:5432/airflow
+    PGPASSFILE: /run/db-secrets/pgpass
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
+    AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
+    AIRFLOW__CORE__EXECUTION_API_SERVER_URL: http://airflow-apiserver:8080/execution/
+    # Generated once by airflow-init into a private volume; never committed.
+    AIRFLOW__API_AUTH__JWT_SECRET_CMD: cat /opt/airflow/secrets/jwt_secret
+    AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
+    FACE_INDEX_DSN: postgresql://faces_writer@postgres:5432/faces
+    DEEPFACE_HOME: /opt/deepface
+    TF_CPP_MIN_LOG_LEVEL: "2"
+  volumes:
+    - ./dags:/opt/airflow/dags:ro
+    - airflow-logs:/opt/airflow/logs
+    - airflow-secrets:/opt/airflow/secrets
+    - db-secrets:/run/db-secrets:ro
+  user: "${AIRFLOW_UID:-50000}:0"
+  depends_on: &airflow-depends
+    postgres:
+      condition: service_healthy
+
+services:
+  db-secrets:
+    image: pgvector/pgvector:pg17
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        cd /run/db-secrets
+        gen() { [ -s "$$1" ] || head -c 36 /dev/urandom | base64 | tr -d '/+=\n' > "$$1"; }
+        gen postgres_password; gen writer_password; gen reader_password
+        # libpq password file: host:port:database:user:password (read by psycopg and psycopg2).
+        {
+          echo "postgres:5432:*:$${POSTGRES_USER}:$$(cat postgres_password)"
+          echo "postgres:5432:*:faces_writer:$$(cat writer_password)"
+          echo "postgres:5432:*:faces_reader:$$(cat reader_password)"
+        } > pgpass
+        chown "$${AIRFLOW_UID}:0" pgpass
+        chmod 600 pgpass
+        chmod 644 postgres_password writer_password reader_password
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-faces}
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    volumes:
+      - db-secrets:/run/db-secrets
+    restart: "no"
+
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-faces}
+      POSTGRES_DB: faces
+      POSTGRES_PASSWORD_FILE: /run/db-secrets/postgres_password
+    ports:
+      - "127.0.0.1:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+      - db-secrets:/run/db-secrets:ro
+    depends_on:
+      db-secrets:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d faces"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    restart: unless-stopped
+
+  airflow-init:
+    <<: *airflow-common
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        if [ ! -s /opt/airflow/secrets/jwt_secret ]; then
+          uv run --no-project python -c "import secrets; print(secrets.token_urlsafe(48))" > /opt/airflow/secrets/jwt_secret
+          chmod 600 /opt/airflow/secrets/jwt_secret
+        fi
+        airflow db migrate
+        airflow pools set http_cnn 1 "one network step at a time for cnn"
+        airflow pools set http_people 1 "one network step at a time for people"
+        airflow pools set face_cpu "${FACE_WORKERS:-2}" "parallel face detection batches"
+    restart: "no"
+
+  airflow-apiserver:
+    <<: *airflow-common
+    command: api-server
+    ports:
+      - "127.0.0.1:8080:8080"
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8080/api/v2/monitor/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "http://localhost:8974/health"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  airflow-dag-processor:
+    <<: *airflow-common
+    command: dag-processor
+    healthcheck:
+      test: ["CMD-SHELL", 'airflow jobs check --job-type DagProcessorJob --hostname "$${HOSTNAME}"']
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 30s
+    restart: unless-stopped
+    depends_on:
+      <<: *airflow-depends
+      airflow-init:
+        condition: service_completed_successfully
+
+  # The face matching script (feature 002). Not started by `up`; run it on demand:
+  #   docker compose run --rm face-matcher queries/<photo>
+  # It reuses the pipeline image, so queries are embedded by the same model runtime as the index.
+  face-matcher:
+    build:
+      context: .
+      dockerfile: docker/airflow.Dockerfile
+    image: photo-crawler-airflow:latest
+    profiles: [tools]
+    entrypoint: ["uv", "run", "--no-project", "python", "-m", "face_index.face_matcher"]
+    working_dir: /work
+    environment:
+      # Search is read-only (constitution XIV): the faces_reader role can only SELECT.
+      FACE_INDEX_DSN: postgresql://faces_reader@postgres:5432/faces
+      PGPASSFILE: /run/db-secrets/pgpass
+      DEEPFACE_HOME: /opt/deepface
+      TF_CPP_MIN_LOG_LEVEL: "2"
+    volumes:
+      - ./queries:/work/queries
+      - db-secrets:/run/db-secrets:ro
+    user: "${AIRFLOW_UID:-50000}:0"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  airflow-logs:
+  airflow-secrets:
+  db-secrets:
