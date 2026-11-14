@@ -12,7 +12,11 @@ import codecs
 import ipaddress
 import logging
 import socket
+import threading
+import time
 from collections.abc import Callable
+from concurrent.futures import Future
+from concurrent.futures import TimeoutError as FutureTimeout
 from contextlib import closing
 from urllib.parse import urljoin, urlsplit
 from urllib.robotparser import RobotFileParser
@@ -30,21 +34,61 @@ _REDIRECTS = {301, 302, 303, 307, 308}
 _DEFAULT_PORTS = {"http": 80, "https": 443}
 
 
+type _Lookup = Callable[[str], list[str]]
+
+
+def _getaddrinfo(host: str) -> list[str]:
+    infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+    return sorted({str(info[4][0]) for info in infos})
+
+
 class SystemResolver:
+    """Resolves through the operating system, giving up after ``timeout`` seconds.
+
+    ``getaddrinfo`` cannot be interrupted, so the lookup runs on a daemon thread; a lookup that
+    outlives the timeout is abandoned (the thread ends when the OS resolver does) and the item
+    fails with ``dns timeout`` instead of blocking the task.
+    """
+
+    def __init__(self, timeout: float = config.DNS_TIMEOUT, lookup: _Lookup = _getaddrinfo) -> None:
+        self._timeout = timeout
+        self._lookup = lookup
+
     def resolve(self, host: str) -> list[str]:
+        result: Future[list[str]] = Future()
+
+        def run() -> None:
+            try:
+                result.set_result(self._lookup(host))
+            except BaseException as exc:  # handed to the waiting caller below
+                result.set_exception(exc)
+
+        threading.Thread(target=run, name=f"dns-{host}", daemon=True).start()
         try:
-            infos = socket.getaddrinfo(host, None, proto=socket.IPPROTO_TCP)
+            return result.result(timeout=self._timeout)
+        except FutureTimeout as exc:
+            raise ItemError("dns timeout") from exc
         except socket.gaierror as exc:
             raise ItemError(f"dns error: {exc.strerror}") from exc
-        return sorted({str(info[4][0]) for info in infos})
 
 
 class _RobotsRule:
-    """robots.txt outcome for one host (RFC 9309)."""
+    """robots.txt outcome for one host (RFC 9309).
 
-    def __init__(self, parser: RobotFileParser | None, allow_all: bool) -> None:
+    ``expires_at`` is set only for a temporary failure (5xx, network error, redirect loop),
+    which is treated as "deny all" for a while and then looked up again. A real answer (2xx
+    or 4xx) is kept for the fetcher's lifetime.
+    """
+
+    def __init__(
+        self, parser: RobotFileParser | None, allow_all: bool, expires_at: float | None = None
+    ) -> None:
         self._parser = parser
         self._allow_all = allow_all
+        self._expires_at = expires_at
+
+    def expired(self, now: float) -> bool:
+        return self._expires_at is not None and now >= self._expires_at
 
     def allows(self, url: str) -> bool:
         if self._parser is None:
@@ -60,7 +104,9 @@ class HttpFetcher:
         transport: httpx.BaseTransport | None = None,
         scope: Callable[[str], bool] | None = None,
         max_download_bytes: int = config.MAX_DOWNLOAD_BYTES,
+        clock: Callable[[], float] = time.monotonic,
     ) -> None:
+        self._clock = clock
         self._pacer = pacer
         self._resolver = resolver or SystemResolver()
         self._scope = scope
@@ -204,13 +250,14 @@ class HttpFetcher:
         parts = urlsplit(url)
         key = (parts.scheme, (parts.hostname or "").lower())  # robots.txt is per scheme and host
         rule = self._robots.get(key)
-        if rule is None:
+        if rule is None or rule.expired(self._clock()):
             rule = self._fetch_robots(url)
             self._robots[key] = rule
         return rule
 
     def _fetch_robots(self, url: str) -> _RobotsRule:
         parts = urlsplit(url)
+        retry_at = self._clock() + config.ROBOTS_RETRY_SECONDS
         robots_url = f"{parts.scheme}://{parts.netloc}/robots.txt"
         current = robots_url
         try:
@@ -233,12 +280,12 @@ class HttpFetcher:
                     if 400 <= status < 500:
                         return _RobotsRule(None, allow_all=True)
                     log.warning("robots unavailable host=%s status=%s", parts.hostname, status)
-                    return _RobotsRule(None, allow_all=False)
+                    return _RobotsRule(None, allow_all=False, expires_at=retry_at)
         except ItemError as exc:
             log.warning("robots unavailable host=%s reason=%s", parts.hostname, exc.reason)
-            return _RobotsRule(None, allow_all=False)
+            return _RobotsRule(None, allow_all=False, expires_at=retry_at)
         log.warning("robots unavailable host=%s reason=too many redirects", parts.hostname)
-        return _RobotsRule(None, allow_all=False)
+        return _RobotsRule(None, allow_all=False, expires_at=retry_at)
 
 
 def _decode(body: bytes, charset: str | None) -> str:

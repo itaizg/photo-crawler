@@ -5,7 +5,7 @@ import pytest
 from psycopg.sql import SQL, Identifier, Placeholder
 
 from face_index import model_profile
-from face_index.errors import InfrastructureError
+from face_index.errors import InfrastructureError, ItemError
 from face_index.store import PostgresIndexStore, schema_sql
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -62,6 +62,8 @@ def _insert(conn: psycopg.Connection, columns: str, values: tuple[object, ...]) 
         ("sha256, status, jpeg, width, height", (SHA, "indexed", b"x", 10, 10)),
         # detect_attempts above the cap
         ("sha256, status, jpeg, width, height, detect_attempts", (SHA, "pending", b"x", 1, 1, 4)),
+        # pending row with no original dimensions at all
+        ("sha256, status, jpeg, width, height", (SHA, "pending", b"x", 10, 10)),
         # half-set original dimensions
         ("sha256, status, skip_reason, original_width", (SHA, "skipped", "too_small", 10)),
     ],
@@ -115,3 +117,16 @@ def test_dropped_connection_becomes_infrastructure_error(
         store.upsert_page("https://people.com/", "people", 0)
     # The store reconnects on the next call.
     assert store.upsert_page("https://people.com/", "people", 0) > 0
+
+
+def test_rejected_item_data_is_an_item_error(store: PostgresIndexStore) -> None:
+    with pytest.raises(ItemError):  # CHECK constraint: depth above 10
+        store.upsert_page("https://people.com/", "people", 11)
+
+
+def test_a_missing_table_is_an_infrastructure_error(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    sql.execute("DROP TABLE page_image CASCADE")
+    with pytest.raises(InfrastructureError):  # schema problem, not this item's data
+        store.link(1, 1, False)

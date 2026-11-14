@@ -58,6 +58,8 @@ class Skipped:
     original_height: int | None = None
 
     def __post_init__(self) -> None:
+        if (self.original_width is None) != (self.original_height is None):
+            raise ValueError("original width and height must both be set or both be unset")
         # Dimensions may be unknown only when the header could not be read for its size.
         if self.reason == "too_small" and self.original_width is None:
             raise ValueError("a too_small skip must carry its original dimensions")
