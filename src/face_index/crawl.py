@@ -13,11 +13,11 @@ from pydantic import BeforeValidator
 
 from face_index import config
 from face_index.config import Site
-from face_index.errors import Disallowed, InfrastructureError, ItemError
+from face_index.errors import Disallowed, InfrastructureError, ItemError, StageFailed
 from face_index.extract import extract_page
 from face_index.models import CrawledPage, Record, Summary
 from face_index.ports import Fetcher
-from face_index.urls import in_scope, normalize_image_url, normalize_page_url
+from face_index.urls import for_log, in_scope, normalize_image_url, normalize_page_url
 
 log = logging.getLogger(__name__)
 
@@ -71,6 +71,12 @@ def crawl_site(
     on_failure: FailureHook | None = None,
     on_success: SuccessHook | None = None,
 ) -> CrawlResult:
+    """Crawl ``site`` breadth-first to ``depth``.
+
+    ``page_cap`` bounds the page *requests* sent (None: no cap), counting failed, non-HTML and
+    redirect-then-refused requests too, so it bounds the load on the site, not the pages stored.
+    Raises ``StageFailed`` when at least one page was requested and every request failed.
+    """
     pages: list[CrawledPage] = []
     counts: Counter[str] = Counter()
     seed = normalize_page_url(site.seed_url)
@@ -87,7 +93,9 @@ def crawl_site(
         if url in crawled:  # reached earlier as the target of a redirect
             continue
         if is_abandoned is not None and is_abandoned(url):
-            log.info("link abandoned url=%s kind=page attempts=%d", url, config.MAX_ATTEMPTS)
+            log.info(
+                "link abandoned url=%s kind=page attempts=%d", for_log(url), config.MAX_ATTEMPTS
+            )
             counts["abandoned.page"] += 1
             continue
         try:
@@ -95,19 +103,22 @@ def crawl_site(
         except InfrastructureError:
             raise
         except Disallowed as exc:
-            log.info("page skipped url=%s reason=%s", url, exc.reason)
+            requests += exc.sent  # a redirect hop refused after the first request went out
+            log.info("page skipped url=%s reason=%s", for_log(url), exc.reason)
             counts[f"skipped.page.{exc.reason}"] += 1
             continue
         except ItemError as exc:
             requests += 1
-            log.warning("page failed url=%s stage=crawl reason=%s", url, exc.reason)
+            log.warning("page failed url=%s stage=crawl reason=%s", for_log(url), exc.reason)
             counts["failures.crawl"] += 1
             if on_failure is not None:
                 on_failure(url, exc.reason)
             continue
         except Exception as exc:  # noqa: BLE001 - per-item isolation point: count, keep crawling
             requests += 1
-            log.warning("page failed url=%s stage=crawl reason=%s", url, type(exc).__name__)
+            log.warning(
+                "page failed url=%s stage=crawl reason=%s", for_log(url), type(exc).__name__
+            )
             counts["failures.crawl"] += 1
             if on_failure is not None:
                 on_failure(url, f"unexpected {type(exc).__name__}")
@@ -117,14 +128,14 @@ def crawl_site(
         if on_success is not None:
             on_success(url)
         if response.text is None:
-            log.info("page skipped url=%s reason=not_html", url)
+            log.info("page skipped url=%s reason=not_html", for_log(url))
             counts["skipped.page.not_html"] += 1
             continue
 
         # A redirected page is stored under its final URL, once.
         final = _normalized(normalize_page_url, response.url) or url
         if final in crawled:
-            log.info("page skipped url=%s reason=duplicate_of %s", url, final)
+            log.info("page skipped url=%s reason=duplicate_of %s", for_log(url), for_log(final))
             counts["skipped.page.duplicate"] += 1
             continue
         crawled.update({url, final})
@@ -149,6 +160,9 @@ def crawl_site(
                 if candidate is not None and candidate not in seen and in_scope(candidate, site):
                     seen.add(candidate)
                     queue.append((candidate, level + 1))
+    failed = counts["failures.crawl"]
+    if failed and failed == requests:
+        raise StageFailed(f"crawl of {site.name}: all {failed} page requests failed")
     return CrawlResult(site=site.name, pages=tuple(pages), summary=Summary.of(counts))
 
 
@@ -157,5 +171,5 @@ def _normalized(normalize: Callable[[str], str], url: str) -> str | None:
     try:
         return normalize(url)
     except ValueError as exc:
-        log.info("url skipped url=%r reason=malformed (%s)", url, exc)
+        log.info("url skipped url=%s reason=malformed (%s)", for_log(url), exc)
         return None

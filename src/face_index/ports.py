@@ -102,12 +102,15 @@ class IndexStore(Protocol):
         image_id: int,
         detect: Callable[[PendingImage], list[DetectedFace]],
         profile_id: int,
+        *,
+        wait: bool = False,
     ) -> int | None:
         """Lock one pending image, run ``detect`` on it and store the result atomically.
 
         Returns the number of faces stored, or None if the image is no longer pending or is
-        locked by another worker. If ``detect`` raises, nothing is stored and the exception
-        propagates.
+        locked by another worker. With ``wait``, a lock held elsewhere is awaited (bounded by
+        ``config.DETECT_LOCK_TIMEOUT_S``) instead of skipped. If ``detect`` raises, nothing is
+        stored and the exception propagates.
         """
         ...
 

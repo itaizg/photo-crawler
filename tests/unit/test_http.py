@@ -122,8 +122,9 @@ def test_redirect_hops_are_checked_and_followed() -> None:
 def test_page_redirect_out_of_scope_is_not_followed() -> None:
     elsewhere = "https://www.example.org/x"
     fetcher, site, _ = make({**ROBOTS, HOME: Reply(status=302, headers={"location": elsewhere})})
-    with pytest.raises(Disallowed):
+    with pytest.raises(Disallowed) as caught:
         fetcher.get_page(HOME)
+    assert caught.value.sent  # HOME itself was requested: it counts toward the page cap
     assert not site.requested(elsewhere)
 
 
@@ -149,7 +150,7 @@ def test_redirect_to_non_public_address_is_refused_before_request(ip: str) -> No
 def test_literal_private_ip_is_refused() -> None:
     fetcher, site, _ = make({})
     with pytest.raises(FetchRefused):
-        fetcher.get_image("http://10.0.0.5/x.jpg")
+        fetcher.get_image("https://10.0.0.5/x.jpg")
     assert site.requests == []
 
 
@@ -254,3 +255,47 @@ def test_unknown_charset_falls_back_to_utf8() -> None:
     )
     fetcher, _, _ = make({**ROBOTS, HOME: reply})
     assert fetcher.get_page(HOME).text == "café"
+
+
+def test_plain_http_image_is_a_policy_skip_and_never_sent() -> None:
+    plain = "http://media.cnn.com/a.jpg"
+    fetcher, site, _ = make({**ROBOTS, plain: Reply(status=200, body=b"x")})
+    with pytest.raises(Disallowed, match="insecure_scheme") as caught:
+        fetcher.get_image(plain)
+    assert not caught.value.sent
+    assert site.requests == []
+
+
+def test_image_redirect_to_plain_http_is_not_followed() -> None:
+    plain = "http://media.cnn.com/b.jpg"
+    fetcher, site, _ = make(
+        {
+            **ROBOTS,
+            IMG: Reply(status=302, headers={"location": plain}),
+            plain: Reply(status=200, body=b"x"),
+        }
+    )
+    with pytest.raises(Disallowed, match="insecure_scheme") as caught:
+        fetcher.get_image(IMG)
+    assert caught.value.sent  # the first hop went out
+    assert not site.requested(plain)
+
+
+def test_pages_may_still_redirect_over_plain_http() -> None:
+    plain = "http://edition.cnn.com/final"
+    fetcher, _, _ = make(
+        {
+            **ROBOTS,
+            "http://edition.cnn.com/robots.txt": robots_reply(),
+            HOME: Reply(status=301, headers={"location": plain}),
+            plain: html_reply("done"),
+        }
+    )
+    assert fetcher.get_page(HOME).url == plain
+
+
+def test_a_refused_first_hop_was_not_sent() -> None:
+    fetcher, _, _ = make({**ROBOTS})
+    with pytest.raises(Disallowed) as caught:
+        fetcher.get_page("https://edition.cnn.com/private/x")
+    assert not caught.value.sent

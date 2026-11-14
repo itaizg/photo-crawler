@@ -80,3 +80,13 @@ def test_srcset_urls_may_contain_commas() -> None:
     )
     assert best_srcset_candidate(srcset) == "https://media.cnn.com/i/c_fill,g_auto,w_1200/x.jpg"
     assert best_srcset_candidate("a.jpg 1x,b.jpg 2x") == "b.jpg"
+
+
+def test_malformed_urls_are_skipped_and_extraction_continues() -> None:
+    html = """<html><head><base href="http://[::1"><meta property="og:image" content="http://[x"></head>
+    <body><a href="http://[::1/a">bad</a><a href="/ok">ok</a>
+    <img src="http://[bad/x.jpg"><img src="/ok.jpg"></body></html>"""
+    extract = extract_page(html, "https://edition.cnn.com/")
+    assert extract.links == ("https://edition.cnn.com/ok",)
+    assert extract.image_refs == ("https://edition.cnn.com/ok.jpg",)
+    assert extract.lead_ref is None

@@ -43,7 +43,7 @@ def test_pools_keep_site_steps_apart_and_bound_face_work(dag: Any) -> None:
 
 def test_retries_and_summary_trigger_rule(dag: Any) -> None:
     assert all(task.retries == 1 for task in dag.tasks)
-    assert str(dag.get_task("summarize").trigger_rule) in {"none_failed", "TriggerRule.NONE_FAILED"}
+    assert str(dag.get_task("summarize").trigger_rule) in {"all_done", "TriggerRule.ALL_DONE"}
 
 
 def test_task_wrappers_forward_run_id(dag: Any, dag_module: ModuleType, monkeypatch: Any) -> None:

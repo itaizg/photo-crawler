@@ -63,3 +63,9 @@ def test_runtime_outages_are_told_apart_from_bad_images() -> None:
     assert faces._is_outage(resource_exhausted())
     assert not faces._is_outage(invalid_argument())
     assert not faces._is_outage(KeyError("x"))
+
+
+def test_a_deadline_exceeded_runtime_is_an_outage() -> None:
+    deadline = type("DeadlineExceededError", (Exception,), {})
+    deadline.__module__ = "tensorflow.python.framework.errors_impl"
+    assert faces._is_outage(deadline())

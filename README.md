@@ -30,7 +30,7 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 | Param | Default | Meaning |
 |---|---|---|
 | `depth` | 1 | Link hops from each home page (0–10); 0 = home pages only |
-| `page_cap` | 50 | Maximum pages per site; `null` = no cap |
+| `page_cap` | 50 | Maximum page requests per site (failed and non-HTML ones count too); `null` = no cap |
 | `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
 | `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
 

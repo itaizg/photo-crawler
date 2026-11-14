@@ -92,7 +92,7 @@ This is covered by automated tests that inject a 500 response, a timeout, a corr
 | Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
 
 `scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. Its checks look only at pages crawled by this run and the image links this run saw on them, so rows from earlier runs cannot make them pass. The one exception is the orphan-face check, which covers the whole `face` table: links are never deleted, so an orphan face anywhere is a bug, and one left by an earlier run fails the smoke too. It exits non-zero unless all of these hold:
-- the run succeeded;
+- the run summary was logged, and any failed task belongs to a site that refused every request (people.com answers HTTP 402 to the crawler, which fails `crawl_people`);
 - at least one site has a page crawled by this run (a site that refuses the crawler is reported as a warning);
 - at least 1 face is on this run's pages;
 - every stored image on this run's pages is JPEG ≤ 1024 px (skipped and `no_faces` images keep no bytes, so there is nothing to check);
