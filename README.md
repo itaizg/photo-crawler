@@ -134,7 +134,7 @@ init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
 - **Normalization.** Every stored image is an RGB JPEG (quality 90, no EXIF) whose longest side is at most 1024 px; images are never upscaled. SVGs and images under 64 px are skipped with a recorded reason.
 - **Incremental by URL and by content.** A known URL is never downloaded again; a new URL whose SHA-256 matches a stored image is linked to it without re-detecting faces. Lead images (`og:image`) are marked per page.
 - **Failure isolation.** One bad page or image is logged with its URL and counted; the run continues. Database or model outages fail the task instead, so Airflow retries it.
-- **No secrets in git.** The local database uses no password (trust auth, reachable only from the Compose network and 127.0.0.1); Airflow's JWT secret is generated at first start into a private volume.
+- **No secrets in git.** Database passwords and Airflow's JWT secret are generated at first start into private volumes (the pipeline writes as `faces_writer`, search reads as `faces_reader`, SELECT only).
 
 ## Tests and smoke runs
 
@@ -229,3 +229,19 @@ SMOKE PASSED
 - **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A size filter is an open decision ([TODO.md](TODO.md)).
 - **A look-alike can pass the default threshold.** First live check (2026-11-13, CNN index of about 9.5k faces): searching with an indexed one-face selfie returned its own 4 pages (distance ≤ 0.004) and one more page at 0.261. That page shows a different man, whose face is only about 55 px wide in a 270×480 red-carpet photo. Small faces give less reliable embeddings, so this is the case [noisy-index-faces.md](docs/briefs/noisy-index-faces.md) is about. The threshold was not tuned to hide it; the labelled evaluation (SC-001 to SC-003) is what decides whether a face-size filter or a stricter default is needed.
 - **Accuracy (SC-001 to SC-003)** is measured with `scripts/evaluate_search.py` against hand-labelled photos, which are not in the repository (licensing). See [specs/002-face-search/quickstart.md](specs/002-face-search/quickstart.md) §7.
+
+- The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
+
+## Database access and tests
+
+`docker compose up` generates the database passwords on first start into a private `db-secrets`
+volume (nothing is committed or put in `.env`). The pipeline connects as `faces_writer`, search
+as `faces_reader` (SELECT only), and the Airflow containers find the passwords through
+`PGPASSFILE`. `docker compose down -v` removes the volumes together.
+
+To run the integration tests against the Compose database from the host (loopback only):
+
+```bash
+export FACE_INDEX_TEST_DSN="postgresql://faces:$(docker compose exec -T postgres cat /run/db-secrets/postgres_password)@127.0.0.1:5432/faces_test"
+uv run pytest -m "not model"
+```

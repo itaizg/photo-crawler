@@ -423,3 +423,30 @@ def test_waiting_detection_gives_up_after_the_lock_timeout(
         assert store.stored_faces(image_id) is None  # still pending, for the next run
     finally:
         holder.close()
+
+
+# -- lead swaps on one page serialize on the page row -----------------------------------------
+
+
+def test_lead_swaps_on_one_page_wait_for_each_other(
+    db_dsn: str, store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    pid = page(store)
+    a, _ = store.stage_image(normalized(1), "https://img/a.jpg", pid, True)
+    b, _ = store.stage_image(normalized(2), "https://img/b.jpg", pid, False)
+    other = PostgresIndexStore(db_dsn)
+    holder = psycopg.connect(db_dsn)
+    holder.execute("SELECT 1 FROM page WHERE id = %s FOR UPDATE", (pid,))  # a swap in progress
+    worker = threading.Thread(target=lambda: other.link(pid, b, True))
+    worker.start()
+    deadline = time.monotonic() + 10
+    while not blocked_on_lock(sql) and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert blocked_on_lock(sql), "the lead swap did not wait for the page lock"
+    holder.commit()
+    worker.join(timeout=5)
+    holder.close()
+    other.close()
+    leads = [r[0] for r in sql.execute("SELECT image_id FROM page_image WHERE is_lead").fetchall()]
+    assert leads == [b]
+    assert a != b

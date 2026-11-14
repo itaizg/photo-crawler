@@ -1,12 +1,12 @@
 # One command starts everything: `docker compose up -d --build` (FR-026, research R2).
 # No .env is required: every variable has a non-secret default. See .env.example to override.
 #
-# Database credentials: none. Postgres trusts connections because it is reachable only from this
-# Compose network and from 127.0.0.1 on the host, so no password is committed (constitution,
-# Project Constraints). Before exposing it anywhere else: remove POSTGRES_HOST_AUTH_METHOD, set
-# POSTGRES_PASSWORD in .env and add it to the DSNs below, and recreate the postgres-data volume
-# (the trust rule is written into pg_hba.conf when the volume is first created, so it stays until
-# the volume is rebuilt or pg_hba.conf is edited). Setting a password alone does not turn trust off.
+# Database credentials: generated, never committed (constitution XIV). The one-shot `db-secrets`
+# service writes random passwords and a libpq `pgpass` file into the `db-secrets` volume on first
+# start. Postgres reads them as files and the Airflow containers find them through PGPASSFILE, so
+# no password appears in this file, in the environment or in logs. Roles: `faces` (owner; Airflow
+# metadata), `faces_writer` (the pipeline) and `faces_reader` (SELECT only; search).
+# `docker compose down -v` removes the volumes together, so secrets and data stay in step.
 
 x-airflow-common: &airflow-common
   build:
@@ -16,6 +16,7 @@ x-airflow-common: &airflow-common
   environment: &airflow-env
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-faces}@postgres:5432/airflow
+    PGPASSFILE: /run/db-secrets/pgpass
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_ARE_PAUSED_AT_CREATION: "false"
     AIRFLOW__CORE__SIMPLE_AUTH_MANAGER_ALL_ADMINS: "true"
@@ -23,30 +24,62 @@ x-airflow-common: &airflow-common
     # Generated once by airflow-init into a private volume; never committed.
     AIRFLOW__API_AUTH__JWT_SECRET_CMD: cat /opt/airflow/secrets/jwt_secret
     AIRFLOW__SCHEDULER__ENABLE_HEALTH_CHECK: "true"
-    FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
+    FACE_INDEX_DSN: postgresql://faces_writer@postgres:5432/faces
     DEEPFACE_HOME: /opt/deepface
     TF_CPP_MIN_LOG_LEVEL: "2"
   volumes:
     - ./dags:/opt/airflow/dags:ro
     - airflow-logs:/opt/airflow/logs
     - airflow-secrets:/opt/airflow/secrets
+    - db-secrets:/run/db-secrets:ro
   user: "${AIRFLOW_UID:-50000}:0"
   depends_on: &airflow-depends
     postgres:
       condition: service_healthy
 
 services:
+  db-secrets:
+    image: pgvector/pgvector:pg17
+    user: "0:0"
+    entrypoint: /bin/bash
+    command:
+      - -c
+      - |
+        set -euo pipefail
+        cd /run/db-secrets
+        gen() { [ -s "$$1" ] || head -c 36 /dev/urandom | base64 | tr -d '/+=\n' > "$$1"; }
+        gen postgres_password; gen writer_password; gen reader_password
+        # libpq password file: host:port:database:user:password (read by psycopg and psycopg2).
+        {
+          echo "postgres:5432:*:$${POSTGRES_USER}:$$(cat postgres_password)"
+          echo "postgres:5432:*:faces_writer:$$(cat writer_password)"
+          echo "postgres:5432:*:faces_reader:$$(cat reader_password)"
+        } > pgpass
+        chown "$${AIRFLOW_UID}:0" pgpass
+        chmod 600 pgpass
+        chmod 644 postgres_password writer_password reader_password
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-faces}
+      AIRFLOW_UID: ${AIRFLOW_UID:-50000}
+    volumes:
+      - db-secrets:/run/db-secrets
+    restart: "no"
+
   postgres:
     image: pgvector/pgvector:pg17
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-faces}
       POSTGRES_DB: faces
-      POSTGRES_HOST_AUTH_METHOD: trust  # local only; see the note at the top before exposing it
+      POSTGRES_PASSWORD_FILE: /run/db-secrets/postgres_password
     ports:
       - "127.0.0.1:5432:5432"
     volumes:
       - postgres-data:/var/lib/postgresql/data
-      - ./docker/postgres-init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+      - ./docker/postgres-init.sh:/docker-entrypoint-initdb.d/10-init.sh:ro
+      - db-secrets:/run/db-secrets:ro
+    depends_on:
+      db-secrets:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d faces"]
       interval: 5s
@@ -130,11 +163,14 @@ services:
     entrypoint: ["uv", "run", "--no-project", "python", "-m", "face_index.face_matcher"]
     working_dir: /work
     environment:
-      FACE_INDEX_DSN: postgresql://${POSTGRES_USER:-faces}@postgres:5432/faces
+      # Search is read-only (constitution XIV): the faces_reader role can only SELECT.
+      FACE_INDEX_DSN: postgresql://faces_reader@postgres:5432/faces
+      PGPASSFILE: /run/db-secrets/pgpass
       DEEPFACE_HOME: /opt/deepface
       TF_CPP_MIN_LOG_LEVEL: "2"
     volumes:
       - ./queries:/work/queries
+      - db-secrets:/run/db-secrets:ro
     user: "${AIRFLOW_UID:-50000}:0"
     depends_on:
       postgres:
@@ -144,3 +180,4 @@ volumes:
   postgres-data:
   airflow-logs:
   airflow-secrets:
+  db-secrets:

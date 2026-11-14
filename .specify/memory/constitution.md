@@ -1,11 +1,15 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.0.0 → 2.1.0
-Bump rationale: MINOR. One project constraint and two governance rules are added; no
-  principle is removed or redefined.
+Version change: 2.1.0 → 2.1.1
+Bump rationale: PATCH. Clarifies where secrets may come from; no principle or gate changes.
 
 Modified sections:
+  - Principle XIV, Quality constraints (Security), Project Constraints (Secrets): secrets come
+    from a git-ignored `.env` or are generated at first start into a private Compose volume;
+    never committed, printed or logged.
+
+Previous amendment (2.1.0), modified sections:
   - Project Constraints: Python is executed only through `uv run` or `uvx`, never through
     `python`, `python3`, or `pip` directly.
   - Governance: new "No divergence" rule (code must not drift from the governing documents;
@@ -279,9 +283,9 @@ counts in the task log make them visible on the first run.
   passed to the search script.
 - Database access MUST use parameterized queries; SQL MUST NOT be built by string
   formatting.
-- Credentials follow least privilege, are provided as managed secrets (environment
-  variables from a git-ignored `.env`), and are never hard-coded, committed, printed, or
-  logged.
+- Credentials follow least privilege, are provided as managed secrets (environment variables from a git-ignored `.env`,
+  or generated at first start into a private Compose volume), and are never hard-coded,
+  committed, printed, or logged.
 - Dependencies are pinned and updated deliberately.
 
 Rationale: a crawler ingests untrusted content by design; every input is hostile until
@@ -295,7 +299,7 @@ validated.
 - Each component gets only the access it needs: the pipeline writes through its own database
   role; the search script connects with a read-only role.
 - Default credentials shipped by images (for example Airflow's) MUST be replaced through the
-  `.env` file.
+  `.env` file or generated at first start into a private volume.
 
 Rationale: a compromised or misconfigured container should not be able to reach more than
 its own job requires.
@@ -415,8 +419,8 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   robots.txt, and is rate limited.
 - Failure isolation: a failure on one page or image MUST NOT fail the whole run; the cause
   MUST be visible in the Airflow task logs and in the task's failure count (Principle XII).
-- Secrets: environment variables only (via a git-ignored `.env`); never committed, never
-  printed or logged. The search script uses a read-only database role (Principle XIV).
+- Secrets: environment variables from a git-ignored `.env`, or generated at first start into a
+  private Compose volume; never committed, never printed or logged. The search script uses a read-only database role (Principle XIV).
 
 ## Governance
 
@@ -447,4 +451,4 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   the assignment requirements it implements and evaluates it against these principles before
   implementation begins.
 
-**Version**: 2.1.0 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-14
+**Version**: 2.1.1 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-14

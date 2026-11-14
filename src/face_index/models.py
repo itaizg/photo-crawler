@@ -64,7 +64,9 @@ class Skipped(Record):
     original_height: int | None = None
 
     @model_validator(mode="after")
-    def _too_small_has_dimensions(self) -> Self:
+    def _consistent_original_dimensions(self) -> Self:
+        if (self.original_width is None) != (self.original_height is None):
+            raise ValueError("original width and height must both be set or both be unset")
         # Dimensions may be unknown only when the header could not be read for its size.
         if self.reason == "too_small" and self.original_width is None:
             raise ValueError("a too_small skip must carry its original dimensions")
