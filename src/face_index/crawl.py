@@ -13,7 +13,7 @@ from pydantic import BeforeValidator
 
 from face_index import config
 from face_index.config import Site
-from face_index.errors import Disallowed, InfrastructureError, ItemError, StageFailed
+from face_index.errors import Disallowed, InfrastructureError, ItemError
 from face_index.extract import extract_page
 from face_index.models import CrawledPage, Record, Summary
 from face_index.ports import Fetcher
@@ -75,7 +75,8 @@ def crawl_site(
 
     ``page_cap`` bounds the page *requests* sent (None: no cap), counting failed, non-HTML and
     redirect-then-refused requests too, so it bounds the load on the site, not the pages stored.
-    Raises ``StageFailed`` when at least one page was requested and every request failed.
+    A failed page is counted under ``failures.crawl`` and the crawl goes on; ``pipeline.crawl``
+    fails the task when that count is not zero.
     """
     pages: list[CrawledPage] = []
     counts: Counter[str] = Counter()
@@ -160,9 +161,6 @@ def crawl_site(
                 if candidate is not None and candidate not in seen and in_scope(candidate, site):
                     seen.add(candidate)
                     queue.append((candidate, level + 1))
-    failed = counts["failures.crawl"]
-    if failed and failed == requests:
-        raise StageFailed(f"crawl of {site.name}: all {failed} page requests failed")
     return CrawlResult(site=site.name, pages=tuple(pages), summary=Summary.of(counts))
 
 

@@ -1,11 +1,8 @@
 from collections.abc import Mapping
 from typing import Final
 
-import pytest
-
 from face_index import config
 from face_index.crawl import CrawlResult, crawl_site
-from face_index.errors import StageFailed
 from face_index.http import HttpFetcher
 from face_index.urls import in_scope
 from tests.fakes import FakeResolver, MockSite, RecordingPacer, Reply, html_reply, robots_reply
@@ -161,7 +158,7 @@ def test_a_redirect_refused_after_its_first_hop_counts_toward_the_cap() -> None:
     assert result.summary.to_json()["skipped.page.out_of_scope"] == 1
 
 
-def test_a_crawl_where_every_request_failed_fails_the_task() -> None:
+def test_a_crawl_where_every_request_failed_records_and_counts_them() -> None:
     failures: list[str] = []
     site = MockSite({"https://edition.cnn.com/robots.txt": robots_reply()})  # home is a 404
     fetcher = HttpFetcher(
@@ -170,12 +167,13 @@ def test_a_crawl_where_every_request_failed_fails_the_task() -> None:
         transport=site.transport(),
         scope=lambda u: in_scope(u, SITE),
     )
-    with pytest.raises(StageFailed, match="all 1 page requests failed"):
-        crawl_site(SITE, fetcher, 1, None, on_failure=lambda url, reason: failures.append(url))
-    assert failures == ["https://edition.cnn.com/"]  # recorded before the task fails
+    result = crawl_site(SITE, fetcher, 1, None, on_failure=lambda url, reason: failures.append(url))
+    assert failures == ["https://edition.cnn.com/"]
+    assert result.pages == ()
+    assert result.summary.to_json() == {"failures.crawl": 1}  # pipeline.crawl fails the task
 
 
-def test_one_good_page_keeps_the_crawl_task_green() -> None:
+def test_a_failed_page_is_counted_and_the_crawl_goes_on() -> None:
     result, _ = crawl_routes({"https://edition.cnn.com/": page(["/gone"])}, depth=1, cap=None)
     assert result.summary.to_json()["failures.crawl"] == 1
     assert [p.url for p in result.pages] == ["https://edition.cnn.com/"]

@@ -6,7 +6,7 @@ from typing import Any
 
 from face_index import pipeline
 from face_index.config import Site
-from face_index.errors import StageFailed
+from face_index.errors import ItemsFailed, StageFailed
 from face_index.http import HttpFetcher
 from face_index.models import Record, RequestKind
 from face_index.normalize import PillowNormalizer
@@ -54,9 +54,15 @@ def run_once(
     failed: list[str] = []
 
     def stage(name: str, run: Callable[..., dict[str, Any]], *args: Any) -> dict[str, Any] | None:
-        """Like an Airflow task: a stage whose items all failed has no result, the run goes on."""
+        """Like an Airflow task: a failed stage is noted and the run goes on.
+
+        A stage in which items failed still publishes its result; any other failure has none.
+        """
         try:
             return run(*args)
+        except ItemsFailed as exc:
+            failed.append(name)
+            return dict(exc.result)
         except StageFailed:
             failed.append(name)
             return None
@@ -81,6 +87,6 @@ def run_once(
             for batch in pipeline.plan_batches(deps)
         )
         done = [part for part in summaries if part is not None]
-        return RunOutcome(
-            summary=pipeline.summarize(done, deps), crawl=crawls, failed_stages=tuple(failed)
-        )
+        summary = stage("summarize", pipeline.summarize, done, deps)
+        assert summary is not None
+        return RunOutcome(summary=summary, crawl=crawls, failed_stages=tuple(failed))

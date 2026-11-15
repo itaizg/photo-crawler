@@ -6,9 +6,15 @@
   toward the 3-attempt cap.
 - ``Disallowed``: a policy outcome (robots.txt, out of scope, plain-http image). Logged and
   skipped, but it is neither a failure nor an attempt.
-- ``StageFailed``: every item a task attempted failed. Raised after the task's work is done, so
-  the failures are recorded and Airflow marks (and retries) the task as failed.
+- ``StageFailed``: a task failed as a whole. Raised after the task's work is done, so the
+  failures are recorded and Airflow marks (and retries) the task as failed.
+- ``ItemsFailed``: a ``StageFailed`` for a crawl or download task in which at least one page or
+  image failed. It carries the task's result, so the DAG can publish it before the task fails
+  and the rest of the run still works with what succeeded. The DAG fails such a task without a
+  retry: the next run tries the failed items again.
 """
+
+from collections.abc import Mapping
 
 
 class InfrastructureError(Exception):
@@ -46,4 +52,15 @@ class Disallowed(Exception):
 
 
 class StageFailed(Exception):
-    """Every item a task attempted failed: the task fails so Airflow retries it."""
+    """A task failed as a whole: Airflow marks it failed and retries it."""
+
+
+class ItemsFailed(StageFailed):
+    """At least one page or image of a crawl or download task failed (FR-023).
+
+    ``result`` is what the task would have returned: every item was still attempted.
+    """
+
+    def __init__(self, message: str, result: Mapping[str, object]) -> None:
+        super().__init__(message)
+        self.result = result

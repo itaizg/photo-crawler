@@ -42,7 +42,9 @@ init_schema ─┬─ crawl[cnn]  ── download[cnn]  ─┐
              └─ crawl[people] ── download[people] ┴─ plan_batches ── detect.expand(batch) ── summarize
 ```
 
-- `crawl[site]` and `download[site]` are defined per site in a loop over `config.SITES` (not mapped), so each gets the static pool `http_<site>` with 1 slot. Only one HTTP-making task per site can run at once, even when an operator clears a single task.
+People is disabled (`enabled=False`, FR-001), so the DAG builds only the CNN pair today; the diagram shows the design for two enabled sites.
+
+- `crawl[site]` and `download[site]` are defined per site in a loop over `config.ENABLED_SITES` (not mapped), so each gets the static pool `http_<site>` with 1 slot. Only one HTTP-making task per site can run at once, even when an operator clears a single task.
 - `download[site]` writes images in the `pending` state, together with their JPEG bytes and page links (R11). That decouples the network from the CPU.
 - **XCom size**: `crawl[site]` passes its result to `download[site]` through XCom as compact JSON (URLs only, about 100 B per image reference). At depth 1 without a cap that is about 300 pages × 30 refs ≈ 1 MB, which Airflow's Postgres metadata database handles comfortably. A guard (`config.MAX_XCOM_BYTES` = 10 MB) fails the crawl task with a clear message before a very deep uncapped crawl could bloat the metadata database. Storing the crawl result in a staging table would remove the limit, but adds a table and its cleanup for a case the defaults never reach (YAGNI).
 - `plan_batches` lists the IDs of all `pending` images, including ones left by earlier failed runs, and splits them into batches of `config.DETECT_BATCH_SIZE` (default 50).
@@ -95,7 +97,7 @@ init_schema ─┬─ crawl[cnn]  ── download[cnn]  ─┐
 ## R5. Crawl scope and URL normalization (FR-001, FR-002, FR-005a, FR-007)
 
 **Decision**:
-- Sites in `config.SITES`: `cnn` with seed `https://edition.cnn.com/` and page hosts `{edition.cnn.com}`; `people` with seed `https://people.com/` and page hosts `{people.com, www.people.com}`.
+- Sites in `config.SITES`: `cnn` with seed `https://edition.cnn.com/` and page hosts `{edition.cnn.com}`; `people` with seed `https://people.com/` and page hosts `{people.com, www.people.com}`. Each `Site` has `enabled` (default true); the DAG builds tasks only for `config.ENABLED_SITES`. `people` is disabled since it answers the crawler with HTTP 402 (Cloudflare) and its terms forbid scraping.
 - The crawl is breadth-first from the seed. The seed is depth 0, and links found at depth d are depth d+1, crawled only if d+1 ≤ `depth`. The crawl stops once `page_cap` page requests have been sent (`None` means no cap). Failed, non-HTML and redirect-then-refused requests count too, so the cap bounds the load on the site, not the number of pages stored. It follows only `text/html` responses.
 - **Page URL normalization**: lowercase the scheme and host, map `http` to `https`, drop the fragment, collapse duplicate slashes, and strip a trailing `/` except at the root. In the query, **drop only known tracking parameters** (`utm_*`, `fbclid`, `gclid`, `dclid`, `msclkid`, `mc_cid`, `mc_eid`, `cid`, `ref`, `ref_src`, `taid`, `iid`), sort the rest by name, and drop the `?` if nothing remains. The tracking list lives in `config.py`. Parameters that can select content (pagination, gallery slide, search) are kept, so distinct pages don't collapse into one.
 - **Image URL normalization**: lowercase the host, drop the fragment, **keep the query** (CDN resize and crop parameters identify the rendition).
@@ -303,7 +305,8 @@ Download failures, decode errors included, store no image. The URL stays unknown
   ```
 
   So a database outage fails the task (Airflow retries it once, `retries=1`, `retry_delay=1 min`) and is never miscounted as an item failure, nor counted against the link's 3 attempts (R11a). Each item's work is committed in its own transaction before the next item starts, so a retried task redoes only the work that wasn't committed, and that is safe to repeat (R11).
-- **A task where every attempted item failed fails.** When a crawl, download or detection task attempted at least one item and none succeeded, it raises `StageFailed` after recording every failure, so Airflow retries it and the run ends `failed`. Skips, policy refusals and abandoned links are not attempts. A failure is still counted once per run against the 3-attempt cap, because attempts are keyed by run id (R11a). `summarize` runs with `trigger_rule="all_done"`: it logs the summary of the stages that finished, adds a row for the stages with no result, and then fails too, so the summary is never lost and a failed stage is never hidden.
+- **A crawl or download task where any item failed fails, and the run goes on.** When a page request (crawl) or an image (download) failed, the task still attempts every other item and records every failure. Then it raises `ItemsFailed`, a `StageFailed` that carries the task's result. The DAG wrapper pushes that result as the task's return value before the task fails, and `download`, `plan_batches` and `summarize` run with `trigger_rule="all_done"`. So the task is marked failed, while the steps after it still work with everything that succeeded. The wrapper raises `AirflowFailException`, so Airflow does not retry it: a retry would send the failed requests again in the same run (outside the per-run attempt cap and the page cap), and a retry that succeeded would replace the published result and hide the failure. The next run tries the failed links again, up to the 3-attempt cap. An operator who clears the task re-runs its requests deliberately. `summarize` is the DAG's only leaf task, so it decides the run's state: it logs the summary, then fails when a stage left no result or when `failures.crawl` or `failures.download` is not zero. A download whose crawl left no result at all (an infrastructure failure) fails at once. Skips, policy refusals (robots.txt, scope) and abandoned links are not failures. A failure is counted once per run against the 3-attempt cap, because attempts are keyed by run id (R11a).
+- **A detection task fails only when every image of its batch failed.** It raises `StageFailed` after recording every failure. A single image that cannot be analyzed is counted and retried on a later run.
 - **URLs in logs are masked.** Every logged URL goes through `urls.for_log`, which drops userinfo and replaces each query value with `…`, so signed URLs never reach the Airflow logs.
 - **Logging every outcome with its URL** (FR-024):
   - Skips are returned values, not exceptions, and are logged at INFO: `image skipped url=… reason=too_small`.
@@ -315,6 +318,8 @@ Download failures, decode errors included, store no image. The URL stays unknown
 
 **Alternatives**:
 - Catching everything per item: hides outages as thousands of "item failures" and lets a run end as `success` with work missing.
+- Failing a crawl or download task only when every item failed (the first design): a site that refuses the crawler on a deeper page, or a run with broken images, ended green and nobody noticed.
+- Failing the task without publishing its result: Airflow would skip every later step (`upstream_failed`), so one broken image link would stop the whole run from indexing anything.
 - Recording failures in a table: adds persistent state with no reader, since the evaluator reads the Airflow logs.
 
 ## R13. Smoke tests, CI and project layout

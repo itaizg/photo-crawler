@@ -35,7 +35,7 @@ The operator starts the whole system with one documented command. They then trig
 **Acceptance Scenarios**:
 
 1. **Given** a clean installation, **When** the operator runs the single documented start command, **Then** the orchestrator, the database and every other required service start, and no other manual setup is needed.
-2. **Given** the stack is running, **When** the operator triggers a run with depth 1 and a rate limit, **Then** the run crawls both sites' home pages and the same-site pages they link to, and completes without manual intervention.
+2. **Given** the stack is running, **When** the operator triggers a run with depth 1 and a rate limit, **Then** the run crawls each enabled site's home page (CNN; People is left out, see FR-001) and the same-site pages they link to, and completes without manual intervention.
 3. **Given** a crawled page contains a photo of two people with visible faces, **When** the run processes it, **Then** two face records are stored, each with its own location and signature, both linked to that image and that page.
 4. **Given** a crawled page contains an image with no visible face (a logo, a chart, a landscape), **When** the run processes it, **Then** no face record is created for that image.
 5. **Given** a source image is a large PNG, **When** it is indexed, **Then** the stored copy is a JPEG whose longest side is at most 1024 px, and its recorded metadata matches the stored copy.
@@ -79,16 +79,16 @@ The operator sets crawl depth, page cap and rate limits for each run, without ed
 
 ### User Story 4 - Diagnose failures without losing the run (Priority: P3)
 
-When an image cannot be downloaded or decoded, or a page fails to load, the run goes on with everything else. The operator can see in the run's task logs which item failed and why.
+When an image cannot be downloaded or decoded, or a page fails to load, the run goes on with everything else. The step in which it happened, and the run, are marked failed, so the operator notices. The operator can see in the run's task logs which item failed and why.
 
 **Why this priority**: Live news sites always produce some broken links, timeouts and odd formats. If one bad item stopped the run, a full crawl would never finish.
 
-**Independent Test**: Include a known-broken image URL and an unreachable page in a run, for example with a test fixture. The run completes, every other item is indexed, and the logs name the broken URL and its error.
+**Independent Test**: Include a known-broken image URL and an unreachable page in a run, for example with a test fixture. The run finishes all its steps and ends marked failed, every other item is indexed, and the logs name the broken URL and its error.
 
 **Acceptance Scenarios**:
 
-1. **Given** one image returns an error or is corrupt, **When** the run processes it, **Then** that image is skipped, the cause is logged with its URL, and all other images are processed.
-2. **Given** one page times out, **When** the run crawls, **Then** the other pages are still crawled and the timeout is logged.
+1. **Given** one image returns an error or is corrupt, **When** the run processes it, **Then** that image is skipped, the cause is logged with its URL, all other images are processed, and the download step is marked failed.
+2. **Given** one page times out, **When** the run crawls, **Then** the other pages are still crawled, the timeout is logged, and the crawl step is marked failed.
 3. **Given** an image failed in a previous run, **When** a later run finds it again, **Then** it is retried. A failure does not mark the image as indexed.
 
 ---
@@ -121,7 +121,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 **Crawling**
 
-- **FR-001**: The system MUST crawl starting from the home pages of https://edition.cnn.com/ and https://people.com/.
+- **FR-001**: The system MUST crawl starting from the home pages of https://edition.cnn.com/ and https://people.com/. *(Amended 2026-11-15, approved by the project owner and agreed with the assignment's reviewer: people.com refuses the crawler with HTTP 402 and its terms forbid scraping, so it is left out: configured but disabled until the site permits crawling.)*
 - **FR-002**: The system MUST follow links only to pages within those two sites, up to a crawl depth set for each run (depth 0 = home pages only).
 - **FR-003**: The system MUST limit its request rate with two values set for each run: a page rate for the hosts of the target sites' pages, and an image rate for the hosts that serve images. Each limit applies to each host on its own, so requests to different hosts MAY run in parallel. A host's limit is shared by every step executing at once, so two steps that happen to contact the same host together never exceed it.
 - **FR-004**: The system MUST obey each host's robots.txt rules before fetching a page or image.
@@ -165,7 +165,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 **Reliability and observability**
 
-- **FR-023**: A failure on one page or one image MUST NOT fail the whole run. The failed item is skipped, and is retried on a later run, up to the attempt cap (FR-023a). Infrastructure failures (the database or the face model being unavailable) are not item failures: they MUST fail the step, so the orchestrator retries it.
+- **FR-023**: A failure on one page or one image MUST NOT stop the run: the failed item is skipped, every other item is still processed, and the item is retried on a later run, up to the attempt cap (FR-023a). It MUST NOT go unnoticed either: a crawl or download step in which any page or image request failed MUST be marked failed, after it has finished the rest of its work and published its result, and the run MUST end marked failed. The steps after it MUST still run with everything that succeeded. Infrastructure failures (the database or the face model being unavailable) are not item failures: they MUST fail the step, so the orchestrator retries it.
 - **FR-023a**: The system MUST make at most 3 attempts in total, across all runs, to fetch any one page or image link, and at most 3 attempts to detect faces in any one staged image. Each run counts as at most one attempt, and infrastructure failures don't count. After the third failure the item is abandoned: later runs don't try it again, and they log and count it as abandoned. A successful attempt clears the item's failure count. The operator can reset abandoned items deliberately.
 - **FR-024**: Every skipped or failed item MUST be logged in the run's task logs with its URL and the reason. That includes normal skips (format, size), not only errors.
 - **FR-025**: Each run MUST log a summary: pages crawled, images found, images skipped (by reason), images newly indexed, images reused, faces stored, failures, and items abandoned at the attempt cap (FR-023a).
@@ -190,16 +190,16 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 ### Measurable Outcomes
 
 - **SC-001**: An operator who has never seen the project goes from a fresh clone to a running stack with one documented command, and to a completed indexing run with one trigger, with no other manual steps.
-- **SC-002**: A run at depth 1 on both sites completes without manual intervention. Any page or image that failed shows up in the run summary and logs, not as a failed run.
+- **SC-002**: A run at depth 1 on the enabled sites (CNN; People is left out, see FR-001) completes without manual intervention. Any page or image that failed shows up in the run summary and logs, and marks its step and the run failed without stopping the other work.
 - **SC-003**: 100% of stored images are JPEG with the longest side ≤ 1024 px.
 - **SC-004**: In a manual spot check of 50 randomly sampled indexed images, none of the face records point to a region that has no face.
 - **SC-005**: 100% of face records have a bounding box, an embedding, and a link to an image that links to at least one page.
 - **SC-006**: An image that appears on several crawled pages is stored once and linked to every one of those pages.
 - **SC-007**: A second run right after a first one downloads 0 previously indexed images and computes 0 new embeddings for them, and still records any new page links.
-- **SC-008**: Injecting broken images and unreachable pages into a run does not make the run fail. Each one is named, with a cause, in the logs.
+- **SC-008**: Injecting broken images and unreachable pages into a run does not stop it: everything else is indexed. The steps that hit them and the run end marked failed. Each one is named, with a cause, in the logs.
 - **SC-009**: The search script can find the nearest stored faces for a query embedding using only what this pipeline stored, with no extra build or transformation step.
 - **SC-010**: No crawl request goes to a page path disallowed by robots.txt, or to a page outside the two target sites. Per-host request pacing never exceeds the configured page or image rate, and no site has more crawled pages than the page cap (when one is set).
-- **SC-011**: With default settings, a run on both sites from an empty index completes within 30 minutes on the reference machine: 4 CPU cores, 16 GB RAM, 8 GB of it allocated to Docker, broadband connection. The README records the machine the measurement was taken on.
+- **SC-011**: With default settings, a run on the enabled sites (CNN; People is left out, see FR-001) from an empty index completes within 30 minutes on the reference machine: 4 CPU cores, 16 GB RAM, 8 GB of it allocated to Docker, broadband connection. The README records the machine the measurement was taken on.
 - **SC-012**: A link that fails on three runs is not requested on a fourth run, and that run's summary counts it as abandoned.
 
 ## Assumptions

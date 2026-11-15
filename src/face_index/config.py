@@ -15,6 +15,7 @@ class Site(Record):
     name: str
     seed_url: str
     page_hosts: frozenset[str]
+    enabled: bool = True  # a disabled site keeps its config but gets no tasks in the DAG
 
 
 SITES: tuple[Site, ...] = (
@@ -25,8 +26,13 @@ SITES: tuple[Site, ...] = (
         name="people",
         seed_url="https://people.com/",
         page_hosts=frozenset({"people.com", "www.people.com"}),
+        # Off: people.com answers the crawler's honest User-Agent with HTTP 402 (Cloudflare), and
+        # its terms forbid scraping. The crawler does not disguise itself; with the site's
+        # permission, set this back to True.
+        enabled=False,
     ),
 )
+ENABLED_SITES: Final[tuple[Site, ...]] = tuple(site for site in SITES if site.enabled)
 
 # Crawl (FR-002, FR-003, FR-005, FR-005a)
 DEFAULT_DEPTH: Final[int] = 1

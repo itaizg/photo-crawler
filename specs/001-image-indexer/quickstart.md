@@ -28,9 +28,9 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer
 ```
 
 **Expected**:
-- The run reaches `success` with no manual action. The target is 30 minutes (SC-011), which is not yet met: the measured default run took 72 minutes for CNN alone (README, research R8). Use a smaller `page_cap` for a quicker check.
-- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored`. Faces come only from sites that accept the crawler: people.com currently answers HTTP 402, which shows up as a crawl failure in the table. Crawling it needs the site's permission.
-- Item failures, if any, appear in that table and in the `download`/`detect` logs with a URL and reason. They never show up as a failed task.
+- The run finishes with no manual action, and reaches `success` when no page or image request failed. The target is 30 minutes (SC-011), which is not yet met: the measured default run took 72 minutes for CNN alone (README, research R8). Use a smaller `page_cap` for a quicker check.
+- The `summarize` task log shows a counts table (FR-025) with non-zero `faces stored`. Only CNN is crawled: people.com answers the crawler with HTTP 402, so it is disabled in `config.SITES` (`enabled=False`). Crawling it needs the site's permission.
+- Item failures, if any, appear in that table and in the `crawl`/`download`/`detect` logs with a URL and reason. A failed page or image request marks its `crawl_<site>` or `download_<site>` task failed (without a retry) after the rest of its work is done, and `summarize` then fails the run (FR-023). Everything that succeeded is still indexed. A failed detection is counted and retried on a later run; it fails its `detect` task only when the whole batch failed.
 
 ## 3. Check the stored data (SC-003, SC-005, SC-006)
 
@@ -92,14 +92,12 @@ This is covered by automated tests that inject a 500 response, a timeout, a corr
 | Full stack | `scripts/smoke.sh` (stack must be up) | ~2–4 min | The real DAG in Compose at depth 0 and page cap 1 on the live home pages, followed by SQL checks |
 
 `scripts/smoke.sh` runs `airflow dags test image_indexer --conf '{"depth": 0, "page_cap": 1}'` inside the scheduler container. Its checks look only at pages crawled by this run and the image links this run saw on them, so rows from earlier runs cannot make them pass. The one exception is the orphan-face check, which covers the whole `face` table: links are never deleted, so an orphan face anywhere is a bug, and one left by an earlier run fails the smoke too. It exits non-zero unless all of these hold:
-- the run summary was logged, and any failed task belongs to a site that refused every request (people.com answers HTTP 402 to the crawler, which fails `crawl_people`);
-- at least one site has a page crawled by this run (a site that refuses the crawler is reported as a warning);
+- the run summary was logged, and the run either succeeded or failed only through item request failures: every failed task is a `crawl_*`, `download_*` or `summarize` task and no stage was left without a result (live sites have broken links, so such a run is not a pipeline fault);
+- CNN has a page crawled by this run;
 - at least 1 face is on this run's pages;
 - every stored image on this run's pages is JPEG ≤ 1024 px (skipped and `no_faces` images keep no bytes, so there is nothing to check);
 - every face on this run's pages has a 512-d embedding;
 - every face in the database is linked to a page.
-
-A site with no page this run is reported as `WARN`, with the failing links, but does not fail the check: a site that refuses the crawler (people.com answers HTTP 402) is not a pipeline fault.
 
 ## 8. Attempt cap (SC-012)
 

@@ -5,9 +5,11 @@ place, ``build_default_deps``; tests pass fakes or a Postgres store on a test da
 
 Failure handling per item: ``InfrastructureError`` propagates (Airflow retries the task);
 ``Disallowed`` is a logged policy skip; any other exception is logged with its URL, counted, and
-recorded as one attempt toward the 3-attempt cap. A task in which items were attempted and every
-one failed raises ``StageFailed`` at the end, after the failures are recorded. URLs are logged
-through ``urls.for_log`` so signed query values never reach the logs.
+recorded as one attempt toward the 3-attempt cap. A crawl or download task in which any item
+failed raises ``ItemsFailed`` at the end, after every item was attempted and the failures are
+recorded; it carries the task's result, which the DAG publishes so the run goes on. A detection
+task fails (``StageFailed``) only when every image of its batch failed. URLs are logged through
+``urls.for_log`` so signed query values never reach the logs.
 """
 
 import hashlib
@@ -22,7 +24,13 @@ from pydantic import ConfigDict, Field, SkipValidation
 from face_index import config
 from face_index.config import Site
 from face_index.crawl import CrawlResult, crawl_site
-from face_index.errors import Disallowed, InfrastructureError, ItemError, StageFailed
+from face_index.errors import (
+    Disallowed,
+    InfrastructureError,
+    ItemError,
+    ItemsFailed,
+    StageFailed,
+)
 from face_index.models import CrawledPage, DetectedFace, PendingImage, Record, Skipped, Summary
 from face_index.ports import FaceEmbedder, Fetcher, ImageNormalizer, IndexStore
 from face_index.urls import for_log
@@ -116,6 +124,8 @@ def crawl(site: Site, params: RunParams, deps: Deps, run_id: str) -> dict[str, o
             f"crawl result is {size} bytes (limit {config.MAX_XCOM_BYTES}); "
             "lower the depth or set a page_cap"
         )
+    if failed := result.summary.to_json().get("failures.crawl", 0):
+        raise ItemsFailed(f"crawl of {site.name}: {failed} page request(s) failed", payload)
     return payload
 
 
@@ -125,7 +135,6 @@ def download(
     result = CrawlResult.from_json(crawl_payload)
     counts: Counter[str] = Counter(result.summary.to_json())
     failed: set[str] = set()  # image URLs that already failed in this task: not asked again
-    linked = 0
     for page in result.pages:
         try:
             started = deps.store.clock()  # before any link of this page is refreshed
@@ -150,7 +159,6 @@ def download(
             counts.update(outcome.counts)
             if outcome.failed:
                 failed.add(ref)
-            linked += outcome.linked
             lead_linked |= outcome.linked and ref == page.lead_ref
         if page.lead_ref is not None and not lead_linked:
             try:  # the declared lead could not be stored this time: do not keep a stale lead
@@ -164,11 +172,10 @@ def download(
         deps.store.finish_page(page_id, started)
         if outdated := _outdated_links(page.url, page_id, deps):
             counts["links.outdated"] += outdated
-    if counts["failures.download"] and not linked:
-        raise StageFailed(
-            f"download for {site.name}: all {counts['failures.download']} attempted items failed"
-        )
-    return Summary.of(counts).to_json()
+    summary = Summary.of(counts).to_json()
+    if failures := counts["failures.download"]:
+        raise ItemsFailed(f"download for {site.name}: {failures} item(s) failed", summary)
+    return summary
 
 
 def _outdated_links(url: str, page_id: int, deps: Deps) -> int:
@@ -294,6 +301,9 @@ def detect(ids: Sequence[int], profile_id: int, deps: Deps, run_id: str) -> dict
     return Summary.of(counts).to_json()
 
 
+# A crawl or download task with any of these counted fails, and so does the run summary.
+FAILING_COUNTERS: Final[tuple[str, ...]] = ("failures.crawl", "failures.download")
+
 SUMMARY_ROWS: Final[tuple[tuple[str, str], ...]] = (
     ("pages crawled", "pages_crawled."),
     ("images found", "images_found"),
@@ -317,8 +327,10 @@ def summarize(
 ) -> dict[str, int]:
     """Merge and log the stage summaries.
 
-    A ``None`` part is a stage that failed or was skipped (the summary task runs whatever its
-    upstreams did). The rest is still logged, then the task fails so the run is marked failed.
+    A ``None`` part is a stage that failed without a result or was skipped (the summary task
+    runs whatever its upstreams did). The rest is still logged, then the task fails so the run
+    is marked failed. It fails too when a crawl or download counted a failed item: those tasks
+    failed but published their result, and the run must not end green.
     """
     total = Counter[str]()
     missing = 0
@@ -343,4 +355,6 @@ def summarize(
     log.info("\n".join(lines))
     if missing:
         raise StageFailed(f"{missing} stage(s) produced no result; see the failed tasks")
+    if failed := sum(counts.get(key, 0) for key in FAILING_COUNTERS):
+        raise ItemsFailed(f"{failed} page or image item(s) failed; see the failed tasks", counts)
     return counts
