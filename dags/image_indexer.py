@@ -1,21 +1,29 @@
-"""Image indexer: crawl CNN and People, store every visible face for image-based search.
+"""Image indexer: crawl the enabled sites, store every visible face for image-based search.
 
 ```
 init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
              └─ crawl_people ── download_people ─┴─ plan_batches ── detect (mapped) ── summarize
 ```
 
+Each site in `config.ENABLED_SITES` gets its own crawl and download pair. People is configured
+but disabled (it refuses the crawler with HTTP 402), so today only the CNN pair exists.
+
+A crawl or download task in which a page or image request failed is marked failed, but it
+first publishes its result, and the tasks after it run whatever it did (`all_done`): the run
+ends failed and still indexes everything that succeeded (FR-023).
+
 Trigger with optional params `depth`, `page_cap` (null = no cap), `page_rate`, `image_rate`.
 Every task is a thin wrapper around a `face_index.pipeline` function (research R3).
 """
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from datetime import datetime, timedelta
 from typing import Final
 
 from airflow.sdk import DAG, Param, dag, get_current_context, task
 
 from face_index import config, pipeline
+from face_index.errors import ItemsFailed, StageFailed
 
 PARAMS: Final[Mapping[str, Param]] = {
     "depth": Param(
@@ -59,6 +67,19 @@ def _deps(params: pipeline.RunParams, site_name: str | None = None) -> pipeline.
     return pipeline.build_default_deps(config.database_dsn(), params, site)
 
 
+def _publish_then_fail[T: Mapping[str, object]](stage: Callable[[], T]) -> T:
+    """Run a stage; when items failed, publish its result, then fail the task.
+
+    A failed task pushes no return value of its own, so the result is pushed here. The tasks
+    downstream read it as usual and work with everything that did succeed.
+    """
+    try:
+        return stage()
+    except ItemsFailed as exc:
+        get_current_context()["ti"].xcom_push(key="return_value", value=dict(exc.result))
+        raise
+
+
 @dag(
     dag_id="image_indexer",
     schedule=None,
@@ -79,17 +100,24 @@ def image_indexer() -> None:
     @task
     def crawl(site_name: str) -> dict[str, object]:
         params, run_id = _context()
-        return pipeline.crawl(
-            config.site_by_name(site_name), params, _deps(params, site_name), run_id
+        site = config.site_by_name(site_name)
+        return _publish_then_fail(
+            lambda: pipeline.crawl(site, params, _deps(params, site_name), run_id)
         )
 
-    @task
-    def download(site_name: str, crawl_payload: dict[str, object]) -> dict[str, int]:
+    # all_done: a crawl whose pages partly failed is marked failed but still has a result.
+    @task(trigger_rule="all_done")
+    def download(site_name: str, crawl_payload: dict[str, object] | None) -> dict[str, int]:
+        if crawl_payload is None:
+            raise StageFailed(f"crawl of {site_name} produced no result; see the failed task")
         params, run_id = _context()
         site = config.site_by_name(site_name)
-        return pipeline.download(site, crawl_payload, _deps(params, site_name), run_id)
+        return _publish_then_fail(
+            lambda: pipeline.download(site, crawl_payload, _deps(params, site_name), run_id)
+        )
 
-    @task
+    # all_done: images staged by a download that was marked failed are still detected.
+    @task(trigger_rule="all_done")
     def plan_batches() -> list[list[int]]:
         params, _ = _context()
         return pipeline.plan_batches(_deps(params))
@@ -100,17 +128,19 @@ def image_indexer() -> None:
         return pipeline.detect(ids, profile_id, _deps(params), run_id)
 
     # all_done: the summary is logged even when a stage failed; pipeline.summarize then fails
-    # this task too, so the run is still marked failed.
+    # this task too, so the run is still marked failed. It is the DAG's only leaf task.
     @task(trigger_rule="all_done")
     def summarize(
         downloads: list[dict[str, int] | None], detections: list[dict[str, int] | None]
     ) -> dict[str, int]:
         params, _ = _context()
-        return pipeline.summarize([*downloads, *detections], _deps(params))
+        return _publish_then_fail(
+            lambda: pipeline.summarize([*downloads, *detections], _deps(params))
+        )
 
     profile_id = init_schema()
     downloads = []
-    for site in config.SITES:
+    for site in config.ENABLED_SITES:
         pool = f"http_{site.name}"
         crawled = crawl.override(task_id=f"crawl_{site.name}", pool=pool)(site.name)
         profile_id >> crawled

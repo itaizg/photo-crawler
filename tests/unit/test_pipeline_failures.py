@@ -14,7 +14,7 @@ import pytest
 
 from face_index import pipeline
 from face_index.crawl import CrawlResult
-from face_index.errors import InfrastructureError, StageFailed
+from face_index.errors import InfrastructureError, ItemsFailed, StageFailed
 from face_index.http import HttpFetcher
 from face_index.models import (
     CrawledPage,
@@ -27,6 +27,7 @@ from face_index.models import (
 from face_index.normalize import PillowNormalizer
 from face_index.pipeline import Deps
 from face_index.ports import FaceEmbedder
+from face_index.urls import in_scope
 from tests import images
 from tests.fakes import FakeEmbedder, FakeResolver, MockSite, RecordingPacer, Reply, robots_reply
 
@@ -122,7 +123,10 @@ class MemoryStore:
 
 
 def deps(
-    store: MemoryStore, routes: Mapping[str, Reply], embedder: FaceEmbedder | None = None
+    store: MemoryStore,
+    routes: Mapping[str, Reply],
+    embedder: FaceEmbedder | None = None,
+    scope: Callable[[str], bool] | None = None,
 ) -> Deps:
     site = MockSite(
         {
@@ -136,6 +140,7 @@ def deps(
         resolver=FakeResolver({"internal.test": ["10.0.0.5"]}),
         transport=site.transport(),
         max_download_bytes=10_000,
+        scope=scope,
     )
     return Deps(
         store=store,
@@ -148,6 +153,13 @@ def deps(
 def crawl_payload(refs: list[str]) -> dict[str, object]:
     page = CrawledPage(url="https://news.test/", depth=0, image_refs=tuple(refs), lead_ref=None)
     return CrawlResult(site="cnn", pages=[page]).to_json()
+
+
+def failed_download(payload: Mapping[str, object], the_deps: Deps) -> Mapping[str, object]:
+    """Run a download in which items fail: the task fails, and carries its full result."""
+    with pytest.raises(ItemsFailed, match=r"download for cnn: \d+ item\(s\) failed") as raised:
+        pipeline.download(SITE, payload, the_deps, "run-1")
+    return raised.value.result
 
 
 GOOD: Final[LiteralString] = "https://img.test/good.jpg"
@@ -180,7 +192,7 @@ def test_item_failures_are_logged_counted_and_isolated(caplog: pytest.LogCapture
     caplog.set_level(logging.INFO)
     store = MemoryStore()
     refs = [*FAILING, "https://img.test/brand.svg", "https://img.test/icon.jpg", GOOD]
-    counts = pipeline.download(SITE, crawl_payload(refs), deps(store, ROUTES), "run-1")
+    counts = failed_download(crawl_payload(refs), deps(store, ROUTES))
 
     assert counts["failures.download"] == len(FAILING)
     assert counts["staged"] == 1  # the healthy image still made it
@@ -223,18 +235,20 @@ def test_model_unavailable_fails_the_task() -> None:
 
 def test_summary_merges_and_logs_every_counter(caplog: pytest.LogCaptureFixture) -> None:
     caplog.set_level(logging.INFO)
-    total = pipeline.summarize(
-        [
-            {
-                "pages_crawled.cnn": 3,
-                "images_found": 10,
-                "failures.download": 1,
-                "skipped.too_small": 2,
-            },
-            {"pages_crawled.people": 2, "images_found": 5, "abandoned.image": 1},
-            {"images_indexed": 4, "faces_stored": 6, "failures.detect": 1},
-        ]
-    )
+    with pytest.raises(ItemsFailed) as raised:  # a download failure: logged, then the run fails
+        pipeline.summarize(
+            [
+                {
+                    "pages_crawled.cnn": 3,
+                    "images_found": 10,
+                    "failures.download": 1,
+                    "skipped.too_small": 2,
+                },
+                {"pages_crawled.people": 2, "images_found": 5, "abandoned.image": 1},
+                {"images_indexed": 4, "faces_stored": 6, "failures.detect": 1},
+            ]
+        )
+    total = raised.value.result
     assert total["images_found"] == 15
     assert total["faces_stored"] == 6
     for label in (
@@ -263,7 +277,7 @@ def test_an_image_that_failed_is_not_requested_again_in_the_same_task() -> None:
     )
     payload = CrawlResult(site="cnn", pages=pages).to_json()
     the_deps = deps(store, ROUTES)
-    counts = pipeline.download(SITE, payload, the_deps, "run-1")
+    counts = failed_download(payload, the_deps)
     assert counts["failures.download"] == 1
     assert counts["skipped.failed_earlier_in_run"] == 2
     assert len(store.failures) == 1
@@ -333,12 +347,63 @@ def test_summary_shows_outdated_links(caplog: pytest.LogCaptureFixture) -> None:
     assert re.search(r"outdated page links \(ignored by search\)\s+5", caplog.text)
 
 
-def test_a_download_where_every_attempted_image_failed_fails_the_task() -> None:
+def test_one_failed_image_request_fails_the_download_task_after_the_rest_is_done() -> None:
     store = MemoryStore()
-    refs = ["https://img.test/500.jpg", "http://img.test/good.jpg"]  # one failure, one skip
-    with pytest.raises(StageFailed, match="all 1 attempted items failed"):
+    refs = ["https://img.test/500.jpg", GOOD]  # the failure comes first: the good one still runs
+    with pytest.raises(ItemsFailed, match=r"download for cnn: 1 item\(s\) failed") as raised:
         pipeline.download(SITE, crawl_payload(refs), deps(store, ROUTES), "run-1")
     assert [u for u, _, _ in store.failures] == ["https://img.test/500.jpg"]
+    assert raised.value.result["staged"] == 1  # published by the DAG, so detection still runs
+    assert isinstance(raised.value, StageFailed)  # Airflow marks the task failed
+
+
+def crawl_deps(routes: Mapping[str, Reply], store: MemoryStore | None = None) -> Deps:
+    routes = {"https://news.test/robots.txt": robots_reply(), **routes}
+    return deps(store or MemoryStore(), routes, scope=lambda url: in_scope(url, SITE))
+
+
+def test_one_failed_page_request_fails_the_crawl_task_and_keeps_its_result() -> None:
+    home = Reply(
+        status=200,
+        body=b'<html><body><a href="/gone">x</a></body></html>',
+        headers={"content-type": "text/html"},
+    )
+    the_deps = crawl_deps({"https://news.test/": home})  # /gone is a 404
+    with pytest.raises(ItemsFailed, match=r"crawl of cnn: 1 page request\(s\) failed") as raised:
+        pipeline.crawl(SITE, pipeline.RunParams(depth=1), the_deps, "run-1")
+    result = CrawlResult.from_json(raised.value.result)
+    assert [p.url for p in result.pages] == ["https://news.test/"]
+    assert result.summary.to_json()["failures.crawl"] == 1
+
+
+def test_a_refused_site_fails_the_crawl_task() -> None:
+    store = MemoryStore()
+    the_deps = crawl_deps({"https://news.test/": Reply(status=402)}, store)
+    with pytest.raises(ItemsFailed, match="crawl of cnn: 1 page"):
+        pipeline.crawl(SITE, pipeline.RunParams(depth=0), the_deps, "run-1")
+    assert store.failures == [("https://news.test/", "page", "http 402")]
+
+
+def test_a_clean_crawl_returns_its_result() -> None:
+    home = Reply(status=200, body=b"<html></html>", headers={"content-type": "text/html"})
+    payload = pipeline.crawl(
+        SITE, pipeline.RunParams(depth=0), crawl_deps({"https://news.test/": home}), "run-1"
+    )
+    assert CrawlResult.from_json(payload).summary.to_json() == {
+        "images_found": 0,
+        "pages_crawled.cnn": 1,
+    }
+
+
+@pytest.mark.parametrize("counter", pipeline.FAILING_COUNTERS)
+def test_summary_fails_the_run_when_a_request_failed(
+    counter: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(logging.INFO)
+    with pytest.raises(ItemsFailed, match=r"2 page or image item\(s\) failed") as raised:
+        pipeline.summarize([{counter: 2, "staged": 5}])
+    assert "run summary" in caplog.text  # logged before the task fails
+    assert raised.value.result == {counter: 2, "staged": 5}
 
 
 def test_a_download_with_only_skips_does_not_fail() -> None:
@@ -377,7 +442,7 @@ def test_signed_urls_are_masked_in_logs(caplog: pytest.LogCaptureFixture) -> Non
     caplog.set_level(logging.INFO)
     signed = "https://img.test/500.jpg?token=s3cr3t"
     routes = {**ROUTES, signed: Reply(status=500)}
-    pipeline.download(SITE, crawl_payload([signed, GOOD]), deps(MemoryStore(), routes), "run-1")
+    failed_download(crawl_payload([signed, GOOD]), deps(MemoryStore(), routes))
     assert "s3cr3t" not in caplog.text
     assert "image failed url=https://img.test/500.jpg?token=… stage=download" in caplog.text
 

@@ -92,8 +92,11 @@ def test_first_run_builds_the_index(
         )
         == 0
     )
-    # FR-023 / FR-024: failures counted and logged with URL, run still completes.
+    # FR-023 / FR-024: failures counted and logged with URL. The steps with a failed request
+    # and the run are marked failed, and everything else is still indexed.
     assert counts["failures.download"] == 2
+    assert "summarize" in outcome.failed_stages
+    assert any(name.startswith("download_") for name in outcome.failed_stages)
     assert f"url={URL['corrupt']}" in caplog.text
     assert f"url={URL['error']}" in caplog.text
     assert f"image skipped url={URL['svg']} reason=unsupported_format" in caplog.text
