@@ -35,7 +35,7 @@ The operator starts the whole system with one documented command. They then trig
 **Acceptance Scenarios**:
 
 1. **Given** a clean installation, **When** the operator runs the single documented start command, **Then** the orchestrator, the database and every other required service start, and no other manual setup is needed.
-2. **Given** the stack is running, **When** the operator triggers a run with depth 1 and a rate limit, **Then** the run crawls both sites' home pages and the same-site pages they link to, and completes without manual intervention.
+2. **Given** the stack is running, **When** the operator triggers a run with depth 1 and a rate limit, **Then** the run crawls each enabled site's home page (CNN; People is left out, see FR-001) and the same-site pages they link to, and completes without manual intervention.
 3. **Given** a crawled page contains a photo of two people with visible faces, **When** the run processes it, **Then** two face records are stored, each with its own location and signature, both linked to that image and that page.
 4. **Given** a crawled page contains an image with no visible face (a logo, a chart, a landscape), **When** the run processes it, **Then** no face record is created for that image.
 5. **Given** a source image is a large PNG, **When** it is indexed, **Then** the stored copy is a JPEG whose longest side is at most 1024 px, and its recorded metadata matches the stored copy.
@@ -121,7 +121,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 
 **Crawling**
 
-- **FR-001**: The system MUST crawl starting from the home pages of https://edition.cnn.com/ and https://people.com/. *(Amended 2026-11-15, agreed with the reviewer: people.com refuses the crawler with HTTP 402 and its terms forbid scraping, so it is left out: configured but disabled until the site permits crawling.)*
+- **FR-001**: The system MUST crawl starting from the home pages of https://edition.cnn.com/ and https://people.com/. *(Amended 2026-11-15, approved by the project owner and agreed with the assignment's reviewer: people.com refuses the crawler with HTTP 402 and its terms forbid scraping, so it is left out: configured but disabled until the site permits crawling.)*
 - **FR-002**: The system MUST follow links only to pages within those two sites, up to a crawl depth set for each run (depth 0 = home pages only).
 - **FR-003**: The system MUST limit its request rate with two values set for each run: a page rate for the hosts of the target sites' pages, and an image rate for the hosts that serve images. Each limit applies to each host on its own, so requests to different hosts MAY run in parallel. A host's limit is shared by every step executing at once, so two steps that happen to contact the same host together never exceed it.
 - **FR-004**: The system MUST obey each host's robots.txt rules before fetching a page or image.
@@ -190,7 +190,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 ### Measurable Outcomes
 
 - **SC-001**: An operator who has never seen the project goes from a fresh clone to a running stack with one documented command, and to a completed indexing run with one trigger, with no other manual steps.
-- **SC-002**: A run at depth 1 on both sites completes without manual intervention. Any page or image that failed shows up in the run summary and logs, and marks its step and the run failed without stopping the other work.
+- **SC-002**: A run at depth 1 on the enabled sites (CNN; People is left out, see FR-001) completes without manual intervention. Any page or image that failed shows up in the run summary and logs, and marks its step and the run failed without stopping the other work.
 - **SC-003**: 100% of stored images are JPEG with the longest side ≤ 1024 px.
 - **SC-004**: In a manual spot check of 50 randomly sampled indexed images, none of the face records point to a region that has no face.
 - **SC-005**: 100% of face records have a bounding box, an embedding, and a link to an image that links to at least one page.
@@ -199,7 +199,7 @@ When an image cannot be downloaded or decoded, or a page fails to load, the run 
 - **SC-008**: Injecting broken images and unreachable pages into a run does not stop it: everything else is indexed. The steps that hit them and the run end marked failed. Each one is named, with a cause, in the logs.
 - **SC-009**: The search script can find the nearest stored faces for a query embedding using only what this pipeline stored, with no extra build or transformation step.
 - **SC-010**: No crawl request goes to a page path disallowed by robots.txt, or to a page outside the two target sites. Per-host request pacing never exceeds the configured page or image rate, and no site has more crawled pages than the page cap (when one is set).
-- **SC-011**: With default settings, a run on both sites from an empty index completes within 30 minutes on the reference machine: 4 CPU cores, 16 GB RAM, 8 GB of it allocated to Docker, broadband connection. The README records the machine the measurement was taken on.
+- **SC-011**: With default settings, a run on the enabled sites (CNN; People is left out, see FR-001) from an empty index completes within 30 minutes on the reference machine: 4 CPU cores, 16 GB RAM, 8 GB of it allocated to Docker, broadband connection. The README records the machine the measurement was taken on.
 - **SC-012**: A link that fails on three runs is not requested on a fourth run, and that run's summary counts it as abandoned.
 
 ## Assumptions

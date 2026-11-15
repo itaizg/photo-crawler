@@ -123,8 +123,12 @@ The model setup lives in one place, `src/face_index/model_profile.py`, and is re
 Full reasoning: [`specs/001-image-indexer/research.md`](specs/001-image-indexer/research.md) (R1–R13).
 
 ```
-init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
-             └─ crawl_people ── download_people ─┴─ plan_batches ── detect (mapped) ── summarize
+init_schema ── crawl_cnn ── download_cnn ── plan_batches ── detect (mapped) ── summarize
+```
+
+People is configured but disabled (see Known limitations); each enabled site gets its own crawl and download pair, in parallel.
+
+```
 ```
 
 - **Ports and adapters.** `face_index` holds all logic and never imports Airflow; DAG tasks are thin wrappers. The pipeline depends only on protocols (`Fetcher`, `Pacer`, `ImageNormalizer`, `FaceEmbedder`, `IndexStore`), so the whole pipeline runs offline in tests with fakes.
@@ -222,7 +226,7 @@ SMOKE PASSED
 
 ## Known limitations
 
-- **SC-011 (a default run on both sites within 30 minutes) is open.** The one measured run took 72 minutes for CNN alone, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if both sites are reachable (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
+- **SC-011 (a default run on the enabled sites within 30 minutes) is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
 
 - **people.com is disabled.** It answers the crawler's honest User-Agent (`photo-crawler/0.1.0`) with HTTP 402 from Cloudflare, and its terms forbid scraping. The crawler does not disguise itself to get around this, so the site stays in `config.SITES` with `enabled=False` and the DAG has no `crawl_people`/`download_people` tasks. Leaving People out and documenting why was agreed with the assignment's reviewer (2026-11-15); the other option offered, indexing lead images from People's public news sitemap, was not taken. With the site's permission, set `enabled=True` to crawl it again; while it refuses, a run that includes it records the 402, marks `crawl_people` and the run failed, and still indexes CNN.
 - **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.

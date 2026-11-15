@@ -1,16 +1,19 @@
 """Image indexer: crawl the enabled sites, store every visible face for image-based search.
 
 ```
-init_schema ─┬─ crawl_cnn    ── download_cnn    ─┐
-             └─ crawl_people ── download_people ─┴─ plan_batches ── detect (mapped) ── summarize
+init_schema ── crawl_cnn ── download_cnn ── plan_batches ── detect (mapped) ── summarize
 ```
 
-Each site in `config.ENABLED_SITES` gets its own crawl and download pair. People is configured
-but disabled (it refuses the crawler with HTTP 402), so today only the CNN pair exists.
+Each site in `config.ENABLED_SITES` gets its own crawl and download pair, in parallel. People is
+configured but disabled (it refuses the crawler with HTTP 402), so today only the CNN pair exists.
 
 A crawl or download task in which a page or image request failed is marked failed, but it
 first publishes its result, and the tasks after it run whatever it did (`all_done`): the run
-ends failed and still indexes everything that succeeded (FR-023).
+ends failed and still indexes everything that succeeded (FR-023). Such a task is not retried
+in the same run (`AirflowFailException`): a retry would send the failed requests again, outside
+the per-run attempt cap and page cap, and a retry that succeeded would hide the failure. The
+next run tries the failed links again, up to the 3-attempt cap. Infrastructure failures are
+still retried (`retries=1`).
 
 Trigger with optional params `depth`, `page_cap` (null = no cap), `page_rate`, `image_rate`.
 Every task is a thin wrapper around a `face_index.pipeline` function (research R3).
@@ -21,6 +24,7 @@ from datetime import datetime, timedelta
 from typing import Final
 
 from airflow.sdk import DAG, Param, dag, get_current_context, task
+from airflow.sdk.exceptions import AirflowFailException
 
 from face_index import config, pipeline
 from face_index.errors import ItemsFailed, StageFailed
@@ -68,16 +72,18 @@ def _deps(params: pipeline.RunParams, site_name: str | None = None) -> pipeline.
 
 
 def _publish_then_fail[T: Mapping[str, object]](stage: Callable[[], T]) -> T:
-    """Run a stage; when items failed, publish its result, then fail the task.
+    """Run a stage; when items failed, publish its result, then fail the task without a retry.
 
     A failed task pushes no return value of its own, so the result is pushed here. The tasks
-    downstream read it as usual and work with everything that did succeed.
+    downstream read it as usual and work with everything that did succeed. The task is not
+    retried: every item was already attempted, and a retry would repeat the failed requests and
+    replace this result (FR-023, FR-023a).
     """
     try:
         return stage()
     except ItemsFailed as exc:
         get_current_context()["ti"].xcom_push(key="return_value", value=dict(exc.result))
-        raise
+        raise AirflowFailException(str(exc)) from exc
 
 
 @dag(

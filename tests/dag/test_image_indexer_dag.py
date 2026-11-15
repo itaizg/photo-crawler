@@ -2,6 +2,7 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+from airflow.sdk.exceptions import AirflowFailException
 
 from face_index import config
 from face_index.errors import ItemsFailed, StageFailed
@@ -81,9 +82,38 @@ def test_a_stage_with_failed_items_publishes_its_result_then_fails(
     )
     monkeypatch.setattr(dag_module, "_deps", lambda params, site_name=None: None)
     monkeypatch.setattr(dag_module.pipeline, "crawl", failing_crawl)
-    with pytest.raises(ItemsFailed):
+    # AirflowFailException: failed without a retry, so the failed requests are not sent again
+    with pytest.raises(AirflowFailException) as raised:
         dag.get_task("crawl_cnn").python_callable("cnn")
+    assert isinstance(raised.value.__cause__, ItemsFailed)
     assert pushed == {"return_value": {"site": "cnn", "pages": []}}
+
+
+def test_the_summary_task_fails_the_run_when_items_failed(
+    dag: Any, dag_module: ModuleType, monkeypatch: Any
+) -> None:
+    """The real summarize task callable must not swallow the failure: it decides the run state."""
+    pushed: dict[str, object] = {}
+
+    class Ti:
+        def xcom_push(self, key: str, value: object) -> None:
+            pushed[key] = value
+
+    def failing_summary(*args: object) -> dict[str, int]:
+        raise ItemsFailed("1 page or image item(s) failed", {"failures.download": 1})
+
+    monkeypatch.setattr(
+        dag_module,
+        "get_current_context",
+        lambda: {"params": {}, "run_id": "manual__x", "ti": Ti()},
+    )
+    monkeypatch.setattr(dag_module, "_deps", lambda params, site_name=None: None)
+    monkeypatch.setattr(dag_module.pipeline, "summarize", failing_summary)
+    summarize = dag.get_task("summarize")
+    assert summarize.downstream_task_ids == set()  # the only leaf: its state is the run's state
+    with pytest.raises(AirflowFailException):
+        summarize.python_callable([{"failures.download": 1}], [])
+    assert pushed == {"return_value": {"failures.download": 1}}
 
 
 def test_download_fails_when_the_crawl_left_no_result(dag: Any) -> None:

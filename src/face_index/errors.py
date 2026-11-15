@@ -10,7 +10,8 @@
   failures are recorded and Airflow marks (and retries) the task as failed.
 - ``ItemsFailed``: a ``StageFailed`` for a crawl or download task in which at least one page or
   image failed. It carries the task's result, so the DAG can publish it before the task fails
-  and the rest of the run still works with what succeeded.
+  and the rest of the run still works with what succeeded. The DAG fails such a task without a
+  retry: the next run tries the failed items again.
 """
 
 from collections.abc import Mapping

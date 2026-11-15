@@ -1,10 +1,16 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.1.0 → 2.1.1
-Bump rationale: PATCH. Clarifies where secrets may come from; no principle or gate changes.
+Version change: 2.1.1 → 2.2.0
+Bump rationale: MINOR. Changes what failure isolation requires; approved by the project owner
+on 2026-11-15.
 
 Modified sections:
+  - Project Constraints (Failure isolation): a failed page or image no longer leaves the run
+    green. It still MUST NOT stop the run, but the step with the failed request and the run
+    are marked failed after the work has finished, so a failure is not missed (spec FR-023).
+
+Previous amendment (2.1.1), modified sections:
   - Principle XIV, Quality constraints (Security), Project Constraints (Secrets): secrets come
     from a git-ignored `.env` or are generated at first start into a private Compose volume;
     never committed, printed or logged.
@@ -417,8 +423,10 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   runs; no simulated or hand-filled results.
 - Crawling etiquette: the crawler stays within the target website's domain, obeys its
   robots.txt, and is rate limited.
-- Failure isolation: a failure on one page or image MUST NOT fail the whole run; the cause
-  MUST be visible in the Airflow task logs and in the task's failure count (Principle XII).
+- Failure isolation: a failure on one page or image MUST NOT stop the run; every other item is
+  still processed. It MUST NOT go unnoticed either: the step in which a page or image request
+  failed, and the run, are marked failed after that work has finished, and the cause MUST be
+  visible in the Airflow task logs and in the task's failure count (Principle XII).
 - Secrets: environment variables from a git-ignored `.env`, or generated at first start into a
   private Compose volume; never committed, never printed or logged. The search script uses a read-only database role (Principle XIV).
 
@@ -451,4 +459,4 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   the assignment requirements it implements and evaluates it against these principles before
   implementation begins.
 
-**Version**: 2.1.1 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-14
+**Version**: 2.2.0 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-15

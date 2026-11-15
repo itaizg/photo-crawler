@@ -244,13 +244,14 @@ def test_summary_merges_and_logs_every_counter(caplog: pytest.LogCaptureFixture)
                     "failures.download": 1,
                     "skipped.too_small": 2,
                 },
-                {"pages_crawled.people": 2, "images_found": 5, "abandoned.image": 1},
+                {"pages_crawled.people": 4, "images_found": 5, "abandoned.image": 1},
                 {"images_indexed": 4, "faces_stored": 6, "failures.detect": 1},
             ]
         )
     total = raised.value.result
     assert total["images_found"] == 15
     assert total["faces_stored"] == 6
+    assert total["skipped.too_small"] == 2
     for label in (
         "pages crawled",
         "images found",
@@ -261,7 +262,10 @@ def test_summary_merges_and_logs_every_counter(caplog: pytest.LogCaptureFixture)
         "abandoned",
     ):
         assert label in caplog.text
-    assert "    2" in caplog.text or "2" in caplog.text
+    # exact rows: the skipped total and its reason, each with its own count
+    assert re.search(r"^skipped\s+2$", caplog.text, re.MULTILINE)
+    assert re.search(r"^  too_small\s+2$", caplog.text, re.MULTILINE)
+    assert re.search(r"^  people\s+4$", caplog.text, re.MULTILINE)
 
 
 def test_an_image_that_failed_is_not_requested_again_in_the_same_task() -> None:
