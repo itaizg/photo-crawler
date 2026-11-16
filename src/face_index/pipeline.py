@@ -116,6 +116,7 @@ def crawl(site: Site, params: RunParams, deps: Deps, run_id: str) -> dict[str, o
         is_abandoned=lambda url: store.is_abandoned(url, "page", config.MAX_ATTEMPTS),
         on_failure=lambda url, reason: store.record_failure(url, "page", reason, run_id),
         on_success=lambda url: store.record_success(url, "page"),
+        on_gone=store.retire_page,
     )
     payload = result.to_json()
     size = len(json.dumps(payload))

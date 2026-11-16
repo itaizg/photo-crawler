@@ -50,6 +50,16 @@ SELECT count(*) FROM page_image pi JOIN page p ON p.id = pi.page_id
 WHERE pi.page_id = %s AND pi.last_seen_at < p.last_crawled_at
 """
 
+# A page the server now reports as gone (404/410): mark it crawled now with no link seen, so
+# search ignores all its links (FR-018). A URL never stored is not added.
+_RETIRE_PAGE: Final[LiteralString] = """
+WITH retired AS (
+  UPDATE page SET last_crawled_at = now() WHERE url = %s RETURNING id, last_crawled_at
+)
+SELECT count(*) FROM page_image pi JOIN retired p ON p.id = pi.page_id
+WHERE pi.last_seen_at < p.last_crawled_at
+"""
+
 _UPSERT_PROFILE: Final[LiteralString] = """
 INSERT INTO model_profile (key, detector, model, dimensions, distance, align, normalization,
                            min_face_confidence, deepface_version, tensorflow_version)
@@ -380,6 +390,11 @@ class PostgresIndexStore:
         return int(row[1])
 
     # -- attempt cap ------------------------------------------------------------------------
+
+    def retire_page(self, url: str) -> int:
+        with self._guard() as conn:
+            row = conn.execute(_RETIRE_PAGE, (url,)).fetchone()
+            return int(row[0]) if row else 0
 
     def outdated_links(self, page_id: int) -> int:
         with self._guard() as conn:

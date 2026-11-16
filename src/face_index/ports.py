@@ -122,6 +122,14 @@ class IndexStore(Protocol):
         """Links of this page not seen in its latest crawl (FR-018). Read-only; deletes nothing."""
         ...
 
+    def retire_page(self, url: str) -> int:
+        """The page is gone (HTTP 404/410): count it as crawled now, with no link seen.
+
+        Search then ignores all its links, as for any link a crawl did not see (FR-018). Deletes
+        nothing, and a URL that was never stored is not added. Returns the links now outdated.
+        """
+        ...
+
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool: ...
 
     def record_failure(self, url: str, kind: RequestKind, error: str, run_id: str) -> None: ...

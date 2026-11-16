@@ -143,3 +143,38 @@ def test_reference_query_ignores_outdated_links(
             },
         ).fetchall()
     assert [r[0] for r in rows] == ["https://people.com/kept"]
+
+
+def test_a_retired_gone_page_drops_out_of_search(
+    store: PostgresIndexStore, sql: psycopg.Connection, db_dsn: str
+) -> None:
+    """A page that now answers 404/410 is retired: none of its old links count any more."""
+    profile_id = store.init_schema()
+    kept = store.upsert_page("https://people.com/kept", "people", 1)
+    gone = store.upsert_page("https://people.com/gone", "people", 1)
+    img, _ = store.stage_image(image(5), "https://img/five.jpg", kept, False)
+    store.link(gone, img, False)
+    store.process_pending(
+        img,
+        lambda p: [
+            DetectedFace(box=Box(x=1, y=1, w=10, h=10), confidence=0.99, embedding=vec(0.0))
+        ],
+        profile_id,
+    )
+    assert store.retire_page("https://people.com/gone") == 1
+    assert store.retire_page("https://people.com/never-stored") == 0
+    assert sql.execute(
+        "SELECT count(*) FROM page WHERE url = 'https://people.com/never-stored'"
+    ).fetchone() == (0,)
+
+    with psycopg.connect(db_dsn, autocommit=True) as raw:
+        register_vector(raw)
+        rows = raw.execute(
+            reference_query().encode(),
+            {
+                "q": np.asarray(vec(0.0), dtype=np.float32),
+                "max_dist": 0.30,
+                "profile_id": profile_id,
+            },
+        ).fetchall()
+    assert [r[0] for r in rows] == ["https://people.com/kept"]

@@ -14,7 +14,7 @@ from pydantic import BeforeValidator
 
 from face_index import config
 from face_index.config import Site
-from face_index.errors import Disallowed, InfrastructureError, ItemError
+from face_index.errors import Disallowed, Gone, InfrastructureError, ItemError
 from face_index.extract import extract_page
 from face_index.models import CrawledPage, Record, Summary
 from face_index.ports import Fetcher
@@ -60,6 +60,7 @@ class CrawlResult(Record):
 type AttemptGate = Callable[[str], bool]  # url -> True if the link is abandoned
 type FailureHook = Callable[[str, str], None]  # (url, reason) -> record a failed attempt
 type SuccessHook = Callable[[str], None]
+type GoneHook = Callable[[str], int]  # url -> retire the stored page; returns links now outdated
 
 
 def crawl_site(
@@ -71,13 +72,15 @@ def crawl_site(
     is_abandoned: AttemptGate | None = None,
     on_failure: FailureHook | None = None,
     on_success: SuccessHook | None = None,
+    on_gone: GoneHook | None = None,
 ) -> CrawlResult:
     """Crawl ``site`` breadth-first to ``depth``.
 
     ``page_cap`` bounds the page *requests* sent (None: no cap), counting failed, non-HTML and
     redirect-then-refused requests too, so it bounds the load on the site, not the pages stored.
     A failed page is counted under ``failures.crawl`` and the crawl goes on; ``pipeline.crawl``
-    fails the task when that count is not zero.
+    fails the task when that count is not zero. A page that answers 404/410 is skipped, and
+    ``on_gone`` retires it (by requested and final URL), so search drops its old links.
     """
     pages: list[CrawledPage] = []
     counts: Counter[str] = Counter()
@@ -108,6 +111,8 @@ def crawl_site(
             requests += exc.sent  # a redirect hop refused after the first request went out
             log.info("page skipped url=%s reason=%s", for_log(url), exc.reason)
             counts[f"skipped.page.{exc.reason}"] += 1
+            if isinstance(exc, Gone) and on_gone is not None:
+                counts["links.outdated"] += _retire(url, exc.url, on_gone)
             continue
         except ItemError as exc:
             requests += 1
@@ -163,6 +168,16 @@ def crawl_site(
                     seen.add(candidate)
                     queue.append((candidate, level + 1))
     return CrawlResult(site=site.name, pages=tuple(pages), summary=Summary.of(counts))
+
+
+def _retire(url: str, final: str, on_gone: GoneHook) -> int:
+    """Retire a gone page under each URL it may be stored by: requested, and final if redirected."""
+    outdated = 0
+    for candidate in dict.fromkeys((url, _normalized(normalize_page_url, final) or url)):
+        if retired := on_gone(candidate):
+            log.info("gone page retired url=%s outdated_links=%d", for_log(candidate), retired)
+            outdated += retired
+    return outdated
 
 
 def _normalized(normalize: Callable[[str], str], url: str) -> str | None:

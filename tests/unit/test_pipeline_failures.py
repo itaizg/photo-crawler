@@ -47,6 +47,7 @@ class MemoryStore:
         self.by_sha: dict[bytes, int] = {}
         self.fail_on = fail_on
         self.outdated = 0  # what outdated_links reports for every page (FR-018)
+        self.retired: list[str] = []  # pages retired as gone (404/410)
 
     def _maybe_fail(self, what: str) -> None:
         if self.fail_on == what:
@@ -119,6 +120,10 @@ class MemoryStore:
         return None
 
     def outdated_links(self, page_id: int) -> int:
+        return self.outdated
+
+    def retire_page(self, url: str) -> int:
+        self.retired.append(url)
         return self.outdated
 
 
@@ -398,6 +403,33 @@ def test_a_dead_link_is_a_skip_and_does_not_fail_the_crawl(status: int) -> None:
     assert summary["skipped.page.not_found"] == 1
     assert "failures.crawl" not in summary
     assert store.failures == []
+
+
+def test_a_gone_page_is_retired_so_search_drops_its_old_links() -> None:
+    store = MemoryStore()
+    store.outdated = 3  # links the page had before it went away
+    routes = {
+        "https://news.test/": linking_home("/old"),
+        "https://news.test/old": Reply(status=301, headers={"location": "/gone"}),
+        "https://news.test/gone": Reply(status=404),
+    }
+    payload = pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes, store), "run-1")
+    summary = CrawlResult.from_json(payload).summary.to_json()
+    # stored under the requested URL or the redirect target: both are retired
+    assert store.retired == ["https://news.test/old", "https://news.test/gone"]
+    assert summary["links.outdated"] == 6
+    assert "failures.crawl" not in summary
+
+
+def test_a_dead_link_that_is_not_gone_retires_nothing() -> None:
+    store = MemoryStore()
+    routes = {
+        "https://news.test/": linking_home("/broken"),
+        "https://news.test/broken": Reply(status=500),
+    }
+    with pytest.raises(ItemsFailed):
+        pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes, store), "run-1")
+    assert store.retired == []
 
 
 def test_a_dead_image_link_is_a_skip_and_does_not_fail_the_download() -> None:
