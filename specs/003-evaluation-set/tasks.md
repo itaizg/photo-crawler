@@ -26,9 +26,9 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 **Purpose**: Dependency and repository plumbing
 
-- [ ] T001 Add `"pandas>=3.1,<3.2"` to `[project].dependencies` in `pyproject.toml`, keeping the existing comment style, then run `uv lock`. Verify that the `uv.lock` diff adds no `[[package]]` entry, only the project's dependency reference (research R2).
-- [ ] T002 [P] Add `!queries/eval/` after the `!queries/README.md` line in `.gitignore`. Verify with `git check-ignore -v queries/eval/sets/x.csv`, which should report not ignored, while `queries/other.jpg` stays ignored.
-- [ ] T003 [P] Write the header-only files `queries/eval/attribution.csv`, `queries/eval/methods.csv` and `queries/eval/runs.csv`, with the exact headers from `specs/003-evaluation-set/contracts/eval-set-files.md`. Don't create empty `photos/` or `sets/` folders: git doesn't track them, and a placeholder file in `photos/` would fail T026's naming rule. T016 and T017 create them with real files.
+- [X] T001 Add `"pandas>=3.1,<3.2"` to `[project].dependencies` in `pyproject.toml`, keeping the existing comment style, then run `uv lock`. Verify that the `uv.lock` diff adds no `[[package]]` entry, only the project's dependency reference (research R2).
+- [X] T002 [P] Add `!queries/eval/` after the `!queries/README.md` line in `.gitignore`. Verify with `git check-ignore -v queries/eval/sets/x.csv`, which should report not ignored, while `queries/other.jpg` stays ignored.
+- [X] T003 [P] Write the header-only files `queries/eval/attribution.csv`, `queries/eval/methods.csv` and `queries/eval/runs.csv`, with the exact headers from `specs/003-evaluation-set/contracts/eval-set-files.md`. Don't create empty `photos/` or `sets/` folders: git doesn't track them, and a placeholder file in `photos/` would fail T026's naming rule. T016 and T017 create them with real files.
 
 ---
 
