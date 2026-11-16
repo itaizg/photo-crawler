@@ -24,7 +24,7 @@
 
 ### User Story 1 - Measure the search against a real labelled set (Priority: P1)
 
-A contributor clones the repository, starts the project, runs one indexing pass, and runs the evaluation with one documented command. They get a per-person table (expected pages, returned pages, recall, extra pages, missed pages), the result for each absent person, and an overall PASS or FAIL against SC-001 to SC-003. Everything they need (labels, query photos, attribution) arrives with the clone; no secret, download, or private file is needed.
+A contributor clones the repository, starts the project, runs one indexing pass, and runs the evaluation with one documented command. They get a per-label table (expected pages, returned pages, recall, extra pages, missed pages), the result for each absent person, and an overall PASS or FAIL against SC-001 to SC-003. Everything they need (labels, query photos, attribution) arrives with the clone; no secret, download, or private file is needed.
 
 **Why this priority**: this is the mission. Without the set, the search's accuracy claims in feature 002 are unverified, and the README cannot report numbers.
 
@@ -32,7 +32,7 @@ A contributor clones the repository, starts the project, runs one indexing pass,
 
 **Acceptance Scenarios**:
 
-1. **Given** a fresh clone and a completed indexing run, **When** the contributor runs the documented evaluation command, **Then** the chosen label set (the latest by default) loads and the output shows one row per present person, one result per absent person, and PASS or FAIL.
+1. **Given** a fresh clone and a completed indexing run, **When** the contributor runs the documented evaluation command, **Then** the chosen label set (the latest by default) loads and the output shows one row per present label, one result per absent label, and PASS or FAIL.
 2. **Given** a person whose labelled pages are indexed, **When** the search returns fewer than 80% of them, **Then** the output lists each missed page and the verdict is FAIL.
 3. **Given** a look-alike in the absent rows, **When** the search returns any page for that photo, **Then** the verdict is FAIL.
 4. **Given** a labelled page that is not in the index, **When** the evaluation runs, **Then** it reports that page as a label error and fails; it is not counted as a search miss and is not skipped.
@@ -77,7 +77,7 @@ A maintainer adds a query photo only if its licence allows redistribution, and r
 
 ### User Story 4 - Report the measured accuracy honestly (Priority: P3)
 
-A reader of the README sees the evaluation results from a real-model run on a live index: per-person recall, extra pages, absent results, the verdict, how the pages were labelled (browse, search, or both; by whom; on which crawl date), and the known bias of that method. The quickstart's evaluation section points to the new label format.
+A reader of the README sees the evaluation results from a real-model run on a live index: per-label recall, extra pages, absent results, the verdict, how the pages were labelled (browse, search, or both; by whom; on which crawl date), and the known bias of that method. The quickstart's evaluation section points to the new label format.
 
 **Why this priority**: the assignment's README must explain the approach; reporting measured accuracy with its limits completes the story, but depends on P1.
 
@@ -85,7 +85,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 
 **Acceptance Scenarios**:
 
-1. **Given** a completed real-model evaluation run, **When** the README is updated, **Then** it contains the per-person table, the absent results, the overall verdict, the labelling method, and its known bias.
+1. **Given** a completed real-model evaluation run, **When** the README is updated, **Then** it contains the per-label table, the absent results, the overall verdict, the labelling method, and its known bias.
 2. **Given** a real-model run made with the logging option, **When** it finishes, **Then** the run log gains one entry with the run's conditions and results; **Given** a mock run, **Then** nothing is logged.
 3. **Given** the evaluation recommends a different threshold, **When** results are recorded, **Then** the recommendation is written down only; the default threshold is not changed by this feature.
 
@@ -96,6 +96,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **Labelled page never indexed**: a label error. It is reported by URL and the run fails; it is not counted as a miss and not skipped (constitution XII).
 - **Labelled page indexed but not returned**: a search miss. It is listed and counts against recall, which may legitimately fall to 0.80 and still pass.
 - **No face in a query photo**: reported by path; the run fails.
+- **Query photo that cannot be decoded, or face detection fails on it**: reported by path with the reason, like a no-face photo; the run fails (cannot evaluate).
 - **Several faces in a query photo**: out of scope (each committed photo has one clear face). The evaluator searches the largest face, as today.
 - **Page URL that is not canonical**: rejected at load, naming the row, because it would never compare equal to an indexed URL.
 - **Same (person, page) row twice, or two people sharing one label**: rejected as a duplicate.
@@ -144,12 +145,12 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **FR-016**: The evaluator MUST keep using the search's own code at the default threshold; no label set carries its own threshold.
 - **FR-017**: The evaluator MUST report, per present person: expected pages, returned pages, recall, extra pages, and every missed page; per absent label: the number of pages returned; and an overall PASS or FAIL against SC-001 to SC-003 of feature 002.
 - **FR-018**: A labelled page that is not in the index MUST be reported as a label error and MUST fail the run; it MUST NOT be counted as a search miss or skipped.
-- **FR-019**: A query photo with no detected face MUST be reported by path and MUST fail the run.
+- **FR-019**: A query photo with no detected face, that cannot be decoded, or on which face detection fails MUST be reported by path with the reason, and MUST fail the run. Every such photo in the set MUST be reported in the same run.
 - **FR-020**: The evaluation MUST be runnable after clone, project start and one indexing run with one documented command.
 
 **Automated check**
 
-- **FR-021**: An automated check MUST run on every pull request that touches the labels, attribution, query photos, or evaluator, and MUST validate every label set and the run log (FR-009 to FR-015, FR-027).
+- **FR-021**: An automated check MUST run on every pull request (so always on those that touch the labels, attribution, query photos, or evaluator), and MUST validate every label set and the run log (FR-009 to FR-015, FR-027).
 - **FR-022**: The check MUST then run the evaluator end to end against a seeded mock index with a deterministic fake face model, never the real model, and need no secrets.
 - **FR-023**: The mock fixtures MUST include a clean case that PASSes, a planted miss that drops a person's recall below 0.80 (for example 1 of 2 pages), and a planted look-alike; the check MUST require FAIL for the latter two.
 - **FR-024**: The check MUST follow the project's existing automation conventions (pinned action versions, locked dependency install, read-only permissions, concurrency group, job timeout) and finish within 5 minutes.
@@ -175,7 +176,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **Query photo**: an openly licensed photo with one clear face, committed under the neutral label's name, not taken from the indexed site.
 - **Attribution row**: photo path (key), source link in page-ID form, author, licence.
 - **Labelling method record**: how pages were found, by whom, and the crawl date.
-- **Evaluation report**: per-person rows, per-absent results, label errors, and the overall verdict (defined by feature 002; extended here with label errors).
+- **Evaluation report**: per-label rows, per-absent results, label errors, and the overall verdict (defined by feature 002; extended here with label errors).
 - **Run log entry**: one real-model run: its conditions (run date, label set, labels version, model profile, threshold, index size) and results (per-label counts, label errors, verdict).
 - **Mock fixture**: a seeded index and fake-model photos used by the automated check, in clean, planted-miss, and planted-look-alike variants.
 
@@ -186,7 +187,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **SC-001**: Every committed label set has at least 5 distinct present labels, at least 5 distinct absent labels, an absent look-alike and a small-face page (plus an on-site look-alike pair, or a README note that its crawl had none), and loads into the evaluator with zero errors.
 - **SC-002**: Each of these malformed rows fails the automated check with a message that names the row: missing column, wrong type, bad URL, non-canonical URL, duplicate row. 5 of 5 are caught.
 - **SC-003**: In the automated check, the mock run reports PASS on the clean fixture and FAIL on both the planted miss and the planted look-alike; the check needs no secrets and finishes in under 5 minutes.
-- **SC-004**: After cloning, starting the project, and one indexing run, a contributor runs the evaluation with one documented command and gets the per-person table and a PASS or FAIL against feature 002's SC-001 to SC-003, with no additional files or secrets. On an index crawled after the labelling date, drifted pages are listed as label errors and the run fails; a PASS is only promised against the labelling-date crawl (re-run from the labeller's local snapshot).
+- **SC-004**: After cloning, starting the project, and one indexing run, a contributor runs the evaluation with one documented command and gets the per-label table and a PASS or FAIL against feature 002's SC-001 to SC-003, with no additional files or secrets. On an index crawled after the labelling date, drifted pages are listed as label errors and the run fails; a PASS is only promised against the labelling-date crawl (re-run from the labeller's local snapshot).
 - **SC-005**: 100% of committed photos have exactly one attribution row matched by path, with an allowed licence and a page-ID source link; the check rejects an unattributed photo, an attribution without a photo, and a source link not in page-ID form (3 of 3).
 - **SC-006**: The README contains the measured results, the labelling method (including crawl date), its known bias, and the re-labelling steps, and quickstart §7 points to the new format.
 - **SC-007**: The run log has one entry for every real-model run recorded in the README, each with all FR-027 fields, and none for mock runs; the automated check rejects an entry with a missing field.
@@ -204,4 +205,6 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **Labelling bias is accepted and stated**: recall is only as good as the labels; pages a labeller did not find are invisible to the measurement, and the README says so.
 - **Out of scope** (per the brief): changing the threshold or adding a face-size filter (a threshold may only be recommended, see [noisy-index-faces.md](../../docs/briefs/noisy-index-faces.md)), a labelling UI, covering every person on the site, and running the real face model in automation.
 - **Dependency**: feature 002 (face search and `scripts/evaluate_search.py`) is merged, and the crawler's canonical URL function is the reference for page URLs.
+- **FR-007 is checked in review, not by automation**: whether a query photo is a rendition of an indexed image can't be decided from the files alone. The labeller confirms it when choosing the photo, the attribution's outside source (a page-ID link to Commons, Flickr or Unsplash) is the evidence a reviewer checks, and the README bias section states this limit.
+- **Database access from the host**: the evaluator connects as the read-only `faces_reader` role. Its password is generated at first start into the Compose secrets volume; the documented command reads it from there at run time (`docker compose exec -T postgres cat /run/db-secrets/reader_password`) and passes it through `PGPASSWORD`, so no secret is committed, typed, or put in a URL.
 - **Not verified in this environment**: the team-ai-directives knowledge base path in `.specify/init-options.json` is a local path not present where this spec was drafted, so team discovery did not run; the project constitution (which inherits it) was applied.

@@ -34,8 +34,9 @@ Because absent rows carry no page, a page can't be shared between a present and 
   - ≥ 1 absent row with `hard_case = look_alike`
   - ≥ 1 present row with `hard_case = small_face`
   - if `methods.onsite_pair` is true: ≥ 1 present row with `hard_case = look_alike`; if false: none
-- **Lifecycle**: a set is added, never edited after its first real-model run is logged. This is a review rule; the log's `labels_sha256` makes any edit visible.
+- **Lifecycle**: a set is added and never edited or removed afterwards. CI rejects a pull request that modifies or deletes an existing set file (research R7); fixes go into a new set.
 - **Selection**: the latest `crawl_date` by default, or one named with `--set`.
+- **At least one set** must exist; an empty `sets/` folder is an error.
 
 ## Attribution row
 

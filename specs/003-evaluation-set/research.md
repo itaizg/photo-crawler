@@ -6,9 +6,9 @@ Each entry: Decision, Rationale, Alternatives considered. Facts about existing c
 
 ## R1. Reading CSV with pandas, no type inference
 
-**Decision**: Read every table with `pandas.read_csv(path, dtype="string", keep_default_na=False, na_filter=False)`. Every column then arrives as text, and empty cells stay `""` instead of becoming NaN. The header must equal the expected column tuple exactly; then each row becomes a frozen Pydantic model through `model_validate` in strict mode for enums and dates. A failure is raised once as `EvalSetError` with the file name and the CSV line number (row index + 2, counting the header).
+**Decision**: Read every table with `pandas.read_csv(path, dtype="string", keep_default_na=False, na_filter=False)`. Every column then arrives as text, and empty cells stay `""` instead of becoming NaN. The header must equal the expected column tuple exactly; then each row becomes a frozen Pydantic model through `model_validate` in strict mode for enums and dates. A failure becomes one error string, `<file>:<line>: <message>`, where the line is the row index + 2 (counting the header). Errors are returned, not raised (R10).
 
-**Rationale**: The brief requires explicit dtypes and no inference. Reading everything as `string` is the explicit dtype, and Pydantic does the typing (constitution IX: validate once, at the edge). `keep_default_na=False` stops `"NA"` or `""` from silently turning into missing values. One exception type at one boundary satisfies constitution VIII.
+**Rationale**: The brief requires explicit dtypes and no inference. Reading everything as `string` is the explicit dtype, and Pydantic does the typing (constitution IX: validate once, at the edge). `keep_default_na=False` stops `"NA"` or `""` from silently turning into missing values. The only `try` is the one around `model_validate` for a single row, at the file boundary; it turns `ValidationError` into that row's error string (constitution VIII).
 
 **Alternatives**: A per-column `dtype` map with `bool` and `int` columns was rejected: pandas would then reject or coerce values before Pydantic could name the row. The stdlib `csv` module would be simpler, but the brief mandates pandas as the reader.
 
@@ -78,10 +78,10 @@ The evaluator calls `known_pages` once with every labelled URL in the set, befor
 |---|---|
 | 0 | PASS: no label errors, every present label's recall ≥ 0.80, no extra pages, no absent matches |
 | 1 | FAIL: a verdict was computed and some condition failed (label errors included) |
-| 2 | Cannot evaluate: invalid evaluation files, a photo with no detected face (all such photos listed), no model profile in the index, database unreachable |
+| 2 | Cannot evaluate: invalid evaluation files, a photo with no detected face or that can't be decoded or detected (all such photos listed, with the reason), no model profile in the index, database unreachable |
 | 64 | Usage error |
 
-All photos are embedded before any search, so every no-face photo is reported in one run. The existing "no profile" exit changes from 1 to 2, so that 1 always means a computed FAIL.
+All photos are embedded before any search, so every unusable photo is reported in one run. `prepare_query` raises `NoFaceError` (no face) or `QueryImageError` (not decodable, rejected by the normalizer, or detection failed); both are caught per photo at this model boundary. The existing "no profile" exit changes from 1 to 2, so that 1 always means a computed FAIL.
 
 **Rationale**: CI tests and contributors need to tell "the search failed the criteria" apart from "the set or the environment is broken". Constitution XII requires reporting everything, not stopping at the first problem.
 
@@ -91,7 +91,7 @@ All photos are embedded before any search, so every no-face photo is reported in
 
 **Decision**: `queries/eval/runs.csv` is in long format, one row per (run, label), with the run's conditions repeated on each of its rows. Columns are in [data-model.md](data-model.md#run-log-row). Recall is not stored; it is derived from `expected` and `missed` (DRY). `--log` appends a run's rows only for a computed verdict (exit 0 or 1). Only `main()`, which always uses `DeepFaceEmbedder`, can log; `run()` takes `log_to: Path | None`, and tests pass `None`, so mock runs are never logged. Labels version is `labels_sha256`: the first 12 hex characters of the SHA-256 of the set file's bytes followed by each referenced photo's bytes, in label order. It identifies the exact inputs without needing git inside the run.
 
-Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...HEAD -- queries/eval/runs.csv` must contain no removed lines.
+Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...HEAD -- queries/eval/runs.csv` must contain no removed lines. The same step rejects a modified or deleted existing label set: `git diff --name-only --diff-filter=MDR <base>...HEAD -- queries/eval/sets/` must be empty (spec FR-001).
 
 **Rationale**: Long format is what pandas reads natively, and it lets a reader filter by label across runs. A content hash ties results to the exact labels and photos, including a replaced photo, which a git commit would also catch but only when committed.
 
@@ -102,7 +102,7 @@ Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...H
 **Decision**: Add an `eval-set` job to `.github/workflows/ci.yml`. It inherits the workflow's `permissions: contents: read` and `concurrency`, and has `timeout-minutes: 5`, the same pinned `checkout` and `setup-uv` SHAs, `uv sync --locked`, and the same `pgvector/pgvector:pg17` service definition as `test`. Steps:
 
 1. `uv run --locked python scripts/evaluate_search.py --check`: validates every set, attribution, methods and the run log, without a database.
-2. On pull requests, the run-log append-only check (R7). This needs `fetch-depth: 0` on checkout.
+2. On pull requests, the append-only check for the run log and existing label sets (R7). This needs `fetch-depth: 0` on checkout.
 3. `uv run --locked pytest tests/integration/test_evaluate_search_e2e.py`: the seeded mock runs.
 
 The job runs on every pull request, not only those touching the set.
@@ -129,7 +129,7 @@ The fixture minimums (5 + 5) are real, so the same loader and validation run as 
 
 ## R10. Validation of the committed set in CI without a database
 
-**Decision**: `--check` validates, with every error carrying file and line:
+**Decision**: One function, `read_folder(folder) -> tuple[EvalFolder | None, tuple[str, ...]]`, loads everything and returns the parsed folder (None if any error) and every error found. Each loader and rule is a plain function that returns its error strings; nothing raises for bad data, so collecting errors across files needs no exception handling (constitution VIII forbids exceptions as ordinary control flow). The evaluator and `--check` both call it: any error means print them all and exit 2, so no partial set is ever evaluated (spec FR-010). It validates, with every error carrying file and line:
 
 - table headers and types (R1)
 - canonical page URLs: `normalize_page_url(u) == u`, https, host in an enabled site's `page_hosts`
@@ -140,5 +140,20 @@ The fixture minimums (5 + 5) are real, so the same loader and validation run as 
 - the photo set equal to the attribution set, and every photo used by at least one set
 - licence and source URL form (R4)
 - run-log header and types
+- at least one label set exists (otherwise every per-set rule would pass on an empty folder)
 
 **Rationale**: These are the brief's consistency checks plus the ones the label-set design adds. All are file-only, so CI needs no secrets (SC-003).
+
+## R11. Read-only database access from the host
+
+**Decision**: The documented command reads the `faces_reader` password from the Compose secrets volume at run time and passes it through libpq's `PGPASSWORD`, with a DSN that holds no secret:
+
+```bash
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
+```
+
+The `postgres` service already mounts that volume read-only at `/run/db-secrets`, and the password files there are readable.
+
+**Rationale**: It is one command (spec FR-020, SC-004), needs no file or secret beyond what `docker compose up` generated, uses the read-only role (constitution XIV), and never puts the password in a URL, in git, or in the evaluator's output. The shell history keeps the `$(…)` expression, not the value.
+
+**Alternatives**: The README's host example for `face_matcher` uses `postgresql://faces@127.0.0.1:5432/faces`, the admin role without a password. It is not read-only and fails unless the host has its own password setup, so it was not copied; fixing that example is outside this feature. Running the evaluator as a Compose service was rejected: `scripts/` is not in the image, and a new service is extra scope (constitution I).

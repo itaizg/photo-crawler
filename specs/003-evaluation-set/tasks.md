@@ -28,7 +28,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 - [ ] T001 Add `"pandas>=3.1,<3.2"` to `[project].dependencies` in `pyproject.toml`, keeping the existing comment style, then run `uv lock`. Verify that the `uv.lock` diff adds no `[[package]]` entry, only the project's dependency reference (research R2).
 - [ ] T002 [P] Add `!queries/eval/` after the `!queries/README.md` line in `.gitignore`. Verify with `git check-ignore -v queries/eval/sets/x.csv`, which should report not ignored, while `queries/other.jpg` stays ignored.
-- [ ] T003 [P] Create the folders `queries/eval/photos/` and `queries/eval/sets/`, and write the header-only files `queries/eval/attribution.csv`, `queries/eval/methods.csv` and `queries/eval/runs.csv`, with the exact headers from `specs/003-evaluation-set/contracts/eval-set-files.md`.
+- [ ] T003 [P] Write the header-only files `queries/eval/attribution.csv`, `queries/eval/methods.csv` and `queries/eval/runs.csv`, with the exact headers from `specs/003-evaluation-set/contracts/eval-set-files.md`. Don't create empty `photos/` or `sets/` folders: git doesn't track them, and a placeholder file in `photos/` would fail T026's naming rule. T016 and T017 create them with real files.
 
 ---
 
@@ -43,7 +43,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 - [ ] T004 [P] Write tests for `PostgresSearchIndex.known_pages` and `PostgresSearchIndex.index_size` in `tests/integration/test_search_store.py`, using the existing `seed` fixture:
   - `known_pages` returns exactly the given URLs that have a `page` row, returns an empty set for an empty input, and doesn't fail on a URL containing `'`;
   - `index_size` returns faces (the same number as `indexed_face_count`), images with status `indexed`, and pages.
-- [ ] T005 [P] Write loader tests in `tests/unit/test_eval_set.py` that build folders in `tmp_path`, with tiny JPEGs from `tests.images.photo`. Assert that each case fails with an `EvalSetError` whose message starts with `<file>:<line>:` (header = line 1):
+- [ ] T005 [P] Write loader tests in `tests/unit/test_eval_set.py` that build folders in `tmp_path`, with tiny JPEGs from `tests.images.photo`. Assert that `eval_set.read_folder` returns `None` for the folder and an error starting with `<file>:<line>:` (header = line 1) for each case, and that two broken files in one folder produce both errors:
   - a wrong header, and a missing column;
   - a bad `hard_case` enum;
   - a non-https URL, a host not in an enabled site's `page_hosts`, and a non-canonical URL (e.g. a trailing `/` or `utm_` parameter that `normalize_page_url` removes);
@@ -54,7 +54,8 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a set file name that isn't an ISO date.
 
   Also assert:
-  - a valid folder loads into the models with derived `photo` and `role`;
+  - a valid folder returns the parsed folder and no errors, with derived `photo` and `role`;
+  - a folder with no set file returns an error;
   - `"NA"` and empty cells stay strings, not NaN;
   - the latest set is selected by default, and `--set`-style selection by date works.
 
@@ -69,19 +70,19 @@ description: "Task list for feature 003: Search Evaluation Set"
   Both go through `_guard()`. This makes T004 pass.
 - [ ] T009 [P] Extend `FakeSearchIndex` in `tests/fakes.py` with constructor arguments `known: Collection[str] | None = None` (None means every URL is known) and `size: IndexSize = IndexSize(faces=10, images=5, pages=3)`, plus the two methods, so the fake still satisfies `SearchIndex` under ty.
 - [ ] T010 Create `src/face_index/eval_set.py` with a module docstring that points to `contracts/eval-set-files.md`. It contains:
-  - **`EvalSetError(Exception)`**.
   - **Models** (frozen `Record`s):
     - `Label`, a constrained `str` with `role` and `photo` derived through functions or properties;
     - `HardCase`, a `StrEnum` with `none`, `small_face` and `look_alike`;
     - `SetRow` (`label`, `page_url`, `hard_case`, `lookalike_of`);
     - `LabelSet` (`crawl_date: date`, `rows: tuple[SetRow, ...]`, plus helpers `present() -> dict[Label, tuple[str, ...]]` and `absent() -> tuple[Label, ...]`).
-  - **`_read_csv(path, columns) -> list[dict[str, str]]`**: `pandas.read_csv(path, dtype="string", keep_default_na=False, na_filter=False)`. It checks that the header equals `columns` exactly and returns rows with their line numbers (research R1).
-  - **`_validate(model, row, path, line)`**: wraps `model_validate` and converts `ValidationError` into `EvalSetError(f"{path}:{line}: …")`. This is the one boundary `try` (constitution VIII).
-  - **`load_set(folder, crawl_date)`**, which applies the row and set rules from `data-model.md`:
+  - **`_read_csv(path, columns) -> tuple[list[tuple[int, dict[str, str]]], list[str]]`**: `pandas.read_csv(path, dtype="string", keep_default_na=False, na_filter=False)`. It returns rows with their line numbers, or a header error if the header isn't exactly `columns` (research R1).
+  - **`_parse_row(model, row, path, line) -> M | str`**: calls `model_validate`; the one boundary `try` turns a `ValidationError` into the string `f"{path}:{line}: …"` (constitution VIII). Bad data never raises out of this module.
+  - **`_set_errors(path, rows) -> list[str]`**, the row and set rules from `data-model.md`:
     - canonical URL via `face_index.urls.normalize_page_url`;
     - hosts via `face_index.config.ENABLED_SITES`;
     - duplicates, role rules and look-alike rules.
-  - **`list_sets(folder) -> tuple[date, ...]`**, sorted, and **`latest_set(folder) -> date`**.
+  - **`EvalFolder`** (frozen: `sets: dict[date, LabelSet]`), and **`read_folder(folder) -> tuple[EvalFolder | None, tuple[str, ...]]`**, which runs every loader and rule, concatenates all error lists (no `try`), requires at least one set, and returns `None` with the errors if there are any (research R10). Later tasks add their files' loaders and rules to it.
+  - **`latest_set(folder: EvalFolder) -> date`**.
 
   This makes T005 pass.
 
@@ -102,7 +103,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - an extra page makes the verdict FAIL;
   - an absent label with any page makes the verdict FAIL;
   - a labelled URL not in `FakeSearchIndex(known=…)` is printed as `label error (page not indexed)`, is excluded from `expected` and `missed`, and makes the verdict FAIL with exit 1;
-  - two photos with zero faces are both named before exit 2;
+  - two photos with zero faces, and one file that isn't a decodable image (`tests.images.corrupt_jpeg()`), are all named with their reasons before exit 2;
   - a missing profile gives exit 2;
   - `main(["queries/eval/labels.toml"])` gives exit 64 with the "now CSV label sets" message;
   - `--log` together with `--check` gives exit 64;
@@ -117,9 +118,9 @@ description: "Task list for feature 003: Search Evaluation Set"
   - **Update** `evaluate_person(label, pages, returned, known)` so that unknown pages become `label_errors` and are excluded from `expected` and `missed`. Add `evaluate_absent(label, returned)`.
   - **Change** `passes()` to the verdict in data-model.md. Keep `MIN_RECALL = 0.80`.
 - [ ] T013 [US1] Rewrite `run(folder: Path, crawl_date: date, index: SearchIndex, embedder: FaceEmbedder, *, log_to: Path | None = None) -> int` in `scripts/evaluate_search.py`, following the order of work in `contracts/evaluate-search-cli.md`:
-  - load the set with `eval_set.load_set`, then read `profile_id` (exit 2 if missing) and `index_size`;
+  - load with `eval_set.read_folder` (print every error and exit 2 if any), pick the set, then read `profile_id` (exit 2 if missing) and `index_size`;
   - call `known_pages` once with all labelled URLs;
-  - embed every photo via `prepare_query`, catching `NoFaceError` per photo, collecting the paths and exiting 2 if there are any;
+  - embed every photo via `prepare_query`, catching `NoFaceError` and `QueryImageError` per photo (the model boundary, constitution VIII), collecting each path with its reason, and exiting 2 if there are any;
   - search the largest face with `search_faces` at `MATCH_THRESHOLD`;
   - print exactly the format in the contract.
 
@@ -131,9 +132,9 @@ description: "Task list for feature 003: Search Evaluation Set"
   - Browse and/or search the indexed pages to find at least 5 people on the site. For each, list every page they appear on. Copy each URL as `normalize_page_url` returns it (`uv run python -c "from face_index.urls import normalize_page_url as n; print(n('<url>'))"`).
   - Choose at least 5 absent people, including at least 1 look-alike of a present person, and mark at least 1 small-face page.
   - Note whether the crawl has an on-site look-alike pair.
-- [ ] T016 [US1] [HUMAN] For every label from T015, find one photo with one clear face that is not from the indexed site, licensed PD, CC0, CC BY or CC BY-SA, on Wikimedia Commons, Flickr or Unsplash. Save it as `queries/eval/photos/<label>.jpg`, and add its row (page-ID source URL per research R4, photographer, licence) to `queries/eval/attribution.csv`.
+- [ ] T016 [US1] [HUMAN] For every label from T015, find one photo with one clear face that is not from the indexed site and not a copy or resized version of an indexed image (spec FR-007; this is checked in review, so the reviewer compares the attribution's source page with the indexed images), licensed PD, CC0, CC BY or CC BY-SA, on Wikimedia Commons, Flickr or Unsplash. Save it as `queries/eval/photos/<label>.jpg`, and add its row (page-ID source URL per research R4, photographer, licence) to `queries/eval/attribution.csv`.
 - [ ] T017 [US1] Write `queries/eval/sets/<crawl date>.csv` from T015's labels, and the matching row in `queries/eval/methods.csv` (`found_by`, `labeller`, `snapshot_holder`, `onsite_pair`). Load it with `uv run python -c "from pathlib import Path; from face_index import eval_set as e; f=Path('queries/eval'); print(e.load_set(f, e.latest_set(f)))"` and fix any reported line.
-- [ ] T018 [US1] [HUMAN] Run `uv run python scripts/evaluate_search.py` against the labelling-date index, with `FACE_INDEX_DSN` set to the reader role, and confirm the output matches the contract's shape (quickstart §3). Record surprises (no-face photos, label errors) in `specs/003-evaluation-set/notes.md` (constitution XX).
+- [ ] T018 [US1] [HUMAN] Run the quickstart §3 command (reader role, password read from the Compose secrets volume) against the labelling-date index, and confirm the output matches the contract's shape (quickstart §3). Record surprises (no-face photos, label errors) in `specs/003-evaluation-set/notes.md` (constitution XX).
 
 **Checkpoint**: US1 is usable. The set exists and evaluates with one command.
 
@@ -147,7 +148,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 2 (write first, see them fail)
 
-- [ ] T019 [P] [US2] Add set-level validation tests to `tests/unit/test_eval_set.py`. A new `eval_set.check(folder) -> list[str]` must report each of these with its file and line:
+- [ ] T019 [P] [US2] Add set-level validation tests to `tests/unit/test_eval_set.py`. `eval_set.read_folder` must return each of these errors with its file and line:
   - fewer than 5 present labels, and fewer than 5 absent labels;
   - no absent look-alike, and no small-face row;
   - `onsite_pair=true` with no present look-alike row, and `onsite_pair=false` with one;
@@ -155,7 +156,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a `methods.csv` type error;
   - a `runs.csv` header or type error.
 
-  It must collect every error across all files instead of stopping at the first, and return an empty list for a valid folder.
+  It must collect every error across all files instead of stopping at the first, and return no errors for a valid folder.
 - [ ] T020 [P] [US2] Create `tests/integration/test_evaluate_search_e2e.py` with the fixtures from research R9:
   - seed pgvector through `PostgresIndexStore` (`store` fixture) with images from `tests.images.photo(seed=…)`;
   - use a `FakeEmbedder(lookup=…)` that maps each normalized JPEG to an identity key, so the same key gives identical embeddings;
@@ -166,18 +167,19 @@ description: "Task list for feature 003: Search Evaluation Set"
     - absent look-alike sharing `person-a`'s key → 1;
     - on-site pair where `person-b` shares `person-a`'s key → 1 with `extra:` lines;
     - labelled URL with no `page` row → 1 with `label error`;
-    - photo with 0 faces → 2 with the path printed.
+    - photo with 0 faces → 2 with the path printed;
+    - undecodable photo → 2 with the path and reason printed.
   - assert that the database row counts are unchanged after each run.
-- [ ] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.check(Path("queries/eval"))` returns `[]` for the repository's committed folder.
+- [ ] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.read_folder(Path("queries/eval"))` returns no errors for the repository's committed folder. This is US2's final gate: it fails until T017 (the committed set) and T027 (attribution rules) are done, because an empty folder is an error.
 
 ### Implementation for User Story 2
 
 - [ ] T022 [US2] Implement in `src/face_index/eval_set.py`:
-  - `load_methods`, `load_run_log`, and the set-minimum and methods-coverage rules from `data-model.md`;
-  - `check(folder) -> list[str]`, which runs every loader and rule, collects each `EvalSetError` message, and returns the list.
+  - `_methods_errors`, `_run_log_errors`, and the set-minimum and methods-coverage rules from `data-model.md`, each returning `list[str]`;
+  - add them to `read_folder`, so it returns them with the other errors. No `try` is involved in collecting them.
 
   This makes T019 pass.
-- [ ] T023 [US2] Wire `--check` in `scripts/evaluate_search.py`: print each error from `eval_set.check` and exit 2, or print `ok <file>` per file and exit 0. This needs no DSN and no model import. Move the `DeepFaceEmbedder` import inside the non-check path so `--check` doesn't load TensorFlow.
+- [ ] T023 [US2] Wire `--check` in `scripts/evaluate_search.py`: print each error from `eval_set.read_folder` and exit 2, or print `ok <file>` per file and exit 0. This needs no DSN and no model import. Move the `DeepFaceEmbedder` import inside the non-check path so `--check` doesn't load TensorFlow.
 - [ ] T024 [US2] Make T020 pass. Adjust only the test's seeding helpers, or the evaluator if T020 exposes a real defect, which must then be described in the commit message.
 - [ ] T025 [US2] Add an `eval-set` job to `.github/workflows/ci.yml`, after `test`:
   - `runs-on: ubuntu-latest`, `timeout-minutes: 5`;
@@ -186,7 +188,9 @@ description: "Task list for feature 003: Search Evaluation Set"
 
   Steps:
   1. `uv run --locked python scripts/evaluate_search.py --check`
-  2. If `github.event_name == 'pull_request'`: `if git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- queries/eval/runs.csv | grep -E '^-[^-]'; then echo "runs.csv is append-only" >&2; exit 1; fi`
+  2. If `github.event_name == 'pull_request'`, two checks against `origin/${{ github.base_ref }}...HEAD`:
+     - `git diff --unified=0 … -- queries/eval/runs.csv | grep -E '^-[^-]'` must find nothing ("runs.csv is append-only");
+     - `git diff --name-only --diff-filter=MDR … -- queries/eval/sets/` must print nothing ("label sets are never edited; add a new set") (spec FR-001).
   3. `uv run --locked pytest tests/integration/test_evaluate_search_e2e.py --durations=5`
 
   It inherits the workflow-level `permissions` and `concurrency` and uses no secrets (research R8).
@@ -203,7 +207,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 3 (write first, see them fail)
 
-- [ ] T026 [P] [US3] Add attribution tests to `tests/unit/test_eval_set.py`. Each must be reported by `check()`:
+- [ ] T026 [P] [US3] Add attribution tests to `tests/unit/test_eval_set.py`. Each must be returned as an error by `read_folder`:
   - a photo file with no attribution row, and an attribution row with no file;
   - a photo used by no set, and a duplicate `path`;
   - the licences `CC-BY-NC-4.0` and `CC-BY-ND-4.0`, and an empty `author`;
@@ -219,7 +223,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - `load_attribution`;
   - the cross-file rules: the attributed paths must equal the `*` files in `photos/` exactly, and every photo must be used by some set.
 
-  Call these from `check()`. This makes T026 pass.
+  Add them to `read_folder`. This makes T026 pass.
 - [ ] T028 [US3] Update `queries/README.md`: say that `queries/eval/` is committed (labels, openly licensed photos, attribution), that its file names are neutral labels, and that every other file in `queries/` stays ignored. Link to the README evaluation section.
 
 **Checkpoint**: `uv run python scripts/evaluate_search.py --check` passes on the committed set and fails on each case in T026.
@@ -248,11 +252,11 @@ description: "Task list for feature 003: Search Evaluation Set"
   - `append_run(path, rows)`, which writes the header if the file is missing, then appends with `newline=""` and never rewrites.
 
   In `scripts/evaluate_search.py`, have `run()` build the rows (with `run_at` as UTC now at the start of the database step) and call `append_run` when `log_to` is set and the exit is 0 or 1. This makes T029 pass.
-- [ ] T031 [US4] [HUMAN] On the labelling-date snapshot, run `uv run python scripts/evaluate_search.py --set <crawl date> --log` with the real model, and commit the new `queries/eval/runs.csv` rows.
+- [ ] T031 [US4] [HUMAN] On the labelling-date snapshot, run the quickstart §4 command (`… scripts/evaluate_search.py --set <crawl date> --log`, reader password from the Compose secrets volume) with the real model, and commit the new `queries/eval/runs.csv` rows.
 - [ ] T032 [US4] Add a "Search accuracy evaluation" section to `README.md`:
   - the per-label table and verdict copied from T031's output (never hand-filled);
-  - the run command, the labelling method from `methods.csv`, and the crawl date;
-  - the known bias: recall only counts pages the labeller found, the sample is small and limited to public figures with open-licence photos, and results are tied to one crawl;
+  - the run command, exactly as in quickstart §3 (reader role, password from the Compose secrets volume), the labelling method from `methods.csv`, and the crawl date;
+  - the known bias: recall only counts pages the labeller found, rendition checks (FR-007) are done by review, the sample is small and limited to public figures with open-licence photos, and results are tied to one crawl;
   - why a fresh index FAILs with label errors (drift), and the re-labelling steps (quickstart §5);
   - a link to `queries/eval/runs.csv` for history;
   - whether the set has an on-site look-alike pair;
@@ -278,8 +282,8 @@ description: "Task list for feature 003: Search Evaluation Set"
 - **Setup (Phase 1)**: none.
 - **Foundational (Phase 2)**: after Setup. Blocks every story.
 - **US1 (Phase 3)**: after Foundational. T015 and T016 (human labelling) can start as soon as Setup is done, in parallel with any code task.
-- **US2 (Phase 4)**: after Foundational and T012 to T014 (it runs the evaluator). T021 needs T017's committed set and T027's attribution rules to pass.
-- **US3 (Phase 5)**: after Foundational. It is independent of US2's code, but `check()` from T022 is where its rules are called, so T027 follows T022.
+- **US2 (Phase 4)**: after Foundational and T012 to T014 (it runs the evaluator). T021 is US2's final gate: it needs T017's committed set and T027's attribution rules to pass.
+- **US3 (Phase 5)**: after Foundational. Its rules plug into `read_folder` from T010, so it doesn't wait for US2.
 - **US4 (Phase 6)**: after US1 (T013). T031 and T032 need T017 (the committed set).
 - **Polish (Phase 7)**: after all stories.
 
@@ -301,7 +305,7 @@ Tests (failing) → models and loaders → evaluator wiring → committed data �
 Task: "T019 set-level validation tests in tests/unit/test_eval_set.py"
 Task: "T020 mock end-to-end tests in tests/integration/test_evaluate_search_e2e.py"
 # then, sequentially:
-Task: "T022 check() in src/face_index/eval_set.py"
+Task: "T022 set-minimum, methods and run-log rules in read_folder (src/face_index/eval_set.py)"
 Task: "T023 --check in scripts/evaluate_search.py"
 Task: "T025 eval-set job in .github/workflows/ci.yml"
 ```

@@ -5,9 +5,9 @@ The interface a contributor and CI use, and what the tests assert. Implemented i
 ## Invocation
 
 ```text
-# Evaluate a label set against the Compose database (read-only role):
-FACE_INDEX_DSN=postgresql://faces_reader:…@127.0.0.1:5432/faces \
-  uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--log]
+# Evaluate a label set against the Compose database, as the read-only role.
+# The password is read from the Compose secrets volume at run time (research R11):
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--log]
 
 # Validate every evaluation file, with no database and no model (CI):
 uv run python scripts/evaluate_search.py [FOLDER] --check
@@ -29,10 +29,10 @@ There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESH
 
 ## Order of work
 
-1. Parse the arguments; load and validate **every** file in `FOLDER` (the same checks as `--check`). Any error → exit 2.
+1. Parse the arguments; load and validate **every** file in `FOLDER` with `eval_set.read_folder` (the same call as `--check`). Any error → print them all, exit 2.
 2. Connect; read the profile id (none → exit 2) and the index size.
 3. Call `known_pages` with every labelled URL of the selected set. A missing URL becomes a label error for its label.
-4. Embed every photo. Each photo with no detected face is listed, then exit 2. The largest face of each photo is used.
+4. Embed every photo. Each photo with no detected face (`NoFaceError`) or that can't be decoded or detected (`QueryImageError`) is listed with its reason; if any, exit 2. The largest face of each photo is used.
 5. Search each label's face with `search_faces` at the default threshold.
 6. Print the report and the verdict; with `--log`, append to `runs.csv`.
 
@@ -66,7 +66,7 @@ stderr: progress (`loading face model…`) and errors. Never the DSN.
 |---|---|
 | 0 | PASS ([data-model.md](../data-model.md#label-report-in-memory)) |
 | 1 | FAIL: verdict computed; any label error, recall < 0.80, extra page, or absent match |
-| 2 | Cannot evaluate: invalid files, photo with no face (all listed), no model profile, database unreachable |
+| 2 | Cannot evaluate: invalid files, photo with no face or that can't be decoded (all listed, with the reason), no model profile, database unreachable |
 | 64 | Usage error |
 
 With `--check`: 0 when all files are valid, 2 otherwise.

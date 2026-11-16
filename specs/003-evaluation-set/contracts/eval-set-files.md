@@ -19,7 +19,7 @@ queries/eval/
 
 - UTF-8, comma-separated, `\n` line endings, one header row. The header must equal the column list below, in order.
 - Every value is read as text and typed by validation, with no inference. An empty cell is `""`, never "missing".
-- An error names `<file>:<line>`, where line 1 is the header, and the whole load fails.
+- An error names `<file>:<line>`, where line 1 is the header. Every error in every file is reported, and nothing is evaluated while any remains.
 
 ## `sets/<YYYY-MM-DD>.csv`
 
@@ -71,8 +71,9 @@ run_at,label_set,labels_sha256,model_profile,threshold,faces,images,pages,label,
 | Duplicate row | same `label,page_url` twice |
 | Role rules | absent row with a page; present label without pages |
 | Look-alike rules | `look_alike` without `lookalike_of`; `lookalike_of` not a present label in the set |
-| Set minimums | fewer than 5 present or 5 absent; no absent look-alike; no small-face page; `onsite_pair` disagrees with the set |
+| Set minimums | no set at all; fewer than 5 present or 5 absent; no absent look-alike; no small-face page; `onsite_pair` disagrees with the set |
 | Methods coverage | set without a `methods.csv` row, or a row without a set |
 | Photo and attribution | photo without attribution; attribution without photo; photo used by no set |
 | Attribution values | licence not allowed; source URL not in page-ID form |
 | Run log | header or type wrong; existing line removed or changed (PR diff) |
+| Existing set changed | an existing `sets/*.csv` modified, renamed or deleted (PR diff) |

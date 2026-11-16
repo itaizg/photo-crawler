@@ -18,7 +18,7 @@ This feature turns `scripts/evaluate_search.py` from a tool with nothing to meas
   - keeps calling `search_faces` at the default threshold;
   - gains `--set`, `--log` and `--check`;
   - reports label errors (labelled pages missing from the index) separately from misses;
-  - lists every photo with no detected face;
+  - lists every photo with no detected face or that can't be decoded;
   - distinguishes PASS (0), FAIL (1) and "cannot evaluate" (2).
 - **Two read-only methods on `SearchIndex`**: `known_pages` and `index_size`.
 - **A new `eval-set` CI job** in `ci.yml` validates the files, enforces the append-only run log, and runs mock end-to-end tests on seeded pgvector with `FakeEmbedder`. Those tests must show PASS on a clean fixture and FAIL on a planted miss, a planted look-alike (absent and on-site) and a label error.
@@ -53,7 +53,7 @@ This feature turns `scripts/evaluate_search.py` from a tool with nothing to meas
 - A real run: about 10 photos × one embedding each, plus about 10 queries, which takes seconds after the model loads.
 
 **Constraints**:
-- No secrets in CI.
+- No secrets in CI. Locally, the read-only password is read from the Compose secrets volume at run time (research R11).
 - No real model in CI.
 - No names in committed files.
 - The database is read only.
@@ -79,13 +79,13 @@ This feature turns `scripts/evaluate_search.py` from a tool with nothing to meas
 | V Simplicity | Pass | Photo path and role are derived, not stored. There is one loader. No threshold option. The run log is a CSV. The ladder was applied: pandas only because the brief mandates it; everything else uses existing code. |
 | VI Structure | Pass | File contract in `eval_set.py`, orchestration in the script, data access behind `SearchIndex`. The script never imports Airflow. |
 | VII Pythonic | Pass | `pathlib`, comprehensions, `argparse`, `zip(strict=True)`. |
-| VIII Exceptions at boundaries | Pass | One `EvalSetError` raised at load. Pydantic validation, not `try` around rows. `NoFaceError` is caught per photo at the model boundary and listed (exit 2). |
+| VIII Exceptions at boundaries | Pass | Validation returns error lists, never raises for bad data, so collecting every error needs no `try` (research R10). The one `try` per row converts a Pydantic `ValidationError` into a reported `file:line` error at the file boundary. `NoFaceError` and `QueryImageError` are caught per photo at the model boundary and listed (exit 2). |
 | IX Frozen Pydantic | Pass | Every row and report is a `Record`. |
 | X Human oversight | Pass | The PR is reviewed by a human. The README numbers come from the labeller's run. |
 | XI Delegation | Pass | The threshold and verdict rules are code constants. No LLM involved. |
-| XII Observability | Pass | Every label error, no-face photo, miss and extra page is listed. Nothing is skipped silently. |
+| XII Observability | Pass | Every label error, unusable photo, miss and extra page is listed. Nothing is skipped silently. The evaluator's report is printed with `print`, as user-facing output of a command-line tool, the same allowance as the search script's; `eval_set.py` never prints. |
 | XIII Security | Pass | All files are validated at load. SQL is parameterized (`= ANY(%s)`). The DSN is never printed. |
-| XIV Zero trust | Pass | The evaluator uses the read-only `faces_reader` role. |
+| XIV Zero trust | Pass | The evaluator uses the read-only `faces_reader` role. Its password is read from the Compose secrets volume at run time and passed via `PGPASSWORD`, never committed or put in the DSN (research R11). |
 | XV Stateless | Pass | No state besides the committed files. The append-only log write is the one intended output. |
 | XVI Documentation | Pass | The data contract is in `contracts/` and the module docstring. The README and quickstart are updated. |
 | XVII to XIX | Pass | Spec clarified. Assumptions recorded in research. Success criteria are measurable. |

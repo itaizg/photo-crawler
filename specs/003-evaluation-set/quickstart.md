@@ -30,13 +30,15 @@ Needs the loopback test database (`FACE_INDEX_TEST_DSN`, see `tests/conftest.py`
 | absent look-alike | FAIL, exit 1 |
 | on-site pair | FAIL, exit 1, extra pages listed |
 | label error | FAIL, exit 1, reported as a label error, not as a miss |
-| no face | exit 2, the photo path named |
+| no face, or undecodable photo | exit 2, each photo path named with its reason |
 
 ## 3. Evaluate the latest label set against your index
 
 ```bash
-FACE_INDEX_DSN=postgresql://faces_reader:<reader password>@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
 ```
+
+The read-only password comes from the Compose secrets volume at run time; nothing is typed or committed ([research R11](research.md#r11-read-only-database-access-from-the-host)).
 
 Expected: the header line with the set, labels hash, profile and threshold; the index size; one row per label; then `PASS` or `FAIL`.
 
@@ -47,7 +49,7 @@ If your index was crawled on a different date than the set (see `methods.csv`), 
 Restore your local snapshot of the labelling-date index (never committed; `methods.csv` names its holder), then run:
 
 ```bash
-FACE_INDEX_DSN=postgresql://faces_reader:<reader password>@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py --set <YYYY-MM-DD> --log
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py --set <YYYY-MM-DD> --log
 ```
 
 Expected: `runs.csv` gains one row per label. Commit it together with the README results table, which is copied from this run's output and never hand-filled.
@@ -55,7 +57,7 @@ Expected: `runs.csv` gains one row per label. Commit it together with the README
 ## 5. Add a label set after the site drifts
 
 1. Index the site, and keep a local snapshot of that database.
-2. Add `sets/<crawl date>.csv` and a `methods.csv` row. Reuse existing labels and photos; add new `person-…` or `absent-…` labels with photos and attribution rows as needed. Leave out any absent label whose person now appears on the site.
+2. Add a new `sets/<crawl date>.csv` (never edit an existing one; CI rejects that) and a `methods.csv` row. Reuse existing labels and photos; add new `person-…` or `absent-…` labels with photos and attribution rows as needed. Leave out any absent label whose person now appears on the site.
 3. Run section 1, then section 4 with `--set <crawl date>`.
 
 ## 6. Final check
