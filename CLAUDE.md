@@ -8,7 +8,7 @@ The team-ai-directives knowledge base provides the ground assumptions and norms 
   - "This is a plain message, not a spec command" -> Skill check applies to EVERY interaction.
   - "I'll check after understanding the request" -> Check BEFORE understanding -- skills guide your questions.
   - "This is too simple" -> Simple things become complex. Check first.
-- **Team Constitution**: Read the principles in `/root/team-ai-directives/context_modules/constitution.md`. Treat them as ground assumptions and norms. When creating or updating the project's constitution, inherit and align with them; propose any deviation explicitly for user approval.
+- **Team Constitution**: Read the principles in `/Users/itaizemah-goren/team-ai-directives/context_modules/constitution.md`. Treat them as ground assumptions and norms. When creating or updating the project's constitution, inherit and align with them; propose any deviation explicitly for user approval.
 - **Rules, Personas & Examples**: Use the `team-discover` skill to find and load relevant rules, personas, or examples before making changes.
 
 For additional context about technologies to be used, project structure,
