@@ -62,6 +62,8 @@ check "every face on this run's pages has a 512-d embedding" \
 rm -f smoke-output.log
 sql "SELECT url || ' | ' || attempts || ' | ' || last_error FROM fetch_attempt WHERE last_attempt_at >= '$START' ORDER BY last_attempt_at DESC LIMIT 10" \
   | sed 's/^/failing link this run: /'
+sql "SELECT url || ' | ' || kind || ' | ' || status FROM dead_link WHERE last_checked_at >= '$START' ORDER BY last_checked_at DESC LIMIT 10" \
+  | sed 's/^/dead link this run: /'
 if [ "$failures" -gt 0 ]; then
   echo "SMOKE FAILED ($failures checks)"
   exit 1

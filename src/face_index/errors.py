@@ -54,10 +54,15 @@ class Disallowed(Exception):
 
 
 class Gone(Disallowed):
-    """The server answered 404 or 410: the page or image does not exist. Not a failure.
+    """The server answered 404 or 410: a dead link. Not a failure, and not a plain skip either.
 
-    The request was sent, so ``sent`` is True and it counts toward the page cap.
+    It is logged, counted, and recorded so later runs do not request it again (FR-023b). The
+    request was sent, so ``sent`` is always True and it counts toward the page cap.
     """
+
+    def __init__(self, url: str, status: int) -> None:
+        super().__init__("not_found", url, sent=True)
+        self.status = status
 
 
 class StageFailed(Exception):

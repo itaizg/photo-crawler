@@ -12,7 +12,7 @@ contract; no ``psycopg`` exception leaves this module:
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from importlib.resources import files
 from typing import Any, Final, LiteralString
 
@@ -412,6 +412,14 @@ class PostgresIndexStore:
     def record_success(self, url: str, kind: RequestKind) -> None:
         with self._guard() as conn:
             attempts.record_success(conn, url, kind)
+
+    def is_dead(self, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+        with self._guard() as conn:
+            return attempts.is_dead(conn, url, kind, recheck)
+
+    def record_dead(self, url: str, kind: RequestKind, status: int, run_id: str) -> None:
+        with self._guard() as conn:
+            attempts.record_dead(conn, url, kind, status, run_id)
 
     def record_detect_failure(self, image_id: int, run_id: str) -> None:
         with self._guard() as conn:

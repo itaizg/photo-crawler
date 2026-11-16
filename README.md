@@ -34,12 +34,19 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 | `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
 | `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
 
-The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, links abandoned, and outdated page links. A page link is outdated when a re-crawl of the page no longer finds that image there. The download task logs each such page (`outdated links page=… count=…`), the links are kept, and the search ignores them.
+The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, dead links (HTTP 404/410), known dead links not requested, links abandoned, and outdated page links. A page link is outdated when a re-crawl of the page no longer finds that image there. The download task logs each such page (`outdated links page=… count=…`), the links are kept, and the search ignores them.
 
 **Re-runs** skip every image URL already known, reuse identical content found under a new URL, and still record new pages. A link that fails is retried on later runs, **at most 3 times**; then it is abandoned and logged. To give abandoned links another chance:
 
 ```bash
 docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "DELETE FROM fetch_attempt WHERE attempts >= 3; UPDATE image SET detect_attempts = 0 WHERE status = '\''pending'\'';"'
+```
+
+**Dead links** (HTTP 404/410) are not failures, but they are logged (`page dead url=… status=404`), counted, and stored in the `dead_link` table. A link that answered 410 is not requested again; one that answered 404 is requested again after 30 days (`config.DEAD_LINK_RECHECK`). To list them, or to request them all again on the next run:
+
+```bash
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "SELECT url, kind, status, last_checked_at FROM dead_link ORDER BY last_checked_at DESC;"'
+docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "DELETE FROM dead_link;"'
 ```
 
 If you re-run a single task by hand in the Airflow UI, clear it **with downstream** (the default), so detection picks up what it stages.
@@ -137,7 +144,7 @@ People is configured but disabled (see Known limitations); each enabled site get
 - **Polite and safe crawling.** robots.txt is obeyed; each host has a shared page budget and image budget; every redirect hop is checked before it is requested; requests to private or local network addresses are refused, and connections are pinned to the checked IP. Downloads stop at 20 MB and images over 50 megapixels are not decoded.
 - **Normalization.** Every stored image is an RGB JPEG (quality 90, no EXIF) whose longest side is at most 1024 px; images are never upscaled. SVGs and images under 64 px are skipped with a recorded reason.
 - **Incremental by URL and by content.** A known URL is never downloaded again; a new URL whose SHA-256 matches a stored image is linked to it without re-detecting faces. Lead images (`og:image`) are marked per page.
-- **Failure isolation.** One bad page or image is logged with its URL and counted, and the run continues with everything else. A dead link (HTTP 404 or 410) is logged and counted as a `not_found` skip, not a failure; a stored page that is now gone stops matching in search (its links count as outdated). The crawl or download task in which it happened is marked failed after it has finished and published its result, so the later tasks still run, and `summarize` then marks the run failed: a failed request is never hidden behind a green run. Database or model outages fail the task without a result, so Airflow retries it.
+- **Failure isolation.** One bad page or image is logged with its URL and counted, and the run continues with everything else. A dead link (HTTP 404 or 410) is not a failure: it is logged, counted in its own summary row, and recorded so it is not requested again (see "Dead links"); a stored page that is now gone stops matching in search (its links count as outdated). The crawl or download task in which it happened is marked failed after it has finished and published its result, so the later tasks still run, and `summarize` then marks the run failed: a failed request is never hidden behind a green run. Database or model outages fail the task without a result, so Airflow retries it.
 - **No secrets in git.** Database passwords and Airflow's JWT secret are generated at first start into private volumes (the pipeline writes as `faces_writer`, search reads as `faces_reader`, SELECT only).
 
 ## Tests and smoke runs

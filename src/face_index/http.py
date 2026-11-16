@@ -143,7 +143,7 @@ class HttpFetcher:
         final_url, response = self._open(url, "page", config.PAGE_ACCEPT, check_scope=True)
         with closing(response):
             if response.status_code in _GONE:
-                raise Gone("not_found", final_url, sent=True)
+                raise Gone(final_url, response.status_code)
             if response.status_code != 200:
                 raise ItemError(f"http {response.status_code}", final_url)
             content_type = response.headers.get("content-type", "")
@@ -160,7 +160,7 @@ class HttpFetcher:
         final_url, response = self._open(url, "image", config.IMAGE_ACCEPT, check_scope=False)
         with closing(response):
             if response.status_code in _GONE:
-                raise Gone("not_found", final_url, sent=True)
+                raise Gone(final_url, response.status_code)
             if response.status_code != 200:
                 raise ItemError(f"http {response.status_code}", final_url)
             body = self._read(response, self._max_download, final_url)

@@ -6,7 +6,7 @@ Uses an in-memory fake store, so these tests need no database.
 import logging
 import re
 from collections.abc import Callable, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Final, LiteralString
 
 import httpx
@@ -48,6 +48,7 @@ class MemoryStore:
         self.fail_on = fail_on
         self.outdated = 0  # what outdated_links reports for every page (FR-018)
         self.retired: list[str] = []  # pages retired as gone (404/410)
+        self.dead: dict[tuple[str, RequestKind], int] = {}  # known dead links -> status
 
     def _maybe_fail(self, what: str) -> None:
         if self.fail_on == what:
@@ -121,6 +122,12 @@ class MemoryStore:
 
     def outdated_links(self, page_id: int) -> int:
         return self.outdated
+
+    def is_dead(self, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+        return (url, kind) in self.dead
+
+    def record_dead(self, url: str, kind: RequestKind, status: int, run_id: str) -> None:
+        self.dead[(url, kind)] = status
 
     def retire_page(self, url: str) -> int:
         self.retired.append(url)
@@ -392,7 +399,7 @@ def test_one_failed_page_request_fails_the_crawl_task_and_keeps_its_result() -> 
 
 
 @pytest.mark.parametrize("status", [404, 410])
-def test_a_dead_link_is_a_skip_and_does_not_fail_the_crawl(status: int) -> None:
+def test_a_dead_link_is_recorded_and_does_not_fail_the_crawl(status: int) -> None:
     store = MemoryStore()
     routes = {
         "https://news.test/": linking_home("/gone"),
@@ -400,9 +407,24 @@ def test_a_dead_link_is_a_skip_and_does_not_fail_the_crawl(status: int) -> None:
     }
     payload = pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes, store), "run-1")
     summary = CrawlResult.from_json(payload).summary.to_json()
-    assert summary["skipped.page.not_found"] == 1
+    assert summary["dead_link.page"] == 1
     assert "failures.crawl" not in summary
-    assert store.failures == []
+    assert store.failures == []  # not an attempt toward the cap
+    assert store.dead == {("https://news.test/gone", "page"): status}
+
+
+def test_a_known_dead_page_is_not_requested_again() -> None:
+    store = MemoryStore()
+    store.dead[("https://news.test/gone", "page")] = 404
+    routes = {
+        "https://news.test/": linking_home("/gone"),
+        # if it were requested, this 500 would fail the crawl
+        "https://news.test/gone": Reply(status=500),
+    }
+    payload = pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes, store), "run-1")
+    summary = CrawlResult.from_json(payload).summary.to_json()
+    assert summary["known_dead.page"] == 1
+    assert "failures.crawl" not in summary
 
 
 def test_a_gone_page_is_retired_so_search_drops_its_old_links() -> None:
@@ -432,13 +454,30 @@ def test_a_dead_link_that_is_not_gone_retires_nothing() -> None:
     assert store.retired == []
 
 
-def test_a_dead_image_link_is_a_skip_and_does_not_fail_the_download() -> None:
+def test_a_dead_image_link_is_recorded_and_does_not_fail_the_download() -> None:
     store = MemoryStore()
     refs = ["https://img.test/missing.jpg", GOOD]  # not routed: the mock site answers 404
     counts = pipeline.download(SITE, crawl_payload(refs), deps(store, ROUTES), "run-1")
-    assert counts["skipped.not_found"] == 1
+    assert counts["dead_link.image"] == 1
     assert counts["staged"] == 1
     assert store.failures == []
+    assert store.dead == {("https://img.test/missing.jpg", "image"): 404}
+
+
+def test_a_known_dead_image_is_not_requested_again() -> None:
+    store = MemoryStore()
+    bad = "https://img.test/500.jpg"  # answers 500: requesting it would fail the download
+    store.dead[(bad, "image")] = 410
+    counts = pipeline.download(SITE, crawl_payload([bad, GOOD]), deps(store, ROUTES), "run-1")
+    assert counts["known_dead.image"] == 1
+    assert "failures.download" not in counts
+
+
+def test_dead_links_have_their_own_summary_rows(caplog: pytest.LogCaptureFixture) -> None:
+    caplog.set_level(logging.INFO)
+    pipeline.summarize([{"dead_link.page": 2, "known_dead.image": 1}])
+    assert "dead links (HTTP 404/410)" in caplog.text
+    assert "known dead (not requested)" in caplog.text
 
 
 def test_a_refused_site_fails_the_crawl_task() -> None:

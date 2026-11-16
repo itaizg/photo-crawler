@@ -107,6 +107,19 @@ CREATE TABLE IF NOT EXISTS host_pace (
     PRIMARY KEY (host, kind)
 );
 
+-- Dead links: URLs the server answered 404 or 410 (FR-023b). Not failures and not attempts.
+-- A 410 is not requested again; a 404 is requested again after the recheck period. Deleted
+-- when the URL answers again.
+CREATE TABLE IF NOT EXISTS dead_link (
+    url             text        NOT NULL,
+    kind            text        NOT NULL CHECK (kind IN ('page', 'image')),
+    status          smallint    NOT NULL CHECK (status IN (404, 410)),
+    first_seen_at   timestamptz NOT NULL DEFAULT now(),
+    last_checked_at timestamptz NOT NULL DEFAULT now(),
+    last_run_id     text        NOT NULL,
+    PRIMARY KEY (url, kind)
+);
+
 -- Failure history per link; enforces the 3-attempt cap (FR-023a). Deleted on success.
 CREATE TABLE IF NOT EXISTS fetch_attempt (
     url             text        NOT NULL,

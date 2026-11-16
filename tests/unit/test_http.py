@@ -197,14 +197,20 @@ def test_http_error_and_timeout_are_item_errors() -> None:
 
 
 @pytest.mark.parametrize("status", [404, 410])
-def test_a_gone_page_or_image_is_a_sent_skip(status: int) -> None:
+def test_a_gone_page_or_image_is_a_sent_dead_link(status: int) -> None:
     fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=status), HOME: Reply(status=status)})
     for fetch, url in ((fetcher.get_page, HOME), (fetcher.get_image, IMG)):
         with pytest.raises(Gone) as raised:
             fetch(url)
         assert raised.value.reason == "not_found"
+        assert raised.value.status == status
         assert raised.value.sent
         assert isinstance(raised.value, Disallowed)
+
+
+def test_gone_is_always_a_sent_request() -> None:
+    # it has no ``sent`` argument, so no caller can undercount the page cap
+    assert Gone("https://x.test/", 404).sent
 
 
 def test_httpx_request_log_never_shows_signed_query_values(

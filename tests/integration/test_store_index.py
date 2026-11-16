@@ -2,6 +2,7 @@
 
 import threading
 import time
+from datetime import timedelta
 from typing import LiteralString
 
 import numpy as np
@@ -285,6 +286,51 @@ def test_record_failure_counts_once_per_run(
     assert one(sql, "SELECT attempts FROM fetch_attempt WHERE url = %s", url) == 3
     store.record_success(url, "image")
     assert not store.is_abandoned(url, "image", 3)
+
+
+# -- dead links (FR-023b) -----------------------------------------------------------------------
+
+RECHECK = timedelta(days=30)
+
+
+def test_a_404_is_known_dead_until_the_recheck_period_ends(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    url = "https://people.com/gone"
+    assert not store.is_dead(url, "page", RECHECK)
+    store.record_dead(url, "page", 404, "run-1")
+    assert store.is_dead(url, "page", RECHECK)
+    assert not store.is_dead(url, "image", RECHECK)  # kind is part of the key
+    assert not store.is_abandoned(url, "page", 3)  # not an attempt
+    sql.execute(
+        "UPDATE dead_link SET last_checked_at = now() - interval '31 days' WHERE url = %s", (url,)
+    )
+    assert not store.is_dead(url, "page", RECHECK)  # due for one more request
+
+
+def test_a_410_stays_dead_and_a_recheck_keeps_first_seen(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    url = "https://people.com/removed"
+    store.record_dead(url, "page", 404, "run-1")
+    first = one(sql, "SELECT first_seen_at FROM dead_link WHERE url = %s", url)
+    sql.execute(
+        "UPDATE dead_link SET last_checked_at = now() - interval '1 year' WHERE url = %s", (url,)
+    )
+    store.record_dead(url, "page", 410, "run-2")
+    assert one(sql, "SELECT status FROM dead_link WHERE url = %s", url) == 410
+    assert one(sql, "SELECT first_seen_at FROM dead_link WHERE url = %s", url) == first
+    sql.execute(
+        "UPDATE dead_link SET last_checked_at = now() - interval '1 year' WHERE url = %s", (url,)
+    )
+    assert store.is_dead(url, "page", RECHECK)  # 410: never requested again
+
+
+def test_a_dead_link_that_answers_again_is_cleared(store: PostgresIndexStore) -> None:
+    url = "https://img/back.jpg"
+    store.record_dead(url, "image", 404, "run-1")
+    store.record_success(url, "image")
+    assert not store.is_dead(url, "image", RECHECK)
 
 
 def test_kind_is_part_of_the_key(store: PostgresIndexStore) -> None:

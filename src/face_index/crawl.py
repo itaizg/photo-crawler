@@ -1,8 +1,9 @@
 """Breadth-first crawl of one site (FR-001, FR-002, FR-005a, research R5).
 
 Only ports are used: a ``Fetcher`` for HTTP and, optionally, an ``IndexStore`` for the
-3-attempt cap. Policy outcomes (robots.txt, scope) and dead links (HTTP 404/410) are skipped;
-failures are counted.
+3-attempt cap. Policy outcomes (robots.txt, scope) are skipped; dead links (HTTP 404/410) are
+counted and recorded on their own, and not requested again while known dead (FR-023b); failures
+are counted.
 """
 
 import logging
@@ -61,6 +62,8 @@ type AttemptGate = Callable[[str], bool]  # url -> True if the link is abandoned
 type FailureHook = Callable[[str, str], None]  # (url, reason) -> record a failed attempt
 type SuccessHook = Callable[[str], None]
 type GoneHook = Callable[[str], int]  # url -> retire the stored page; returns links now outdated
+type DeadGate = Callable[[str], bool]  # url -> True if the link is known dead: do not request it
+type DeadHook = Callable[[str, int], None]  # (url, status) -> record a dead link
 
 
 def crawl_site(
@@ -73,14 +76,18 @@ def crawl_site(
     on_failure: FailureHook | None = None,
     on_success: SuccessHook | None = None,
     on_gone: GoneHook | None = None,
+    is_dead: DeadGate | None = None,
+    on_dead: DeadHook | None = None,
 ) -> CrawlResult:
     """Crawl ``site`` breadth-first to ``depth``.
 
     ``page_cap`` bounds the page *requests* sent (None: no cap), counting failed, non-HTML and
     redirect-then-refused requests too, so it bounds the load on the site, not the pages stored.
     A failed page is counted under ``failures.crawl`` and the crawl goes on; ``pipeline.crawl``
-    fails the task when that count is not zero. A page that answers 404/410 is skipped, and
-    ``on_gone`` retires it (by requested and final URL), so search drops its old links.
+    fails the task when that count is not zero. A page that answers 404/410 is a dead link: it is
+    counted under ``dead_link.page`` and recorded with ``on_dead``, and ``on_gone`` retires it (by
+    requested and final URL) so search drops its old links. A link ``is_dead`` reports as known
+    dead is not requested and uses no cap budget (``known_dead.page``).
     """
     pages: list[CrawledPage] = []
     counts: Counter[str] = Counter()
@@ -103,16 +110,27 @@ def crawl_site(
             )
             counts["abandoned.page"] += 1
             continue
+        if is_dead is not None and is_dead(url):
+            log.info("page known dead url=%s (not requested)", for_log(url))
+            counts["known_dead.page"] += 1
+            continue
         try:
             response = fetcher.get_page(url)
         except InfrastructureError:
             raise
+        except Gone as exc:
+            requests += 1
+            log.info("page dead url=%s status=%d", for_log(url), exc.status)
+            counts["dead_link.page"] += 1
+            if on_dead is not None:
+                on_dead(url, exc.status)
+            if on_gone is not None:
+                counts["links.outdated"] += _retire(url, exc.url, on_gone)
+            continue
         except Disallowed as exc:
             requests += exc.sent  # a redirect hop refused after the first request went out
             log.info("page skipped url=%s reason=%s", for_log(url), exc.reason)
             counts[f"skipped.page.{exc.reason}"] += 1
-            if isinstance(exc, Gone) and on_gone is not None:
-                counts["links.outdated"] += _retire(url, exc.url, on_gone)
             continue
         except ItemError as exc:
             requests += 1

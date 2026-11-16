@@ -282,7 +282,7 @@ Download failures, decode errors included, store no image. The URL stays unknown
   A second failure in the same run, from an Airflow task retry, refreshes the error but doesn't add an attempt.
 - **On success**, `DELETE FROM fetch_attempt WHERE url = $1 AND kind = $2`.
 - **Detection**: a failure increments `image.detect_attempts` in its own short transaction, after the per-image transaction rolls back. `plan_batches` selects `status = 'pending' AND detect_attempts < 3`, and logs, then counts, pending rows at the cap as abandoned.
-- **Not counted**: infrastructure errors (R12; the task fails and Airflow retries it), robots.txt disallows, dead links (HTTP 404/410, skipped as `not_found`), and permanent skips. Those are not failures. Requests to non-public addresses *are* counted, so a hostile link is abandoned after 3 runs.
+- **Not counted**: infrastructure errors (R12; the task fails and Airflow retries it), robots.txt disallows, dead links (HTTP 404/410: recorded in `dead_link` and not requested again while known dead, FR-023b), and permanent skips. Those are not failures. Requests to non-public addresses *are* counted, so a hostile link is abandoned after 3 runs.
 - **No immediate retry within a run**: each link is requested once per run. The cap therefore means "3 runs", which keeps a run's duration predictable.
 - **Reset**: the README documents `DELETE FROM fetch_attempt WHERE attempts >= 3;` and `UPDATE image SET detect_attempts = 0 WHERE status = 'pending';`.
 

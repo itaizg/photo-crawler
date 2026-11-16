@@ -4,8 +4,9 @@ This module depends only on ports and plain data. Production adapters are built 
 place, ``build_default_deps``; tests pass fakes or a Postgres store on a test database.
 
 Failure handling per item: ``InfrastructureError`` propagates (Airflow retries the task);
-``Disallowed`` (a policy outcome, or ``Gone``: a dead link answering 404/410) is a logged
-skip; any other exception is logged with its URL, counted, and
+``Disallowed`` (a policy outcome) is a logged skip; ``Gone`` (a dead link answering 404/410) is
+logged, counted under ``dead_link.*`` and recorded so later runs do not request it again while it
+is known dead (FR-023b); any other exception is logged with its URL, counted, and
 recorded as one attempt toward the 3-attempt cap. A crawl or download task in which any item
 failed raises ``ItemsFailed`` at the end, after every item was attempted and the failures are
 recorded; it carries the task's result, which the DAG publishes so the run goes on. A detection
@@ -27,6 +28,7 @@ from face_index.config import Site
 from face_index.crawl import CrawlResult, crawl_site
 from face_index.errors import (
     Disallowed,
+    Gone,
     InfrastructureError,
     ItemError,
     ItemsFailed,
@@ -117,6 +119,8 @@ def crawl(site: Site, params: RunParams, deps: Deps, run_id: str) -> dict[str, o
         on_failure=lambda url, reason: store.record_failure(url, "page", reason, run_id),
         on_success=lambda url: store.record_success(url, "page"),
         on_gone=store.retire_page,
+        is_dead=lambda url: store.is_dead(url, "page", config.DEAD_LINK_RECHECK),
+        on_dead=lambda url, status: store.record_dead(url, "page", status, run_id),
     )
     payload = result.to_json()
     size = len(json.dumps(payload))
@@ -211,6 +215,9 @@ def _index_ref(ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: st
                 "link abandoned url=%s kind=image attempts=%d", for_log(ref), config.MAX_ATTEMPTS
             )
             return _RefOutcome(counts=("abandoned.image",))
+        if store.is_dead(ref, "image", config.DEAD_LINK_RECHECK):
+            log.info("image known dead url=%s (not requested)", for_log(ref))
+            return _RefOutcome(counts=("known_dead.image",))
         response = deps.fetcher.get_image(ref)
         done.append("downloaded")
         sha256 = hashlib.sha256(response.body).digest()
@@ -224,6 +231,10 @@ def _index_ref(ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: st
         store.record_success(ref, "image")
     except InfrastructureError:
         raise
+    except Gone as exc:
+        log.info("image dead url=%s status=%d", for_log(ref), exc.status)
+        store.record_dead(ref, "image", exc.status, run_id)
+        return _RefOutcome(counts=(*done, "dead_link.image"))
     except Disallowed as exc:
         log.info("image skipped url=%s reason=%s", for_log(ref), exc.reason)
         return _RefOutcome(counts=(*done, f"skipped.{exc.reason}"))
@@ -318,6 +329,8 @@ SUMMARY_ROWS: Final[tuple[tuple[str, str], ...]] = (
     ("analyzed, no faces", "images_no_faces"),
     ("faces stored", "faces_stored"),
     ("failures", "failures."),
+    ("dead links (HTTP 404/410)", "dead_link."),
+    ("known dead (not requested)", "known_dead."),
     ("abandoned (3 attempts)", "abandoned."),
     ("outdated page links (ignored by search)", "links.outdated"),
     ("pages left by the cap", "pages_left_by_cap."),

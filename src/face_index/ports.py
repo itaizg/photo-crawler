@@ -6,7 +6,7 @@ adapters (``HttpFetcher``, ``PostgresPacer``, ``PillowNormalizer``, ``DeepFaceEm
 """
 
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from face_index.models import (
@@ -134,7 +134,17 @@ class IndexStore(Protocol):
 
     def record_failure(self, url: str, kind: RequestKind, error: str, run_id: str) -> None: ...
 
-    def record_success(self, url: str, kind: RequestKind) -> None: ...
+    def record_success(self, url: str, kind: RequestKind) -> None:
+        """The link answered: clear its failure history and any dead-link record."""
+        ...
+
+    def is_dead(self, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+        """The link is known dead (FR-023b): a 410, or a 404 checked less than ``recheck`` ago."""
+        ...
+
+    def record_dead(self, url: str, kind: RequestKind, status: int, run_id: str) -> None:
+        """Record that the link answered 404 or 410 in this run (FR-023b)."""
+        ...
 
     def record_detect_failure(self, image_id: int, run_id: str) -> None: ...
 
