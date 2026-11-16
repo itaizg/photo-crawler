@@ -236,7 +236,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 4 (write first, see them fail)
 
-- [ ] T029 [P] [US4] Add run-log tests to `tests/unit/test_evaluate_search.py`:
+- [X] T029 [P] [US4] Add run-log tests to `tests/unit/test_evaluate_search.py`:
   - `run(…, log_to=tmp_path / "runs.csv")` on a PASS creates the file with the contract header and one row per label, with every field set and `verdict=PASS`;
   - a second run appends without changing the first run's lines (compare the bytes of the prefix);
   - an exit-2 run writes nothing;
@@ -246,7 +246,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Implementation for User Story 4
 
-- [ ] T030 [US4] Implement in `src/face_index/eval_set.py`:
+- [X] T030 [US4] Implement in `src/face_index/eval_set.py`:
   - a `RunLogRow` model (data-model.md) and `labels_sha256(folder, label_set) -> str`, the first 12 hex characters of SHA-256 over the set file bytes followed by each label's photo bytes in label order;
   - `append_run(path, rows)`, which writes the header if the file is missing, then appends with `newline=""` and never rewrites.
 

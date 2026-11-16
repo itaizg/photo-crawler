@@ -7,6 +7,8 @@ IX). Bad data never raises out of this module: every rule returns its errors as
 them at once, so collecting errors needs no exception handling (constitution VIII).
 """
 
+import csv
+import hashlib
 import re
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime
@@ -496,6 +498,53 @@ def read_run_log(root: Path) -> tuple[list[RunRow], list[str]]:
     raw, errors = _read_csv(path, RUNS_FILE, RUN_COLUMNS)
     rows, row_errors = _parse_rows(RunRow, raw, RUNS_FILE)
     return [row for _, row in rows], errors + row_errors
+
+
+def labels_sha256(root: Path, label_set: LabelSet) -> str:
+    """The labels version: the set file followed by its photos, in label order (research R7)."""
+    digest = hashlib.sha256((root / label_set.file).read_bytes())
+    for label in label_set.labels():
+        digest.update((root / photo_path(label)).read_bytes())
+    return digest.hexdigest()[:12]
+
+
+def _cells(row: RunRow) -> list[str]:
+    values = row.model_dump()
+    values["run_at"] = row.run_at.strftime("%Y-%m-%dT%H:%M:%SZ")
+    values["label_set"] = row.label_set.isoformat()
+    values["threshold"] = f"{row.threshold:.2f}"
+    return [str(values[column]) for column in RUN_COLUMNS]
+
+
+def append_run(path: Path, rows: Sequence[RunRow]) -> None:
+    """Append one run to the log, writing the header first if the file is new. Never rewrites."""
+    is_new = not path.is_file()
+    with path.open("a", encoding="utf-8", newline="") as f:
+        writer = csv.writer(f, lineterminator="\n")
+        if is_new:
+            writer.writerow(RUN_COLUMNS)
+        writer.writerows(_cells(row) for row in rows)
+
+
+def stale_results_errors(folder: EvalFolder) -> list[str]:
+    """The latest set's most recent logged run must match its current files (spec FR-001b).
+
+    Only ``--check`` applies this rule: evaluation must still run on a corrected set, since that
+    run is what makes the results current again.
+    """
+    latest = latest_set(folder)
+    runs, _ = read_run_log(folder.root)
+    logged = [r for r in runs if r.label_set == latest.crawl_date]
+    if not logged:
+        return [f"{latest.file}: no logged run for the latest set; run the evaluation with --log"]
+    last = logged[-1]  # the log is append-only, so file order is run order (same-second runs too)
+    current = labels_sha256(folder.root, latest)
+    if last.labels_sha256 != current:
+        return [
+            f"{latest.file}: results are stale: the last logged run used labels "
+            f"{last.labels_sha256}, the files are now {current}; run the evaluation with --log"
+        ]
+    return []
 
 
 def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:

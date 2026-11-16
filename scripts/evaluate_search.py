@@ -19,7 +19,7 @@ import argparse
 import sys
 from collections.abc import Iterable, Sequence
 from contextlib import closing
-from datetime import date
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import Final, LiteralString, NoReturn
 
@@ -179,6 +179,7 @@ def _evaluate(
     *,
     log_to: Path | None,
 ) -> int:
+    run_at = datetime.now(UTC).replace(microsecond=0)
     profile_id = index.profile_id(model_profile.KEY)
     if profile_id is None:
         print(f"error: no faces for profile {model_profile.KEY}", file=sys.stderr)
@@ -198,20 +199,49 @@ def _evaluate(
         for label in label_set.absent()
     ]
 
+    version = eval_set.labels_sha256(root, label_set)
     print(
-        f"label set {label_set.crawl_date}, profile {model_profile.KEY}, "
+        f"label set {label_set.crawl_date} (labels {version}), profile {model_profile.KEY}, "
         f"threshold {model_profile.MATCH_THRESHOLD:.2f}"
     )
     print(f"index: {size.faces} faces, {size.images} images, {size.pages} pages")
     print()
     ok = passes(reports)
     _print_report(reports, ok)
+    if log_to is not None:
+        verdict = "PASS" if ok else "FAIL"
+        eval_set.append_run(
+            log_to,
+            [
+                eval_set.RunRow(
+                    run_at=run_at,
+                    label_set=label_set.crawl_date,
+                    labels_sha256=version,
+                    model_profile=model_profile.KEY,
+                    threshold=model_profile.MATCH_THRESHOLD,
+                    faces=size.faces,
+                    images=size.images,
+                    pages=size.pages,
+                    label=r.label,
+                    expected=r.expected,
+                    returned=r.returned,
+                    missed=len(r.missed),
+                    extra=len(r.extra),
+                    label_errors=len(r.label_errors),
+                    verdict=verdict,
+                )
+                for r in reports
+            ],
+        )
+        print(f"logged to {log_to}", file=sys.stderr)
     return EXIT_PASS if ok else EXIT_FAIL
 
 
 def check(root: Path) -> int:
-    """Validate every evaluation file; no database, no model."""
-    _, errors = eval_set.read_folder(root)
+    """Validate every evaluation file, and that the latest results are current; no database."""
+    folder, errors = eval_set.read_folder(root)
+    if folder is not None:
+        errors = tuple(eval_set.stale_results_errors(folder))
     for error in errors:
         print(error)
     if errors:

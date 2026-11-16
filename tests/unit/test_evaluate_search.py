@@ -7,6 +7,7 @@ import hashlib
 import importlib.util
 import sys
 from collections.abc import Callable, Sequence
+from datetime import date
 from pathlib import Path
 from types import ModuleType
 from typing import Final
@@ -16,7 +17,15 @@ import pytest
 from face_index import model_profile
 from face_index.models import PageMatch
 from tests import images
-from tests.evalset import ABSENT, PRESENT, default_rows, page, photo_bytes, write_folder
+from tests.evalset import (
+    ABSENT,
+    PRESENT,
+    default_rows,
+    page,
+    photo_bytes,
+    write_csv,
+    write_folder,
+)
 from tests.fakes import FakeEmbedder, FakeSearchIndex
 
 SCRIPT: Final[Path] = Path(__file__).resolve().parents[2] / "scripts" / "evaluate_search.py"
@@ -205,3 +214,100 @@ def test_an_unknown_set_lists_the_available_ones(
     root = write_folder(tmp_path)
     assert ev.main([str(root), "--set", "2026-01-01"]) == ev.EXIT_USAGE
     assert "2026-11-20" in capsys.readouterr().err
+
+
+# --- run log (US4) ------------------------------------------------------------------------------
+
+
+def passing_run(root: Path, log_to: Path | None) -> int:
+    index = FakeSearchIndex(pages_by_face=by_label(all_found()))
+    return ev.run(root, None, index, FakeEmbedder(default_faces=1), log_to=log_to)
+
+
+def test_a_logged_run_appends_one_row_per_label(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    runs.unlink()
+    assert passing_run(root, runs) == ev.EXIT_PASS
+    rows, errors = ev.eval_set.read_run_log(root)
+    assert errors == []
+    assert [r.label for r in rows] == [*PRESENT, *ABSENT]
+    first = rows[0]
+    assert first.label_set.isoformat() == "2026-11-20"
+    assert first.model_profile == model_profile.KEY
+    assert first.threshold == model_profile.MATCH_THRESHOLD
+    assert (first.faces, first.images, first.pages) == (10, 5, 3)
+    assert (first.expected, first.returned, first.missed, first.extra) == (2, 2, 0, 0)
+    assert {r.verdict for r in rows} == {"PASS"}
+    assert len({(r.run_at, r.labels_sha256) for r in rows}) == 1
+    assert "http" not in runs.read_text(encoding="utf-8")
+
+
+def test_a_second_run_appends_without_touching_the_first(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    passing_run(root, runs)
+    before = runs.read_bytes()
+    found = all_found()
+    found["absent-b"] = [page(9)]
+    index = FakeSearchIndex(pages_by_face=by_label(found))
+    assert ev.run(root, None, index, FakeEmbedder(default_faces=1), log_to=runs) == ev.EXIT_FAIL
+    after = runs.read_bytes()
+    assert after.startswith(before)
+    rows, _ = ev.eval_set.read_run_log(root)
+    assert len(rows) == 2 * (len(PRESENT) + len(ABSENT))
+    assert {r.verdict for r in rows[len(PRESENT) + len(ABSENT) :]} == {"FAIL"}
+
+
+def test_a_run_that_cannot_evaluate_logs_nothing(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    before = runs.read_bytes()
+    index = FakeSearchIndex(profiles={})
+    assert ev.run(root, None, index, FakeEmbedder(default_faces=1), log_to=runs) == 2
+    assert runs.read_bytes() == before
+
+
+def test_labels_version_follows_the_set_and_its_photos(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    folder, _ = ev.eval_set.read_folder(root)
+    assert folder is not None
+    label_set = ev.eval_set.latest_set(folder)
+    version = ev.eval_set.labels_sha256(root, label_set)
+    assert len(version) == 12
+    assert ev.eval_set.labels_sha256(root, label_set) == version
+    (root / "photos" / "absent-c.jpg").write_bytes(images.photo(160, 120, seed=999))
+    assert ev.eval_set.labels_sha256(root, label_set) != version
+
+
+def test_check_rejects_stale_results_until_a_fresh_run_is_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    assert ev.main([str(root), "--check"]) == ev.EXIT_CANNOT_EVALUATE  # no run logged yet
+    assert "2026-11-20" in capsys.readouterr().out
+
+    passing_run(root, root / "runs.csv")
+    assert ev.main([str(root), "--check"]) == ev.EXIT_PASS
+
+    (root / "photos" / "absent-c.jpg").write_bytes(images.photo(160, 120, seed=999))  # a fix
+    assert ev.main([str(root), "--check"]) == ev.EXIT_CANNOT_EVALUATE
+    assert "stale" in capsys.readouterr().out
+
+    assert passing_run(root, root / "runs.csv") == ev.EXIT_PASS  # the corrected set still runs
+    assert ev.main([str(root), "--check"]) == ev.EXIT_PASS
+
+
+def test_stale_results_only_concern_the_latest_set(tmp_path: Path) -> None:
+    write_folder(tmp_path, crawl_date=date(2026, 11, 1))
+    write_folder(tmp_path)
+    write_csv(
+        tmp_path / "methods.csv",
+        ("crawl_date", "found_by", "labeller", "snapshot_holder", "onsite_pair"),
+        [
+            ("2026-11-01", "browse", "labeller", "labeller", "false"),
+            ("2026-11-20", "both", "labeller", "labeller", "false"),
+        ],
+    )
+    passing_run(tmp_path, tmp_path / "runs.csv")  # logs the latest set only
+    assert ev.main([str(tmp_path), "--check"]) == ev.EXIT_PASS
