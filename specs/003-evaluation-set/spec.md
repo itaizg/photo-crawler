@@ -12,6 +12,12 @@
 
 **Assignment requirement served**: "Returns the pages containing images of the same character with high confidence." Feature 002 states this as SC-001 (recall ≥ 0.80 per person), SC-002 (no look-alikes returned) and SC-003 (absent people return nothing). Those criteria cannot be checked until a hand-labelled set exists; this feature creates it.
 
+## Clarifications
+
+### Session 2026-11-16
+
+- Q: The site changes hourly, so a contributor's later index will lack some labelled pages and contain new ones. How should the evaluation treat that drift? → A: Stay strict and keep a local snapshot. Labelled pages missing from the index are label errors and fail the run; the verdict is only valid against the labelling-date crawl. The labeller keeps a snapshot of that index locally, never committed (it holds face embeddings of real, unlicensed people), so the README numbers can be re-run. The README states the crawl date and how to re-label after drift.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Measure the search against a real labelled set (Priority: P1)
@@ -94,6 +100,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **A present person with zero labelled pages**: rejected; every present label needs at least one page for recall to mean anything.
 - **Old TOML labels file passed in**: rejected with a message saying the format is now CSV; the TOML format is not supported alongside.
 - **Query photo taken from the indexed site, or a resized copy of one**: not allowed. Attribution must point to an outside host by numeric page ID, which excludes the indexed site as a source.
+- **Index crawled on a later date than the labels**: pages have drifted. Missing labelled pages are label errors and the run fails, listing them; new pages showing a labelled person count as extra pages. The verdict is not comparable with the README's; the contributor re-labels (documented) or the labeller re-runs against the local snapshot.
 - **Index built under a different face model profile**: the evaluator reports it and fails, as it does today.
 
 ## Requirements *(mandatory)*
@@ -142,7 +149,8 @@ A reader of the README sees the evaluation results from a real-model run on a li
 **Documentation**
 
 - **FR-025**: The labelling method MUST be written down: how pages were found (browse, search, or both), by whom, and the crawl date the labels refer to.
-- **FR-026**: The README MUST record the real-model evaluation results, the labelling method, and its known bias. Quickstart §7 and the evaluator's usage text MUST describe the new format.
+- **FR-025a**: The labeller MUST keep a snapshot of the labelling-date index locally so the recorded results can be re-run. The snapshot MUST NOT be committed or published, since it holds face embeddings of people who gave no licence; the repository records only that it exists, its crawl date, and who holds it.
+- **FR-026**: The README MUST record the real-model evaluation results, the labelling method, its known bias, the crawl date the results are tied to, and how to re-label after the site drifts. Quickstart §7 and the evaluator's usage text MUST describe the new format.
 
 ### Key Entities
 
@@ -162,9 +170,9 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **SC-001**: The committed set has at least 5 distinct present labels, at least 5 distinct absent labels and at least 2 hard cases, and loads into the evaluator with zero errors.
 - **SC-002**: Each of these malformed rows fails the automated check with a message that names the row: missing column, wrong type, bad URL, non-canonical URL, duplicate row. 5 of 5 are caught.
 - **SC-003**: In the automated check, the mock run reports PASS on the clean fixture and FAIL on both the planted miss and the planted look-alike; the check needs no secrets and finishes in under 5 minutes.
-- **SC-004**: After cloning, starting the project, and one indexing run, a contributor runs the evaluation with one documented command and gets the per-person table and a PASS or FAIL against feature 002's SC-001 to SC-003, with no additional files or secrets.
+- **SC-004**: After cloning, starting the project, and one indexing run, a contributor runs the evaluation with one documented command and gets the per-person table and a PASS or FAIL against feature 002's SC-001 to SC-003, with no additional files or secrets. On an index crawled after the labelling date, drifted pages are listed as label errors and the run fails; a PASS is only promised against the labelling-date crawl (re-run from the labeller's local snapshot).
 - **SC-005**: 100% of committed photos have exactly one attribution row matched by path, with an allowed licence and a page-ID source link; the check rejects an unattributed photo, an attribution without a photo, and a source link not in page-ID form (3 of 3).
-- **SC-006**: The README contains the measured results, the labelling method (including crawl date), and its known bias, and quickstart §7 points to the new format.
+- **SC-006**: The README contains the measured results, the labelling method (including crawl date), its known bias, and the re-labelling steps, and quickstart §7 points to the new format.
 
 ## Assumptions
 
@@ -173,6 +181,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **Hard cases**: a look-alike is an absent label (a person not on the site who resembles a present one); a small-face case is a present person's page. Both are marked in a hard-case column so the minimum of 2 can be counted.
 - **One face per photo**: each committed photo shows one clear face; multi-face queries stay with [multi-face-queries.md](../../docs/briefs/multi-face-queries.md).
 - **Real-model run is local**: the README numbers come from a contributor's local run on a live index; the automated check never downloads the model.
+- **Reproducibility is tied to the crawl date**: the site changes hourly, so the committed set is valid for one crawl. A committed database snapshot was rejected (biometric data of unlicensed people, data derived from copyrighted images, skips the pipeline, stale on model upgrade); the snapshot stays local with the labeller.
 - **Labelling bias is accepted and stated**: recall is only as good as the labels; pages a labeller did not find are invisible to the measurement, and the README says so.
 - **Out of scope** (per the brief): changing the threshold or adding a face-size filter (a threshold may only be recommended, see [noisy-index-faces.md](../../docs/briefs/noisy-index-faces.md)), a labelling UI, covering every person on the site, and running the real face model in automation.
 - **Dependency**: feature 002 (face search and `scripts/evaluate_search.py`) is merged, and the crawler's canonical URL function is the reference for page URLs.
