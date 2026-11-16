@@ -111,17 +111,13 @@ uv run pytest -m model tests/smoke/test_face_matcher_smoke.py tests/unit/test_mo
 
 ## 7. Accuracy evaluation (SC-001 to SC-003)
 
-1. Build `queries/eval/labels.toml` as described in [research R8](research.md#r8-measuring-sc-001-to-sc-003):
-   - at least 5 people on the site, each with a photo and their labelled page URLs;
-   - at least 5 absent people.
-2. Run the evaluation from the host. It is a development tool, so it is not baked into the image. It uses the same `face_index` code and the same model profile, as long as the host's `uv.lock` versions match the image, which the profile check enforces:
+Feature 003 replaced the TOML labels with committed CSV label sets under `queries/eval/` (one set per labelling crawl, openly licensed photos, an append-only run log). Run the evaluation from the host, as the read-only role:
 
-   ```bash
-   FACE_INDEX_DSN=postgresql://faces@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py queries/eval/labels.toml
-   ```
-3. Expected: a per-person table of expected, returned, recall, extra pages and the missed URLs, then `PASS` with exit 0 when every recall is ≥ 0.80, no extra pages were returned, and no absent person matched.
+```bash
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
+```
 
-The numbers, with the labelling method and its bias, go into the README.
+Expected: a per-label table of expected, returned, recall, extra pages and label errors, with the missed URLs, then `PASS` (exit 0) or `FAIL` (exit 1). The full guide (validating the files, the mock run, logging a run, re-labelling after the site drifts) is [specs/003-evaluation-set/quickstart.md](../003-evaluation-set/quickstart.md).
 
 ## 8. Final check (constitution, Quality Gates)
 

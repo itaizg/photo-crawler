@@ -262,7 +262,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a link to `queries/eval/runs.csv` for history, and how to correct a set or take a photo down (quickstart §5b), including that a takedown also needs a maintainer to remove the photo from git history;
   - whether the set has an on-site look-alike pair;
   - if the evaluation suggests a different threshold, the suggestion only, with a link to `docs/briefs/noisy-index-faces.md`.
-- [ ] T033 [P] [US4] Update `specs/002-face-search/quickstart.md` §7: replace the `labels.toml` steps with the label-set folder and command, and link to `specs/003-evaluation-set/quickstart.md`.
+- [X] T033 [P] [US4] Update `specs/002-face-search/quickstart.md` §7: replace the `labels.toml` steps with the label-set folder and command, and link to `specs/003-evaluation-set/quickstart.md`.
 
 **Checkpoint**: The README shows real numbers that match `runs.csv`, and feature 002's quickstart points to the new format.
 
@@ -270,7 +270,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ## Phase 7: Polish & cross-cutting
 
-- [ ] T034 Run the full local gate: `uv run pre-commit run --all-files`, `uv run pytest -m "not model"` and `uv run python scripts/evaluate_search.py --check`. Fix only the failures this feature introduced.
+- [X] T034 Run the full local gate: `uv run pre-commit run --all-files`, `uv run pytest -m "not model"` and `uv run python scripts/evaluate_search.py --check`. Fix only the failures this feature introduced.
 - [ ] T035 [P] Check for leftovers: `grep -rn "labels.toml\|tomllib\|parse_labels" scripts src tests docs specs/002-face-search README.md` should return nothing. Also check that no committed file under `queries/eval/` contains a real name, by reviewing `attribution.csv`'s `author` column (photographers only) and the file names.
 - [ ] T036 Walk through `specs/003-evaluation-set/quickstart.md` §§1 to 4 on a fresh clone, then tick the spec's success criteria SC-001 to SC-007 in `specs/003-evaluation-set/notes.md` with evidence: command output, the CI run link, the job duration.
 

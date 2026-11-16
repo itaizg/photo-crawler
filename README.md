@@ -236,6 +236,35 @@ SMOKE PASSED
 
 **Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
 
+## Search accuracy evaluation
+
+The search is measured against hand-labelled label sets committed under [`queries/eval/`](queries/eval/), each from one crawl of the site: at least 5 people who appear on it, with every page they appear on, and at least 5 people who do not. Each person has one openly licensed photo that is not from the site, named by a neutral label (`person-a`, `absent-a`) and attributed in `attribution.csv`. Every set includes hard cases: a look-alike of a labelled person, a page where the face is small, and two labelled people who resemble each other when the crawl has them. The criteria are the face search's SC-001 to SC-003: at least 80% of each person's pages found, no page returned that does not show the person, and nothing returned for people not on the site.
+
+Run it from the host against the Compose database, as the read-only role (the password is read from the Compose secrets volume, nothing is typed or committed):
+
+```bash
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
+```
+
+It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. CI validates the files and runs the evaluator against a seeded mock on every pull request.
+
+### Results
+
+Not measured yet: the first label set and its logged real-model run are still to be made (feature 003 tasks T015 to T018 and T031). The table will be copied here from that run's output, and every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+
+### Labelling method and its limits
+
+How each set was labelled (browsing, searching or both), by whom and on which crawl date is in [`queries/eval/methods.csv`](queries/eval/methods.csv). The labeller keeps a snapshot of that crawl's index locally, so the numbers can be re-run; it is never committed, because it holds face embeddings of people who gave no licence.
+
+- **Recall is only as good as the labels.** A page the labeller did not find is invisible to the measurement.
+- **The sample is small** and limited to public figures with openly licensed photos.
+- **Rendition checks are manual.** That a query photo is not a copy of an indexed image is checked in review, from the attribution's source page.
+- **Results are tied to one crawl.** The site changes hourly. On an index crawled on another date, labelled pages that are gone are reported as label errors and the run fails; that is drift, not a search failure. To measure a new crawl, add a new label set for it ([quickstart §5](specs/003-evaluation-set/quickstart.md)).
+
+### Correcting a set or taking a photo down
+
+A set may be corrected (a labelling mistake, a wrong licence, a takedown request) as long as every set keeps its minimums: a removed label is replaced in the same change. After a change, the latest set needs a fresh logged run before CI passes, so these results never describe files that have since changed ([quickstart §5b](specs/003-evaluation-set/quickstart.md)). Deleting a photo does not remove it from git history; for a takedown, a maintainer also rewrites the history on the remote.
+
 ## Known limitations
 
 - **SC-011 (a default run on the enabled sites within 30 minutes) is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
@@ -244,7 +273,7 @@ SMOKE PASSED
 - **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.
 - **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A size filter is an open decision ([TODO.md](TODO.md)).
 - **A look-alike can pass the default threshold.** First live check (2026-11-13, CNN index of about 9.5k faces): searching with an indexed one-face selfie returned its own 4 pages (distance ≤ 0.004) and one more page at 0.261. That page shows a different man, whose face is only about 55 px wide in a 270×480 red-carpet photo. Small faces give less reliable embeddings, so this is the case [noisy-index-faces.md](docs/briefs/noisy-index-faces.md) is about. The threshold was not tuned to hide it; the labelled evaluation (SC-001 to SC-003) is what decides whether a face-size filter or a stricter default is needed.
-- **Accuracy (SC-001 to SC-003)** is measured with `scripts/evaluate_search.py` against hand-labelled photos, which are not in the repository (licensing). See [specs/002-face-search/quickstart.md](specs/002-face-search/quickstart.md) §7.
+- **Accuracy (SC-001 to SC-003)** is measured against the committed evaluation set; see [Search accuracy evaluation](#search-accuracy-evaluation) for the results and their limits.
 
 - The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
 
