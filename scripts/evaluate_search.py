@@ -48,6 +48,11 @@ EPILOG: Final[LiteralString] = """exit statuses:
   64  usage error"""
 
 
+def printable(text: str) -> str:
+    """Untrusted text (file values in error messages) with control characters escaped."""
+    return "".join(c if c.isprintable() else repr(c)[1:-1] for c in text)
+
+
 class LabelReport(Record):
     """One label's result in one run (data-model.md, "Label report")."""
 
@@ -149,7 +154,7 @@ def _load(root: Path, crawl_date: date | None) -> eval_set.LabelSet | int:
     folder, errors = eval_set.read_folder(root)
     if folder is None:
         for error in errors:
-            print(f"error: {error}", file=sys.stderr)
+            print(f"error: {printable(error)}", file=sys.stderr)
         return EXIT_CANNOT_EVALUATE
     label_set = _select(folder, crawl_date)
     return EXIT_USAGE if label_set is None else label_set
@@ -185,6 +190,13 @@ def _evaluate(
         print(f"error: no faces for profile {model_profile.KEY}", file=sys.stderr)
         return EXIT_CANNOT_EVALUATE
     size = index.index_size(profile_id)
+    if size.faces == 0:
+        print(
+            f"error: the index has no faces for profile {model_profile.KEY}; run the pipeline",
+            file=sys.stderr,
+        )
+        return EXIT_CANNOT_EVALUATE
+    version = eval_set.labels_sha256(root, label_set)  # before any photo is read
     present = label_set.present()
     known = index.known_pages([u for pages in present.values() for u in pages])
 
@@ -199,7 +211,12 @@ def _evaluate(
         for label in label_set.absent()
     ]
 
-    version = eval_set.labels_sha256(root, label_set)
+    if eval_set.labels_sha256(root, label_set) != version:
+        print(
+            "error: the label set or its photos changed during the run; run it again",
+            file=sys.stderr,
+        )
+        return EXIT_CANNOT_EVALUATE
     print(
         f"label set {label_set.crawl_date} (labels {version}), profile {model_profile.KEY}, "
         f"threshold {model_profile.MATCH_THRESHOLD:.2f}"
@@ -243,7 +260,7 @@ def check(root: Path) -> int:
     if folder is not None:
         errors = tuple(eval_set.stale_results_errors(folder))
     for error in errors:
-        print(error)
+        print(printable(error))
     if errors:
         return EXIT_CANNOT_EVALUATE
     print(f"ok {root}")

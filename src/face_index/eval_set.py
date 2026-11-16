@@ -11,13 +11,14 @@ import csv
 import hashlib
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self
 
 import pandas as pd
 from pydantic import (
+    AfterValidator,
     NonNegativeInt,
     StringConstraints,
     ValidationError,
@@ -64,6 +65,27 @@ LABEL_PATTERN: Final[str] = r"^(person|absent)-[a-z]+$"
 _SET_NAME: Final[re.Pattern[str]] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 type Label = Annotated[str, StringConstraints(pattern=LABEL_PATTERN)]
+
+_FORMULA_PREFIXES: Final[tuple[str, ...]] = ("=", "+", "-", "@", "\t", "\r")
+
+
+def _plain_text(value: str) -> str:
+    """Free text that a spreadsheet will not run as a formula and a terminal will not obey."""
+    if value.startswith(_FORMULA_PREFIXES):
+        raise ValueError("must not start with =, +, -, @ or a tab (spreadsheet formula)")
+    if not value.isprintable():
+        raise ValueError("must not contain control characters")
+    return value
+
+
+def _utc(value: datetime) -> datetime:
+    if value.tzinfo is None or value.utcoffset() != timedelta(0):
+        raise ValueError("must be UTC, written with a Z (e.g. 2026-11-20T18:04:11Z)")
+    return value
+
+
+type FreeText = Annotated[str, StringConstraints(min_length=1), AfterValidator(_plain_text)]
+type UtcTime = Annotated[datetime, AfterValidator(_utc)]
 type Role = Literal["present", "absent"]
 type Row = Mapping[str, str]
 
@@ -120,6 +142,8 @@ class SetRow(Record):
 def _check_page_url(url: str) -> None:
     if not url:
         raise ValueError("a present label needs a page_url on every row")
+    if not url.isprintable():
+        raise ValueError(f"page_url contains control characters: {url}")
     if not url.startswith("https://"):
         raise ValueError(f"page_url must be https: {url}")
     if host_of(url) not in _indexed_hosts():
@@ -353,8 +377,8 @@ class MethodRow(Record):
 
     crawl_date: date
     found_by: Literal["browse", "search", "both"]
-    labeller: Annotated[str, StringConstraints(min_length=1)]
-    snapshot_holder: Annotated[str, StringConstraints(min_length=1)]
+    labeller: FreeText
+    snapshot_holder: FreeText
     onsite_pair: bool
 
     _onsite_pair = field_validator("onsite_pair", mode="before")(_true_or_false)
@@ -363,10 +387,10 @@ class MethodRow(Record):
 class RunRow(Record):
     """One label's result in one logged real-model run (spec FR-027)."""
 
-    run_at: datetime
+    run_at: UtcTime
     label_set: date
     labels_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{12}$")]
-    model_profile: Annotated[str, StringConstraints(min_length=1)]
+    model_profile: FreeText
     threshold: float
     faces: NonNegativeInt
     images: NonNegativeInt
@@ -439,7 +463,7 @@ class AttributionRow(Record):
 
     path: Annotated[str, StringConstraints(pattern=r"^photos/(person|absent)-[a-z]+\.jpg$")]
     source_url: str
-    author: Annotated[str, StringConstraints(min_length=1)]
+    author: FreeText
     licence: Licence
 
     @field_validator("source_url")
@@ -543,6 +567,18 @@ def stale_results_errors(folder: EvalFolder) -> list[str]:
         return [
             f"{latest.file}: results are stale: the last logged run used labels "
             f"{last.labels_sha256}, the files are now {current}; run the evaluation with --log"
+        ]
+    # The last run is the trailing block of rows that share its time and labels version.
+    block: list[RunRow] = []
+    for row in reversed(logged):
+        if (row.run_at, row.labels_sha256) != (last.run_at, last.labels_sha256):
+            break
+        block.append(row)
+    labels = sorted(r.label for r in block)
+    if labels != sorted(latest.labels()) or len({r.verdict for r in block}) != 1:
+        return [
+            f"{latest.file}: the last logged run is incomplete or inconsistent: it needs one row "
+            f"per label, all with the same verdict; run the evaluation with --log"
         ]
     return []
 

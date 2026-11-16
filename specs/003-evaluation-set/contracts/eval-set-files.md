@@ -75,5 +75,6 @@ run_at,label_set,labels_sha256,model_profile,threshold,faces,images,pages,label,
 | Methods coverage | set without a `methods.csv` row, or a row without a set |
 | Photo and attribution | photo without attribution; attribution without photo; photo used by no set |
 | Attribution values | licence not allowed; source URL not in page-ID form |
-| Run log | header or type wrong; existing line removed or changed (PR diff) |
-| Stale results | the latest set's most recent logged run has a different `labels_sha256` than its current files, e.g. after a correction (`--check` only) |
+| Run log | header or type wrong; `run_at` not UTC; existing line removed or changed (PR diff) |
+| Free text | `author`, `labeller`, `snapshot_holder` or `model_profile` starting with `=`, `+`, `-`, `@` or a tab (spreadsheet formula), or holding control characters; a page URL holding control characters |
+| Stale results | the latest set's most recent logged run has a different `labels_sha256` than its current files, e.g. after a correction, or lacks one row per label with one verdict (`--check` only) |

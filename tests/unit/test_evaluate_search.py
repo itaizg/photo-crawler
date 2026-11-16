@@ -15,7 +15,7 @@ from typing import Final
 import pytest
 
 from face_index import model_profile
-from face_index.models import PageMatch
+from face_index.models import DetectedFace, IndexSize, PageMatch
 from tests import images
 from tests.evalset import (
     ABSENT,
@@ -311,3 +311,69 @@ def test_stale_results_only_concern_the_latest_set(tmp_path: Path) -> None:
     )
     passing_run(tmp_path, tmp_path / "runs.csv")  # logs the latest set only
     assert ev.main([str(tmp_path), "--check"]) == ev.EXIT_PASS
+
+
+# --- review fixes (PR 15) -----------------------------------------------------------------------
+
+
+def test_an_index_without_faces_cannot_be_evaluated_and_is_not_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    before = runs.read_bytes()
+    index = FakeSearchIndex(size=IndexSize(faces=0, images=0, pages=0))
+    embedder = FakeEmbedder(default_faces=1)
+    assert ev.run(root, None, index, embedder, log_to=runs) == ev.EXIT_CANNOT_EVALUATE
+    assert "no faces" in capsys.readouterr().err
+    assert embedder.calls == 0
+    assert runs.read_bytes() == before
+
+
+class EditingEmbedder(FakeEmbedder):
+    """Changes one photo on disk while the run is embedding photos."""
+
+    def __init__(self, photo: Path) -> None:
+        super().__init__(default_faces=1)
+        self._photo = photo
+
+    def embed(self, jpeg: bytes) -> list[DetectedFace]:
+        self._photo.write_bytes(images.photo(160, 120, seed=777))
+        return super().embed(jpeg)
+
+
+def test_files_changed_during_a_run_are_not_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    before = runs.read_bytes()
+    index = FakeSearchIndex(pages_by_face=by_label(all_found()))
+    embedder = EditingEmbedder(root / "photos" / "absent-e.jpg")
+    assert ev.run(root, None, index, embedder, log_to=runs) == ev.EXIT_CANNOT_EVALUATE
+    assert "changed during the run" in capsys.readouterr().err
+    assert runs.read_bytes() == before
+
+
+def test_check_rejects_an_incomplete_last_run(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    passing_run(root, runs)
+    lines = runs.read_text(encoding="utf-8").splitlines(keepends=True)
+    runs.write_text("".join(lines[:-1]), encoding="utf-8")  # drop the last label's row
+    assert ev.main([str(root), "--check"]) == ev.EXIT_CANNOT_EVALUATE
+    assert "incomplete" in capsys.readouterr().out
+
+
+def test_check_escapes_control_characters_from_the_files(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    rows = default_rows()
+    rows[0] = ("person-a", "https://edition.cnn.com/\x1b[31mred", "none", "")
+    root = write_folder(tmp_path, rows)
+    assert ev.main([str(root), "--check"]) == ev.EXIT_CANNOT_EVALUATE
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "\\x1b" in out

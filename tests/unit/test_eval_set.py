@@ -370,3 +370,36 @@ def test_only_label_named_jpegs_live_in_photos(tmp_path: Path, name: str) -> Non
     write_folder(tmp_path)
     (tmp_path / "photos" / name).write_bytes(b"x")
     assert any(e.startswith(f"photos/{name}") for e in errors_for(tmp_path))
+
+
+# --- review fixes (PR 15) -----------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("value", ["=HYPERLINK(1)", "+1", "-1", "@SUM(1)", "\tx", "a\x1bb"])
+def test_free_text_cannot_be_a_spreadsheet_formula_or_carry_control_characters(
+    tmp_path: Path, value: str
+) -> None:
+    write_folder(tmp_path)
+    write_csv(
+        tmp_path / "methods.csv",
+        ("crawl_date", "found_by", "labeller", "snapshot_holder", "onsite_pair"),
+        [("2026-11-20", "both", value, "labeller", "false")],
+    )
+    assert any(e.startswith("methods.csv:2:") and "labeller" in e for e in errors_for(tmp_path))
+
+
+def test_an_attribution_author_cannot_be_a_formula(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    url = "https://commons.wikimedia.org/w/index.php?curid=1"
+    rewrite_attribution(
+        tmp_path, {"photos/person-a.jpg": attribution_row("photos/person-a.jpg", url, author="@x")}
+    )
+    assert any(e.startswith("attribution.csv:2:") and "author" in e for e in errors_for(tmp_path))
+
+
+@pytest.mark.parametrize("run_at", ["2026-11-20T18:04:11", "2026-11-20T18:04:11+02:00"])
+def test_run_times_must_be_utc(tmp_path: Path, run_at: str) -> None:
+    write_folder(tmp_path)
+    with (tmp_path / "runs.csv").open("a", encoding="utf-8") as f:
+        f.write(f"{run_at},2026-11-20,a1b2c3d4e5f6,profile,0.30,10,5,3,person-a,2,2,0,0,0,PASS\n")
+    assert any(e.startswith("runs.csv:2:") and "UTC" in e for e in errors_for(tmp_path))
