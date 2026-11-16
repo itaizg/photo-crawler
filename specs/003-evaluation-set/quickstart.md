@@ -57,8 +57,14 @@ Expected: `runs.csv` gains one row per label. Commit it together with the README
 ## 5. Add a label set after the site drifts
 
 1. Index the site, and keep a local snapshot of that database.
-2. Add a new `sets/<crawl date>.csv` (never edit an existing one; CI rejects that) and a `methods.csv` row. Reuse existing labels and photos; add new `person-…` or `absent-…` labels with photos and attribution rows as needed. Leave out any absent label whose person now appears on the site.
+2. Add a new `sets/<crawl date>.csv` and a `methods.csv` row. Reuse existing labels and photos; add new `person-…` or `absent-…` labels with photos and attribution rows as needed. Leave out any absent label whose person now appears on the site.
 3. Run section 1, then section 4 with `--set <crawl date>`.
+
+## 5b. Correct an existing set, or take a photo down
+
+1. Edit the set, or remove the photo, its attribution row and its label from every set. If a set falls below its minimums, add a replacement label in the same change.
+2. Re-run section 4 for the latest set and commit the new `runs.csv` rows and README numbers with the change. Until then, section 1 fails with a stale-results error.
+3. Say in the pull request what changed and why. For a takedown, a maintainer also removes the photo from git history; that step is outside this feature.
 
 ## 6. Final check
 

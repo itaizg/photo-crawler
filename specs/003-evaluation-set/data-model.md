@@ -34,7 +34,7 @@ Because absent rows carry no page, a page can't be shared between a present and 
   - ≥ 1 absent row with `hard_case = look_alike`
   - ≥ 1 present row with `hard_case = small_face`
   - if `methods.onsite_pair` is true: ≥ 1 present row with `hard_case = look_alike`; if false: none
-- **Lifecycle**: a set is added and never edited or removed afterwards. CI rejects a pull request that modifies or deletes an existing set file (research R7); fixes go into a new set.
+- **Lifecycle**: a set is added per labelling crawl. It may later be corrected (spec FR-001b); a correction changes its `labels_sha256`, so logged runs before and after it stay distinguishable. **Stale-results rule** (checked by `--check` only, research R10): the most recent logged run for the latest set must have that set's current labels version.
 - **Selection**: the latest `crawl_date` by default, or one named with `--set`.
 - **At least one set** must exist; an empty `sets/` folder is an error.
 

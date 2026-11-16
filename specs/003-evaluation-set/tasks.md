@@ -170,7 +170,7 @@ description: "Task list for feature 003: Search Evaluation Set"
     - photo with 0 faces → 2 with the path printed;
     - undecodable photo → 2 with the path and reason printed.
   - assert that the database row counts are unchanged after each run.
-- [ ] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.read_folder(Path("queries/eval"))` returns no errors for the repository's committed folder. This is US2's final gate: it fails until T017 (the committed set) and T027 (attribution rules) are done, because an empty folder is an error.
+- [ ] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.read_folder(Path("queries/eval"))` returns no errors for the repository's committed folder. This is US2's final gate: it fails until T017 (the committed set) and T027 (attribution rules) are done, because an empty folder is an error. Once T030 adds the stale-results rule, CI's `--check` step also needs T031's logged run.
 
 ### Implementation for User Story 2
 
@@ -188,9 +188,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
   Steps:
   1. `uv run --locked python scripts/evaluate_search.py --check`
-  2. If `github.event_name == 'pull_request'`, two checks against `origin/${{ github.base_ref }}...HEAD`:
-     - `git diff --unified=0 … -- queries/eval/runs.csv | grep -E '^-[^-]'` must find nothing ("runs.csv is append-only");
-     - `git diff --name-only --diff-filter=MDR … -- queries/eval/sets/` must print nothing ("label sets are never edited; add a new set") (spec FR-001).
+  2. If `github.event_name == 'pull_request'`: `if git diff --unified=0 "origin/${{ github.base_ref }}...HEAD" -- queries/eval/runs.csv | grep -E '^-[^-]'; then echo "runs.csv is append-only" >&2; exit 1; fi`
   3. `uv run --locked pytest tests/integration/test_evaluate_search_e2e.py --durations=5`
 
   It inherits the workflow-level `permissions` and `concurrency` and uses no secrets (research R8).
@@ -243,6 +241,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a second run appends without changing the first run's lines (compare the bytes of the prefix);
   - an exit-2 run writes nothing;
   - `labels_sha256` changes when one photo's bytes change, and is the same for identical inputs;
+  - stale-results rule (spec FR-001b): `--check` (via `main([folder, "--check"])`) exits 2 naming the latest set when its most recent logged run has a different `labels_sha256` than the current files, exits 0 once a matching run is appended, and ignores older sets; `run()` still evaluates the corrected set;
   - no row contains `http`.
 
 ### Implementation for User Story 4
@@ -251,6 +250,8 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a `RunLogRow` model (data-model.md) and `labels_sha256(folder, label_set) -> str`, the first 12 hex characters of SHA-256 over the set file bytes followed by each label's photo bytes in label order;
   - `append_run(path, rows)`, which writes the header if the file is missing, then appends with `newline=""` and never rewrites.
 
+  Add `stale_results_errors(folder: EvalFolder, root: Path) -> list[str]` and call it only from the `--check` path in `scripts/evaluate_search.py`, never from evaluation (research R7).
+
   In `scripts/evaluate_search.py`, have `run()` build the rows (with `run_at` as UTC now at the start of the database step) and call `append_run` when `log_to` is set and the exit is 0 or 1. This makes T029 pass.
 - [ ] T031 [US4] [HUMAN] On the labelling-date snapshot, run the quickstart §4 command (`… scripts/evaluate_search.py --set <crawl date> --log`, reader password from the Compose secrets volume) with the real model, and commit the new `queries/eval/runs.csv` rows.
 - [ ] T032 [US4] Add a "Search accuracy evaluation" section to `README.md`:
@@ -258,7 +259,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - the run command, exactly as in quickstart §3 (reader role, password from the Compose secrets volume), the labelling method from `methods.csv`, and the crawl date;
   - the known bias: recall only counts pages the labeller found, rendition checks (FR-007) are done by review, the sample is small and limited to public figures with open-licence photos, and results are tied to one crawl;
   - why a fresh index FAILs with label errors (drift), and the re-labelling steps (quickstart §5);
-  - a link to `queries/eval/runs.csv` for history;
+  - a link to `queries/eval/runs.csv` for history, and how to correct a set or take a photo down (quickstart §5b), including that a takedown also needs a maintainer to remove the photo from git history;
   - whether the set has an on-site look-alike pair;
   - if the evaluation suggests a different threshold, the suggestion only, with a link to `docs/briefs/noisy-index-faces.md`.
 - [ ] T033 [P] [US4] Update `specs/002-face-search/quickstart.md` §7: replace the `labels.toml` steps with the label-set folder and command, and link to `specs/003-evaluation-set/quickstart.md`.

@@ -91,7 +91,7 @@ All photos are embedded before any search, so every unusable photo is reported i
 
 **Decision**: `queries/eval/runs.csv` is in long format, one row per (run, label), with the run's conditions repeated on each of its rows. Columns are in [data-model.md](data-model.md#run-log-row). Recall is not stored; it is derived from `expected` and `missed` (DRY). `--log` appends a run's rows only for a computed verdict (exit 0 or 1). Only `main()`, which always uses `DeepFaceEmbedder`, can log; `run()` takes `log_to: Path | None`, and tests pass `None`, so mock runs are never logged. Labels version is `labels_sha256`: the first 12 hex characters of the SHA-256 of the set file's bytes followed by each referenced photo's bytes, in label order. It identifies the exact inputs without needing git inside the run.
 
-Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...HEAD -- queries/eval/runs.csv` must contain no removed lines. The same step rejects a modified or deleted existing label set: `git diff --name-only --diff-filter=MDR <base>...HEAD -- queries/eval/sets/` must be empty (spec FR-001).
+Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...HEAD -- queries/eval/runs.csv` must contain no removed lines. Existing label sets may be corrected (spec FR-001b). Instead of blocking edits, `--check` applies the stale-results rule: the most recent logged run for the latest set must have that set's current labels version. This keeps the README honest after a correction without a pull-request label or an edit ban, both rejected as overcomplication. The rule is in `--check` only, not in `read_folder`'s load for evaluation, because the evaluator must still run on a corrected set to produce the fresh run.
 
 **Rationale**: Long format is what pandas reads natively, and it lets a reader filter by label across runs. A content hash ties results to the exact labels and photos, including a replaced photo, which a git commit would also catch but only when committed.
 
@@ -102,7 +102,7 @@ Append-only is enforced in CI on pull requests: `git diff --unified=0 <base>...H
 **Decision**: Add an `eval-set` job to `.github/workflows/ci.yml`. It inherits the workflow's `permissions: contents: read` and `concurrency`, and has `timeout-minutes: 5`, the same pinned `checkout` and `setup-uv` SHAs, `uv sync --locked`, and the same `pgvector/pgvector:pg17` service definition as `test`. Steps:
 
 1. `uv run --locked python scripts/evaluate_search.py --check`: validates every set, attribution, methods and the run log, without a database.
-2. On pull requests, the append-only check for the run log and existing label sets (R7). This needs `fetch-depth: 0` on checkout.
+2. On pull requests, the run-log append-only check (R7). This needs `fetch-depth: 0` on checkout.
 3. `uv run --locked pytest tests/integration/test_evaluate_search_e2e.py`: the seeded mock runs.
 
 The job runs on every pull request, not only those touching the set.
@@ -141,6 +141,7 @@ The fixture minimums (5 + 5) are real, so the same loader and validation run as 
 - licence and source URL form (R4)
 - run-log header and types
 - at least one label set exists (otherwise every per-set rule would pass on an empty folder)
+- `--check` only: the stale-results rule (R7)
 
 **Rationale**: These are the brief's consistency checks plus the ones the label-set design adds. All are file-only, so CI needs no secrets (SC-003).
 

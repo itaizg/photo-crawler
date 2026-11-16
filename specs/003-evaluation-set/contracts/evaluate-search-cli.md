@@ -58,7 +58,7 @@ FAIL
 
 stderr: progress (`loading face model…`) and errors. Never the DSN.
 
-`--check` prints one line per validated file and `ok`, or one line per error, each in the form `<file>:<line>: <message>` (line 1 is the header).
+`--check` applies every load rule plus the stale-results rule ([data-model.md](../data-model.md#label-set)), which evaluation itself skips so a corrected set can still be run. It prints one line per validated file and `ok`, or one line per error, each in the form `<file>:<line>: <message>` (line 1 is the header).
 
 ## Exit statuses
 

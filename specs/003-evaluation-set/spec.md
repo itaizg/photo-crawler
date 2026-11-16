@@ -108,6 +108,8 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **An absent person appears on the site in a later crawl**: that absent label is left out of the later label set (a label's role never changes); the earlier set is unchanged.
 - **No on-site look-alike pair in a crawl**: the set is still valid if its other hard cases are present; the README records that no pair was available.
 - **A label set evaluated against an index from another crawl**: treated as drift (above); the run log records the set's crawl date, so such runs are not compared with matching ones.
+- **Correcting an existing set**: allowed (FR-001b). Runs logged before and after the correction have different labels versions, so they are never compared as equal; the latest set needs a fresh logged run before the change can merge.
+- **Takedown of a photo**: the photo, its attribution row and its label are removed from every set, and any set that falls below its minimums gets a replacement label in the same change. The photo stays in git history until a maintainer rewrites it (outside this feature; the README states the step).
 - **Index built under a different face model profile**: the evaluator reports it and fails, as it does today.
 
 ## Requirements *(mandatory)*
@@ -117,6 +119,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 **The labelled set**
 
 - **FR-001**: Labels MUST be organised as label sets, one per labelling crawl, each tagged with its crawl date. Adding a set MUST NOT change or remove earlier sets. Query photos and attribution are shared: a neutral label means the same person, with the same single photo, in every set, and its role (present or absent) never changes.
+- **FR-001b**: Existing sets, photos and attribution MAY be corrected (a labelling mistake, a wrong licence, a takedown request). A correction MUST keep every set valid: a removed label that drops a set below its minimums MUST be replaced in the same change. After any change, the most recent logged run for the latest set must have that set's current labels version, so the README never reports results for files that have since changed; the automated check MUST reject the change otherwise.
 - **FR-001a**: Each label set MUST contain at least 5 distinct present labels, each with every indexed page URL of that crawl on which the person appears, one row per (person, page).
 - **FR-002**: Each label set MUST contain at least 5 distinct absent labels, each a person who does not appear in that crawl, one row per absent label.
 - **FR-003**: Each label set MUST include hard cases, each marked in its row: at least one absent look-alike of a present person, and at least one page where a present person's face is small. When the crawl contains two present people who resemble each other, the set MUST also mark them as an on-site look-alike pair (the direct SC-002 stress of feature 002).
@@ -207,4 +210,5 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **Dependency**: feature 002 (face search and `scripts/evaluate_search.py`) is merged, and the crawler's canonical URL function is the reference for page URLs.
 - **FR-007 is checked in review, not by automation**: whether a query photo is a rendition of an indexed image can't be decided from the files alone. The labeller confirms it when choosing the photo, the attribution's outside source (a page-ID link to Commons, Flickr or Unsplash) is the evidence a reviewer checks, and the README bias section states this limit.
 - **Database access from the host**: the evaluator connects as the read-only `faces_reader` role. Its password is generated at first start into the Compose secrets volume; the documented command reads it from there at run time (`docker compose exec -T postgres cat /run/db-secrets/reader_password`) and passes it through `PGPASSWORD`, so no secret is committed, typed, or put in a URL.
+- **Corrections are made deliberate by review and the stale-results check, not by a gate**: a pull-request label or a ban on editing sets was rejected as overcomplication (user decision, 2026-11-16). The run log's labels version keeps results before and after a correction apart.
 - **Not verified in this environment**: the team-ai-directives knowledge base path in `.specify/init-options.json` is a local path not present where this spec was drafted, so team discovery did not run; the project constitution (which inherits it) was applied.
