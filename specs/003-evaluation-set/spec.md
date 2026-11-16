@@ -120,7 +120,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 - **FR-002**: Each label set MUST contain at least 5 distinct absent labels, each a person who does not appear in that crawl, one row per absent label.
 - **FR-003**: Each label set MUST include hard cases, each marked in its row: at least one absent look-alike of a present person, and at least one page where a present person's face is small. When the crawl contains two present people who resemble each other, the set MUST also mark them as an on-site look-alike pair (the direct SC-002 stress of feature 002).
 - **FR-004**: Labels MUST be neutral (`person-a`, `absent-a`); real names MUST NOT appear in any committed label, file name, or source link.
-- **FR-005**: Photo paths in a label set MUST be relative to the label sets' folder, so sets share photos.
+- **FR-005**: Photo paths MUST be relative to the evaluation folder, and a label's photo MUST be the same file in every set, so sets share photos.
 - **FR-006**: Every labelled page URL MUST already be in the crawler's canonical form; a URL that canonicalization would change MUST be rejected.
 - **FR-007**: A present person's query photo MUST NOT be one of the indexed images or a rendition of one.
 - **FR-007a**: Each evaluation run MUST evaluate exactly one label set, chosen by the contributor; the latest set is the default.
