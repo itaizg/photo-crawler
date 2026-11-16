@@ -1,0 +1,11 @@
+label,page_url,hard_case,lookalike_of
+person-a,https://edition.cnn.com/world/middleeast/israel,none,
+person-b,https://edition.cnn.com/world/middleeast/israel,none,
+person-c,https://edition.cnn.com/world/europe/ukraine,small_face,
+person-d,https://edition.cnn.com/world/europe/ukraine,small_face,
+person-e,https://edition.cnn.com/world/europe/ukraine,none,
+absent-a,,none,
+absent-b,,none,
+absent-c,,look_alike,person-e
+absent-d,,look_alike,person-c
+absent-e,,none,
