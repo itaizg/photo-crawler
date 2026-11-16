@@ -6,7 +6,7 @@
   "integration": "claude",
   "script": "py",
   "speckit_version": "unknown",
-  "team_ai_directives": "/root/team-ai-directives",
+  "team_ai_directives": "/Users/itaizemah-goren/team-ai-directives",
   "team_ai_directives_mcp": {
     "mcpServers": {
       "context7": {
