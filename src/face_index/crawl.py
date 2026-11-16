@@ -122,10 +122,15 @@ def crawl_site(
             requests += 1
             log.info("page dead url=%s status=%d", for_log(url), exc.status)
             counts["dead_link.page"] += 1
-            if on_dead is not None:
-                on_dead(url, exc.status)
+            # Under the requested URL and the redirect target, as either may be linked or stored.
+            # Retire first: if recording fails, the retried task requests the URL again and does
+            # both, whereas a link already recorded as dead would never be retired.
+            targets = tuple(dict.fromkeys((url, _normalized(normalize_page_url, exc.url) or url)))
             if on_gone is not None:
-                counts["links.outdated"] += _retire(url, exc.url, on_gone)
+                counts["links.outdated"] += _retire(targets, on_gone)
+            if on_dead is not None:
+                for target in targets:
+                    on_dead(target, exc.status)
             continue
         except Disallowed as exc:
             requests += exc.sent  # a redirect hop refused after the first request went out
@@ -188,10 +193,10 @@ def crawl_site(
     return CrawlResult(site=site.name, pages=tuple(pages), summary=Summary.of(counts))
 
 
-def _retire(url: str, final: str, on_gone: GoneHook) -> int:
+def _retire(targets: tuple[str, ...], on_gone: GoneHook) -> int:
     """Retire a gone page under each URL it may be stored by: requested, and final if redirected."""
     outdated = 0
-    for candidate in dict.fromkeys((url, _normalized(normalize_page_url, final) or url)):
+    for candidate in targets:
         if retired := on_gone(candidate):
             log.info("gone page retired url=%s outdated_links=%d", for_log(candidate), retired)
             outdated += retired

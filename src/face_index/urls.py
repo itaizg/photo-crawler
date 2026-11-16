@@ -13,6 +13,7 @@ _SLASHES: Final[re.Pattern[str]] = re.compile(r"/{2,}")
 # CR/LF, spaces, non-ASCII) is percent-encoded, so a crawled URL cannot forge a log line.
 _LOG_SAFE_PATH: Final[str] = "/%:@!$&'()*+,;=-._~"
 _LOG_SAFE_KEY: Final[str] = "%:@!$'()*+,;-._~/?[]"
+_LOG_SAFE_HOST: Final[str] = "-.:"  # names, IPv4 and IPv6 literals (brackets added by _netloc)
 
 
 def _netloc(host: str, port: int | None, scheme: str) -> str:
@@ -69,11 +70,12 @@ def for_log(url: str) -> str:
 
     Query keys are kept as sent (still percent-encoded, never decoded), so a log line still tells
     renditions apart by their parameter names; a bare query token with no ``=`` is masked whole.
-    Path and keys are percent-encoded where needed, so the result is one printable line.
+    Host, path and keys are percent-encoded where needed, so the result is one printable line.
     """
     try:
         parts = urlsplit(url)
-        netloc = _netloc(parts.hostname or "", parts.port, parts.scheme) if parts.netloc else ""
+        host = quote(parts.hostname or "", safe=_LOG_SAFE_HOST)
+        netloc = _netloc(host, parts.port, parts.scheme) if parts.netloc else ""
     except ValueError:  # malformed (bad port, bad IPv6): log only what cannot leak a secret
         return "<malformed url>"
     query = "&".join(_masked_pair(pair) for pair in parts.query.split("&") if pair)

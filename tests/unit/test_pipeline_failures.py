@@ -440,6 +440,11 @@ def test_a_gone_page_is_retired_so_search_drops_its_old_links() -> None:
     # stored under the requested URL or the redirect target: both are retired
     assert store.retired == ["https://news.test/old", "https://news.test/gone"]
     assert summary["links.outdated"] == 6
+    # recorded dead under both too, so a direct link to the target is not requested again
+    assert store.dead == {
+        ("https://news.test/old", "page"): 404,
+        ("https://news.test/gone", "page"): 404,
+    }
     assert "failures.crawl" not in summary
 
 
@@ -462,6 +467,15 @@ def test_a_dead_image_link_is_recorded_and_does_not_fail_the_download() -> None:
     assert counts["staged"] == 1
     assert store.failures == []
     assert store.dead == {("https://img.test/missing.jpg", "image"): 404}
+
+
+def test_a_dead_redirect_target_image_is_recorded_too() -> None:
+    store = MemoryStore()
+    moved = "https://img.test/moved.jpg"
+    routes = {**ROUTES, moved: Reply(status=301, headers={"location": "/missing.jpg"})}
+    counts = pipeline.download(SITE, crawl_payload([moved]), deps(store, routes), "run-1")
+    assert counts["dead_link.image"] == 1
+    assert store.dead == {(moved, "image"): 404, ("https://img.test/missing.jpg", "image"): 404}
 
 
 def test_a_known_dead_image_is_not_requested_again() -> None:

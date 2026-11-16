@@ -5,6 +5,7 @@ import pytest
 
 from face_index import config
 from face_index.crawl import CrawlResult, crawl_site
+from face_index.errors import InfrastructureError
 from face_index.http import HttpFetcher
 from face_index.urls import in_scope
 from tests.fakes import FakeResolver, MockSite, RecordingPacer, Reply, html_reply, robots_reply
@@ -123,6 +124,27 @@ def test_a_dead_page_is_counted_and_recorded_with_its_status(status: int) -> Non
     summary = result.summary.to_json()
     assert summary["dead_link.page"] == 1
     assert not any(k.startswith(("skipped.", "failures.")) for k in summary)
+
+
+def test_a_dead_page_is_retired_before_it_is_recorded() -> None:
+    """If retiring fails, nothing is recorded, so the retried task requests and retires it."""
+    dead: list[str] = []
+
+    def failing_retire(url: str) -> int:
+        raise InfrastructureError("database unavailable")
+
+    with pytest.raises(InfrastructureError):
+        crawl_routes(
+            {
+                "https://edition.cnn.com/": page(["/gone"]),
+                "https://edition.cnn.com/gone": Reply(status=404),
+            },
+            depth=1,
+            cap=None,
+            on_gone=failing_retire,
+            on_dead=lambda url, code: dead.append(url),
+        )
+    assert dead == []
 
 
 def test_a_known_dead_page_is_not_requested_and_uses_no_cap_budget() -> None:

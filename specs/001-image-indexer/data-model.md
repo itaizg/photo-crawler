@@ -115,7 +115,7 @@ The index on `embedding` is HNSW with `vector_cosine_ops`. It is the search scri
 
 | Field | Type | Rules |
 |---|---|---|
-| `url` | text | Normalized page or image URL, as requested |
+| `url` | text | Normalized page or image URL: the requested URL, and the redirect target when the request was redirected (one row each) |
 | `kind` | text | `page` \| `image` (check constraint) |
 | `status` | smallint | `404` \| `410` (check constraint): the latest answer |
 | `first_seen_at` | timestamptz | When the link was first found dead; kept on a recheck |
@@ -125,6 +125,7 @@ The index on `embedding` is HNSW with `vector_cosine_ops`. It is the search scri
 - The primary key is `(url, kind)`. It is separate from `fetch_attempt`: a dead link is not a failure and not an attempt.
 - Crawl and download check this table before requesting. A link is known dead when `status = 410`, or when `last_checked_at` is within `config.DEAD_LINK_RECHECK` (30 days). A known dead link is not requested and is counted under `known_dead.*`.
 - A successful fetch deletes the row, together with any `fetch_attempt` row.
+- A gone page is retired from search (`retire_page`) before its row is written, so a crawl retried after a database error still retires it.
 - The operator lists dead links with `SELECT url, kind, status, last_checked_at FROM dead_link ORDER BY last_checked_at DESC;` and resets them with `DELETE FROM dead_link;` (documented in the README).
 
 ### `host_pace`: shared request pacing (FR-003, [research R4](research.md#r4-rate-limiting-robotstxt-and-identity-fr-003-fr-004))

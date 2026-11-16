@@ -36,7 +36,7 @@ from face_index.errors import (
 )
 from face_index.models import CrawledPage, DetectedFace, PendingImage, Record, Skipped, Summary
 from face_index.ports import FaceEmbedder, Fetcher, ImageNormalizer, IndexStore
-from face_index.urls import for_log
+from face_index.urls import for_log, normalize_image_url
 
 log: Final[logging.Logger] = logging.getLogger(__name__)
 
@@ -233,7 +233,8 @@ def _index_ref(ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: st
         raise
     except Gone as exc:
         log.info("image dead url=%s status=%d", for_log(ref), exc.status)
-        store.record_dead(ref, "image", exc.status, run_id)
+        for target in dict.fromkeys((ref, _image_url_or(exc.url, ref))):  # and redirect target
+            store.record_dead(target, "image", exc.status, run_id)
         return _RefOutcome(counts=(*done, "dead_link.image"))
     except Disallowed as exc:
         log.info("image skipped url=%s reason=%s", for_log(ref), exc.reason)
@@ -248,6 +249,13 @@ def _index_ref(ref: str, page: CrawledPage, page_id: int, deps: Deps, run_id: st
     else:
         outcome = "staged" if created else "reused_by_fingerprint"
     return _RefOutcome(counts=(*done, outcome), linked=True)
+
+
+def _image_url_or(url: str, fallback: str) -> str:
+    try:
+        return normalize_image_url(url)
+    except ValueError:
+        return fallback
 
 
 def _image_failed(
