@@ -13,4 +13,5 @@ The team-ai-directives knowledge base provides the ground assumptions and norms 
 
 For additional context about technologies to be used, project structure,
 shell commands, and other important information, read the current plan
+at specs/002-face-search/plan.md
 <!-- SPECKIT END -->
