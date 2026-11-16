@@ -131,11 +131,11 @@ def _print_report(reports: Sequence[LabelReport], ok: bool) -> None:
             f"{len(r.extra):>7}{len(r.label_errors):>8}"
         )
         for url in r.missed:
-            print(f"    missed: {url}")
+            print(f"    missed: {printable(url)}")
         for url in r.extra:
-            print(f"    extra:  {url}")
+            print(f"    extra:  {printable(url)}")
         for url in r.label_errors:
-            print(f"    label error (page not indexed): {url}")
+            print(f"    label error (page not indexed): {printable(url)}")
     print("PASS" if ok else "FAIL")
 
 

@@ -158,7 +158,7 @@ def test_every_unusable_photo_is_named_before_exit_2(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
     root = write_folder(tmp_path)
-    (root / "photos" / "absent-e.jpg").write_bytes(images.corrupt_jpeg())
+    (root / "photos" / "absent-e.jpg").write_bytes(images.photo(40, 30, seed=5))  # too small
     no_face = {
         hashlib.sha256(ev.PillowNormalizer().normalize(photo_bytes(label), None).jpeg).hexdigest()
         for label in ("person-b", "absent-c")
@@ -169,7 +169,7 @@ def test_every_unusable_photo_is_named_before_exit_2(
     err = capsys.readouterr().err
     assert "photos/person-b.jpg: no face detected" in err
     assert "photos/absent-c.jpg: no face detected" in err
-    assert "photos/absent-e.jpg: not a decodable image" in err
+    assert "photos/absent-e.jpg: image is 40x30" in err
     assert index.calls == []
 
 
@@ -377,3 +377,16 @@ def test_check_escapes_control_characters_from_the_files(
     out = capsys.readouterr().out
     assert "\x1b" not in out
     assert "\\x1b" in out
+
+
+def test_reported_urls_are_printed_with_control_characters_escaped(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    found = all_found()
+    found["absent-b"] = ["https://edition.cnn.com/\x1b[2Jspoof"]
+    index = FakeSearchIndex(pages_by_face=by_label(found))
+    assert ev.run(root, None, index, FakeEmbedder(default_faces=1)) == ev.EXIT_FAIL
+    out = capsys.readouterr().out
+    assert "\x1b" not in out
+    assert "\\x1b[2Jspoof" in out

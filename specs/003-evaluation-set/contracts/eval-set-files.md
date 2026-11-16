@@ -73,7 +73,8 @@ run_at,label_set,labels_sha256,model_profile,threshold,faces,images,pages,label,
 | Look-alike rules | `look_alike` without `lookalike_of`; `lookalike_of` not a present label in the set |
 | Set minimums | no set at all; fewer than 5 present or 5 absent; no absent look-alike; no small-face page; `onsite_pair` disagrees with the set |
 | Methods coverage | set without a `methods.csv` row, or a row without a set |
-| Photo and attribution | photo without attribution; attribution without photo; photo used by no set |
+| Photo and attribution | photo without attribution; attribution without photo; photo used by no set; photo that does not decode |
+| Folder layout | any file other than `sets/`, `photos/`, `attribution.csv`, `methods.csv`, `runs.csv` (e.g. an index snapshot); any symbolic link (checked before anything is read) |
 | Attribution values | licence not allowed; source URL not in page-ID form |
 | Run log | header or type wrong; `run_at` not UTC; existing line removed or changed (PR diff) |
 | Free text | `author`, `labeller`, `snapshot_holder` or `model_profile` starting with `=`, `+`, `-`, `@` or a tab (spreadsheet formula), or holding control characters; a page URL holding control characters |

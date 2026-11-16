@@ -403,3 +403,29 @@ def test_run_times_must_be_utc(tmp_path: Path, run_at: str) -> None:
     with (tmp_path / "runs.csv").open("a", encoding="utf-8") as f:
         f.write(f"{run_at},2026-11-20,a1b2c3d4e5f6,profile,0.30,10,5,3,person-a,2,2,0,0,0,PASS\n")
     assert any(e.startswith("runs.csv:2:") and "UTC" in e for e in errors_for(tmp_path))
+
+
+@pytest.mark.parametrize("name", ["snapshot.sql", "faces.dump", "notes"])
+def test_only_documented_files_belong_in_the_folder(tmp_path: Path, name: str) -> None:
+    write_folder(tmp_path)
+    (tmp_path / name).write_bytes(b"embeddings")
+    assert any(e.startswith(f"{name}:") and "snapshot" in e for e in errors_for(tmp_path))
+
+
+def test_symbolic_links_are_rejected_before_anything_is_read(tmp_path: Path) -> None:
+    secret = tmp_path / "secret.env"
+    secret.write_text("TOKEN=hunter2\n", encoding="utf-8")
+    root = write_folder(tmp_path / "eval")
+    (root / "attribution.csv").unlink()
+    (root / "attribution.csv").symlink_to(secret)
+    errors = errors_for(root)
+    assert any(e.startswith("attribution.csv:") and "symbolic link" in e for e in errors)
+    assert not any("hunter2" in e for e in errors)
+
+
+def test_a_photo_that_does_not_decode_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    (tmp_path / "photos" / "absent-d.jpg").write_bytes(b"not a jpeg")
+    assert any(
+        e.startswith("photos/absent-d.jpg:") and "decodable" in e for e in errors_for(tmp_path)
+    )

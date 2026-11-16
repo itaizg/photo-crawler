@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Annotated, Final, Literal, Self
 
 import pandas as pd
+from PIL import Image
 from pydantic import (
     AfterValidator,
     NonNegativeInt,
@@ -487,6 +488,7 @@ def _attribution_errors(root: Path, used_labels: frozenset[str]) -> list[str]:
         if not _PHOTO_NAME.fullmatch(name)
     ]
     photos = {f"photos/{name}" for name in files if _PHOTO_NAME.fullmatch(name)}
+    errors += _photo_errors(root, sorted(photos))
     path = root / ATTRIBUTION_FILE
     if not path.is_file():
         return [*errors, f"{ATTRIBUTION_FILE}: missing; one row per photo"]
@@ -583,8 +585,52 @@ def stale_results_errors(folder: EvalFolder) -> list[str]:
     return []
 
 
+_ENTRIES: Final[frozenset[str]] = frozenset(
+    {"sets", "photos", ATTRIBUTION_FILE, METHODS_FILE, RUNS_FILE}
+)
+
+
+def _layout_errors(root: Path) -> list[str]:
+    """Only the documented files may be here, and none may be a link (read before anything else).
+
+    A local index snapshot holds face embeddings of unlicensed people and must never be committed
+    (spec FR-025a); a symbolic link could make an error message quote a file from elsewhere.
+    """
+    links = sorted(p.relative_to(root).as_posix() for p in root.rglob("*") if p.is_symlink())
+    errors = [f"{link}: symbolic links are not allowed in the evaluation folder" for link in links]
+    errors += [
+        f"{p.name}: not an evaluation file; only sets/, photos/, {ATTRIBUTION_FILE}, "
+        f"{METHODS_FILE} and {RUNS_FILE} belong here (index snapshots are never committed)"
+        for p in sorted(root.iterdir())
+        if p.name not in _ENTRIES
+    ]
+    sets_dir = root / "sets"
+    if sets_dir.is_dir():
+        errors += [
+            f"sets/{p.name}: sets/ holds only set files"
+            for p in sorted(sets_dir.iterdir())
+            if not p.is_file()
+        ]
+    return errors
+
+
+def _photo_errors(root: Path, photos: Sequence[str]) -> list[str]:
+    """Every committed photo decodes as an image, so ``--check`` catches a corrupt file."""
+    errors: list[str] = []
+    for photo in photos:
+        try:  # image-decoding boundary (constitution VIII): a bad file is reported, not raised
+            with Image.open(root / photo) as image:
+                image.verify()
+        except (OSError, SyntaxError, ValueError) as exc:
+            errors.append(f"{photo}: not a decodable image ({type(exc).__name__})")
+    return errors
+
+
 def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:
     """Every file under ``root`` validated together: the folder, or None and every error found."""
+    layout = _layout_errors(root)
+    if layout:  # nothing is read from a folder that holds links or unexpected files
+        return None, tuple(layout)
     sets = _read_sets(root)
     errors = [
         *sets.errors,
