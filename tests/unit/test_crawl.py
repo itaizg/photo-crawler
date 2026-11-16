@@ -100,7 +100,7 @@ def test_failed_and_non_html_requests_count_toward_the_cap() -> None:
         depth=1,
         cap=3,
     )
-    assert site.requested("https://edition.cnn.com/gone")  # 404: a failed request
+    assert site.requested("https://edition.cnn.com/gone")  # 404: a sent request, skipped
     assert not site.requested("https://edition.cnn.com/a")  # cap of 3 requests reached
     assert result.summary.to_json()["pages_left_by_cap.cnn"] == 1
 
@@ -160,7 +160,12 @@ def test_a_redirect_refused_after_its_first_hop_counts_toward_the_cap() -> None:
 
 def test_a_crawl_where_every_request_failed_records_and_counts_them() -> None:
     failures: list[str] = []
-    site = MockSite({"https://edition.cnn.com/robots.txt": robots_reply()})  # home is a 404
+    site = MockSite(
+        {
+            "https://edition.cnn.com/robots.txt": robots_reply(),
+            "https://edition.cnn.com/": Reply(status=500),
+        }
+    )
     fetcher = HttpFetcher(
         pacer=RecordingPacer(),
         resolver=FakeResolver(),
@@ -174,7 +179,14 @@ def test_a_crawl_where_every_request_failed_records_and_counts_them() -> None:
 
 
 def test_a_failed_page_is_counted_and_the_crawl_goes_on() -> None:
-    result, _ = crawl_routes({"https://edition.cnn.com/": page(["/gone"])}, depth=1, cap=None)
+    result, _ = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/broken"]),
+            "https://edition.cnn.com/broken": Reply(status=500),
+        },
+        depth=1,
+        cap=None,
+    )
     assert result.summary.to_json()["failures.crawl"] == 1
     assert [p.url for p in result.pages] == ["https://edition.cnn.com/"]
 

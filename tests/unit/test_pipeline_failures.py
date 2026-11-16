@@ -366,18 +366,47 @@ def crawl_deps(routes: Mapping[str, Reply], store: MemoryStore | None = None) ->
     return deps(store or MemoryStore(), routes, scope=lambda url: in_scope(url, SITE))
 
 
-def test_one_failed_page_request_fails_the_crawl_task_and_keeps_its_result() -> None:
-    home = Reply(
+def linking_home(path: str) -> Reply:
+    return Reply(
         status=200,
-        body=b'<html><body><a href="/gone">x</a></body></html>',
+        body=f'<html><body><a href="{path}">x</a></body></html>'.encode(),
         headers={"content-type": "text/html"},
     )
-    the_deps = crawl_deps({"https://news.test/": home})  # /gone is a 404
+
+
+def test_one_failed_page_request_fails_the_crawl_task_and_keeps_its_result() -> None:
+    routes = {
+        "https://news.test/": linking_home("/broken"),
+        "https://news.test/broken": Reply(status=500),
+    }
     with pytest.raises(ItemsFailed, match=r"crawl of cnn: 1 page request\(s\) failed") as raised:
-        pipeline.crawl(SITE, pipeline.RunParams(depth=1), the_deps, "run-1")
+        pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes), "run-1")
     result = CrawlResult.from_json(raised.value.result)
     assert [p.url for p in result.pages] == ["https://news.test/"]
     assert result.summary.to_json()["failures.crawl"] == 1
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_dead_link_is_a_skip_and_does_not_fail_the_crawl(status: int) -> None:
+    store = MemoryStore()
+    routes = {
+        "https://news.test/": linking_home("/gone"),
+        "https://news.test/gone": Reply(status=status),
+    }
+    payload = pipeline.crawl(SITE, pipeline.RunParams(depth=1), crawl_deps(routes, store), "run-1")
+    summary = CrawlResult.from_json(payload).summary.to_json()
+    assert summary["skipped.page.not_found"] == 1
+    assert "failures.crawl" not in summary
+    assert store.failures == []
+
+
+def test_a_dead_image_link_is_a_skip_and_does_not_fail_the_download() -> None:
+    store = MemoryStore()
+    refs = ["https://img.test/missing.jpg", GOOD]  # not routed: the mock site answers 404
+    counts = pipeline.download(SITE, crawl_payload(refs), deps(store, ROUTES), "run-1")
+    assert counts["skipped.not_found"] == 1
+    assert counts["staged"] == 1
+    assert store.failures == []
 
 
 def test_a_refused_site_fails_the_crawl_task() -> None:

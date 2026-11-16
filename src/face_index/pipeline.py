@@ -4,7 +4,8 @@ This module depends only on ports and plain data. Production adapters are built 
 place, ``build_default_deps``; tests pass fakes or a Postgres store on a test database.
 
 Failure handling per item: ``InfrastructureError`` propagates (Airflow retries the task);
-``Disallowed`` is a logged policy skip; any other exception is logged with its URL, counted, and
+``Disallowed`` (a policy outcome, or ``Gone``: a dead link answering 404/410) is a logged
+skip; any other exception is logged with its URL, counted, and
 recorded as one attempt toward the 3-attempt cap. A crawl or download task in which any item
 failed raises ``ItemsFailed`` at the end, after every item was attempted and the failures are
 recorded; it carries the task's result, which the DAG publishes so the run goes on. A detection

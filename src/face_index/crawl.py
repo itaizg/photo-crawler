@@ -1,7 +1,8 @@
 """Breadth-first crawl of one site (FR-001, FR-002, FR-005a, research R5).
 
 Only ports are used: a ``Fetcher`` for HTTP and, optionally, an ``IndexStore`` for the
-3-attempt cap. Policy outcomes (robots.txt, scope) are skipped; failures are counted.
+3-attempt cap. Policy outcomes (robots.txt, scope) and dead links (HTTP 404/410) are skipped;
+failures are counted.
 """
 
 import logging

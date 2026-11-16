@@ -82,6 +82,7 @@ exclude = [".specify", ".claude", ".agents"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+pythonpath = ["src"]  # works even when an iCloud-hidden .pth file stops the editable install
 addopts = "--strict-markers -ra"
 markers = [
     "smoke: full pipeline on tiny offline data",

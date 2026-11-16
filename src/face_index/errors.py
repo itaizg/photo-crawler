@@ -6,6 +6,8 @@
   toward the 3-attempt cap.
 - ``Disallowed``: a policy outcome (robots.txt, out of scope, plain-http image). Logged and
   skipped, but it is neither a failure nor an attempt.
+- ``Gone``: a ``Disallowed`` for a page or image the server says does not exist (HTTP 404 or
+  410). A dead link on the site is not the crawler's failure, so it is skipped the same way.
 - ``StageFailed``: a task failed as a whole. Raised after the task's work is done, so the
   failures are recorded and Airflow marks (and retries) the task as failed.
 - ``ItemsFailed``: a ``StageFailed`` for a crawl or download task in which at least one page or
@@ -49,6 +51,13 @@ class Disallowed(Exception):
         self.reason = reason
         self.url = url
         self.sent = sent
+
+
+class Gone(Disallowed):
+    """The server answered 404 or 410: the page or image does not exist. Not a failure.
+
+    The request was sent, so ``sent`` is True and it counts toward the page cap.
+    """
 
 
 class StageFailed(Exception):
