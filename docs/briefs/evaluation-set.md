@@ -11,7 +11,7 @@ Source of truth: [assignment.md](../assignment.md). Quoted text is from the assi
 ## Goals
 
 1. **Label people on the site**: at least 5 people, each with a query photo not taken from the indexed site and every page URL they appear on.
-2. **Label absent people**: at least 5 people who are not on the site, each with a query photo.
+2. **Label absent people**: at least 5 distinct people who are not on the site, each with a neutral label (`absent-a`) and one query photo.
 3. **Include hard cases**: look-alikes of labelled people and pages where the person's face is small, so SC-002 is actually stressed.
 4. **Store labels as CSV**: one row per (person, page) and one row per absent photo, read with pandas into the evaluator's existing Pydantic models. The TOML format is replaced, not kept alongside.
 5. **Check it in CI**: a GitHub Actions job validates the table and runs the evaluator end to end against a mock, on every pull request that touches either.
@@ -19,14 +19,15 @@ Source of truth: [assignment.md](../assignment.md). Quoted text is from the assi
 
 ## Constraints
 
-- **pandas as the reader**: already in `uv.lock` (Airflow constraint pin `pandas==3.1.0`), so no new dependency. Read with explicit `dtype`s; no type inference.
+- **pandas as the reader**: declared as a direct dependency in `pyproject.toml`, bounded to the Airflow constraint pin (`pandas==3.1.0`). Today it only arrives through deepface, which must not be relied on; the lock gains no new package. Read with explicit `dtype`s; no type inference.
 - **Validate once at the boundary**: rows become Pydantic models when read; a bad row fails the whole load with its line number. No scattered try/except.
-- **Openly licensed photos only**: a query photo is committed only under a licence that allows it (public domain, CC0, CC BY, CC BY-SA). Each one has a row in an attribution file: source URL, author, licence. Anything else stays out of the repo.
-- **Neutral labels**: committed labels use `person-a`, never real names. Photo paths are relative to the labels file.
+- **Openly licensed photos only**: a query photo is committed only under a licence that allows it (public domain, CC0, CC BY, CC BY-SA). Each one has a row in an attribution file keyed by its photo path: path, source URL, author, licence. The attribution paths must equal the committed photos exactly. Anything else stays out of the repo.
+- **Neutral labels**: committed labels use `person-a` and `absent-a`, never real names. One query photo per label; minimum counts are over distinct labels. Photo paths are relative to the labels file.
+- **Canonical page URLs**: labelled pages must be in the crawler's canonical form, as `normalize_page_url` (`src/face_index/urls.py`) returns it, so they compare equal to indexed URLs. A label that changes under it is rejected.
 - **Independent query photos**: a person's query photo must not be one of the indexed images or a rendition of one.
 - **Labelling method is written down**: how pages were found (browse, search, both), by whom, and on which crawl date, since recall is only as good as the labels.
-- **No silent skips**: a photo where no face is detected, or a labelled page missing from the index, is reported and fails the run (constitution XII).
-- **CI with a mock, not the model**: the job checks the schema and consistency (columns, types, URL format, no duplicate rows, minimum counts, no page shared by a person and an absent row). It then runs the evaluator against a seeded pgvector service with `FakeEmbedder` (`tests/fakes.py`), as the integration tests already do. The fixture must include a planted miss and a planted look-alike, so the job proves the evaluator can FAIL, not only PASS (constitution IV).
+- **No silent skips**: a photo where no face is detected, or a labelled page that was never indexed (a label error), is reported and fails the run (constitution XII). A page that is indexed but not returned is a search miss: it is listed and counts against recall, which may drop to 0.80 per SC-001.
+- **CI with a mock, not the model**: the job checks the schema and consistency (columns, types, URL format, no duplicate rows, minimum counts, no page shared by a person and an absent row). It then runs the evaluator against a seeded pgvector service with `FakeEmbedder` (`tests/fakes.py`), as the integration tests already do. The fixture must include a planted miss that drops a person's recall below 0.80 (for example 1 of 2 pages) and a planted look-alike, so the job proves the evaluator can FAIL, not only PASS (constitution IV).
 - **Existing CI style**: pinned action SHAs, `uv sync --locked`, `permissions: contents: read`, `concurrency` group, a job timeout.
 - **Same search code**: the evaluator keeps calling `search_faces` at the default threshold; the set does not get its own threshold.
 
@@ -40,11 +41,11 @@ Source of truth: [assignment.md](../assignment.md). Quoted text is from the assi
 
 ## Success Criteria
 
-1. The labels CSV has at least 5 present people, 5 absent people and at least 2 hard cases, and loads through pandas into the evaluator without error.
-2. A malformed row (missing column, bad URL, duplicate, wrong type) fails CI with a message naming the row.
+1. The labels CSV has at least 5 distinct present labels, 5 distinct absent labels and at least 2 hard cases, and loads through pandas into the evaluator without error.
+2. A malformed row (missing column, bad or non-canonical URL, duplicate, wrong type) fails CI with a message naming the row.
 3. In CI, the mock run reports PASS on the clean fixture and FAIL on the planted miss and look-alike; it needs no secrets and finishes in under 5 minutes.
 4. After cloning, `docker compose up` and one indexing run, a contributor runs `scripts/evaluate_search.py` with one documented command and gets the per-person table and PASS or FAIL against SC-001 to SC-003.
-5. Every committed photo has an attribution row with a licence that allows redistribution and a page-ID source URL; CI rejects a source URL that is not in page-ID form.
+5. Every committed photo has exactly one attribution row, matched by path, with a licence that allows redistribution and a page-ID source URL; CI rejects an unattributed photo, an attribution without a photo, and a source URL not in page-ID form.
 6. The README records the results, the labelling method and its known bias, and quickstart §7 points to the new format.
 
 ## Decisions
