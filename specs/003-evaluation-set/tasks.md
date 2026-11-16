@@ -205,7 +205,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 3 (write first, see them fail)
 
-- [ ] T026 [P] [US3] Add attribution tests to `tests/unit/test_eval_set.py`. Each must be returned as an error by `read_folder`:
+- [X] T026 [P] [US3] Add attribution tests to `tests/unit/test_eval_set.py`. Each must be returned as an error by `read_folder`:
   - a photo file with no attribution row, and an attribution row with no file;
   - a photo used by no set, and a duplicate `path`;
   - the licences `CC-BY-NC-4.0` and `CC-BY-ND-4.0`, and an empty `author`;
@@ -216,13 +216,13 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Implementation for User Story 3
 
-- [ ] T027 [US3] Implement in `src/face_index/eval_set.py`:
+- [X] T027 [US3] Implement in `src/face_index/eval_set.py`:
   - an `AttributionRow` model with a `Licence` `StrEnum` (research R4) and `source_url` validated by three full-match regexes as module constants;
   - `load_attribution`;
   - the cross-file rules: the attributed paths must equal the `*` files in `photos/` exactly, and every photo must be used by some set.
 
   Add them to `read_folder`. This makes T026 pass.
-- [ ] T028 [US3] Update `queries/README.md`: say that `queries/eval/` is committed (labels, openly licensed photos, attribution), that its file names are neutral labels, and that every other file in `queries/` stays ignored. Link to the README evaluation section.
+- [X] T028 [US3] Update `queries/README.md`: say that `queries/eval/` is committed (labels, openly licensed photos, attribution), that its file names are neutral labels, and that every other file in `queries/` stays ignored. Link to the README evaluation section.
 
 **Checkpoint**: `uv run python scripts/evaluate_search.py --check` passes on the committed set and fails on each case in T026.
 

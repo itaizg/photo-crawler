@@ -250,3 +250,123 @@ def test_a_bad_run_log_is_reported(tmp_path: Path) -> None:
     assert not any(e.startswith("runs.csv:2:") for e in errors), errors
     assert any(e.startswith("runs.csv:3:") for e in errors), errors
     assert any(e.startswith("runs.csv:4:") for e in errors), errors
+
+
+# --- photos and attribution (US3) -------------------------------------------------------------
+
+ATTRIBUTION = ("path", "source_url", "author", "licence")
+
+
+def attribution_row(
+    path: str, url: str, author: str = "A Photographer", licence: str = "CC0-1.0"
+) -> Row:
+    return (path, url, author, licence)
+
+
+def rewrite_attribution(root: Path, change: dict[str, Row | None]) -> None:
+    """Replace (or drop, with None) attribution rows by path; other rows stay valid."""
+    rows = [
+        attribution_row(
+            f"photos/{label}.jpg", f"https://commons.wikimedia.org/w/index.php?curid={100 + i}"
+        )
+        for i, label in enumerate(
+            (*[f"person-{c}" for c in "abcde"], *[f"absent-{c}" for c in "abcde"])
+        )
+    ]
+    kept = [change.get(r[0], r) for r in rows]
+    write_csv(root / "attribution.csv", ATTRIBUTION, [r for r in kept if r is not None])
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://commons.wikimedia.org/w/index.php?curid=12345",
+        "https://www.flickr.com/photo.gne?id=53012345678",
+        "https://unsplash.com/photos/AbC_dE-fGh1",
+    ],
+)
+def test_page_id_source_urls_are_accepted(tmp_path: Path, url: str) -> None:
+    write_folder(tmp_path)
+    rewrite_attribution(
+        tmp_path, {"photos/person-a.jpg": attribution_row("photos/person-a.jpg", url)}
+    )
+    assert eval_set.read_folder(tmp_path)[1] == ()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://commons.wikimedia.org/wiki/File:Some_Name_2024.jpg",
+        "https://www.flickr.com/photos/some_user/53012345678",
+        "https://unsplash.com/photos/a-woman-smiling-AbC_dE-fGh1",
+        "https://flic.kr/p/2abcDEF",
+        "http://commons.wikimedia.org/w/index.php?curid=12345",
+    ],
+)
+def test_a_source_url_that_can_name_the_person_is_rejected(tmp_path: Path, url: str) -> None:
+    write_folder(tmp_path)
+    rewrite_attribution(
+        tmp_path, {"photos/person-a.jpg": attribution_row("photos/person-a.jpg", url)}
+    )
+    assert any(
+        e.startswith("attribution.csv:2:") and "source_url" in e for e in errors_for(tmp_path)
+    )
+
+
+@pytest.mark.parametrize("licence", ["CC-BY-NC-4.0", "CC-BY-ND-4.0", "All rights reserved"])
+def test_a_licence_that_forbids_redistribution_is_rejected(tmp_path: Path, licence: str) -> None:
+    write_folder(tmp_path)
+    url = "https://commons.wikimedia.org/w/index.php?curid=1"
+    rewrite_attribution(
+        tmp_path,
+        {"photos/person-a.jpg": attribution_row("photos/person-a.jpg", url, licence=licence)},
+    )
+    assert any(e.startswith("attribution.csv:2:") and "licence" in e for e in errors_for(tmp_path))
+
+
+def test_an_empty_author_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    url = "https://commons.wikimedia.org/w/index.php?curid=1"
+    rewrite_attribution(
+        tmp_path, {"photos/person-a.jpg": attribution_row("photos/person-a.jpg", url, author="")}
+    )
+    assert any(e.startswith("attribution.csv:2:") and "author" in e for e in errors_for(tmp_path))
+
+
+def test_a_photo_without_attribution_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    rewrite_attribution(tmp_path, {"photos/person-c.jpg": None})
+    assert any("photos/person-c.jpg" in e and "attribution" in e for e in errors_for(tmp_path))
+
+
+def test_an_attribution_without_a_photo_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    with (tmp_path / "attribution.csv").open("a", encoding="utf-8") as f:
+        f.write("photos/person-z.jpg,https://commons.wikimedia.org/w/index.php?curid=9,A,CC0-1.0\n")
+    assert any(
+        e.startswith("attribution.csv:12:") and "person-z" in e for e in errors_for(tmp_path)
+    )
+
+
+def test_a_duplicate_attribution_path_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    with (tmp_path / "attribution.csv").open("a", encoding="utf-8") as f:
+        f.write("photos/person-a.jpg,https://commons.wikimedia.org/w/index.php?curid=9,A,CC0-1.0\n")
+    assert any(
+        e.startswith("attribution.csv:12:") and "duplicate" in e for e in errors_for(tmp_path)
+    )
+
+
+def test_a_photo_no_set_uses_is_rejected(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    (tmp_path / "photos" / "person-z.jpg").write_bytes(b"jpeg")
+    with (tmp_path / "attribution.csv").open("a", encoding="utf-8") as f:
+        f.write("photos/person-z.jpg,https://commons.wikimedia.org/w/index.php?curid=9,A,CC0-1.0\n")
+    assert any("photos/person-z.jpg" in e and "no label set" in e for e in errors_for(tmp_path))
+
+
+@pytest.mark.parametrize("name", [".gitkeep", "person-a.png", "Jane Doe.jpg"])
+def test_only_label_named_jpegs_live_in_photos(tmp_path: Path, name: str) -> None:
+    write_folder(tmp_path)
+    (tmp_path / "photos" / name).write_bytes(b"x")
+    assert any(e.startswith(f"photos/{name}") for e in errors_for(tmp_path))

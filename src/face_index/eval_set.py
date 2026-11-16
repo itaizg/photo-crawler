@@ -52,6 +52,8 @@ RUN_COLUMNS: Final[tuple[str, ...]] = (
     "label_errors",
     "verdict",
 )
+ATTRIBUTION_COLUMNS: Final[tuple[str, ...]] = ("path", "source_url", "author", "licence")
+ATTRIBUTION_FILE: Final[str] = "attribution.csv"
 METHODS_FILE: Final[str] = "methods.csv"
 RUNS_FILE: Final[str] = "runs.csv"
 MIN_LABELS: Final[int] = 5  # per role, per set (spec FR-001a, FR-002)
@@ -280,7 +282,9 @@ def _set_date(name: str, path: Path) -> date | str:
         return f"{name}: {path.stem} is not a valid date"
 
 
-def _read_set(root: Path, path: Path, crawl_date: date) -> tuple[LabelSet | None, list[str]]:
+def _read_set(
+    root: Path, path: Path, crawl_date: date
+) -> tuple[LabelSet | None, list[str], set[str]]:
     name = path.relative_to(root).as_posix()
     raw, errors = _read_csv(path, name, SET_COLUMNS)
     rows, row_errors = _parse_rows(SetRow, raw, name)
@@ -292,16 +296,26 @@ def _read_set(root: Path, path: Path, crawl_date: date) -> tuple[LabelSet | None
         if not (root / photo_path(label)).is_file():
             errors.append(f"{name}: {label} has no photo at {photo_path(label)}")
     label_set = LabelSet(crawl_date=crawl_date, rows=tuple(parsed))
-    return (None if errors else label_set), errors
+    return (None if errors else label_set), errors, {row.label for row in parsed}
 
 
-def _read_sets(root: Path) -> tuple[list[LabelSet], set[date], list[str]]:
-    """The valid sets, the crawl date of every well-named set file, and every error."""
+class _Sets(Record):
+    """What the set files yield, valid or not: the cross-file rules need all of it."""
+
+    valid: tuple[LabelSet, ...]
+    dates: frozenset[date]  # of every well-named set file
+    labels: frozenset[str]  # used by any row that parsed, in any set
+    errors: tuple[str, ...]
+
+
+def _read_sets(root: Path) -> _Sets:
     files = sorted(p for p in (root / "sets").glob("*") if p.is_file())
     if not files:
-        return [], set(), ["sets/: no label set; add sets/<crawl date>.csv"]
+        no_set = ("sets/: no label set; add sets/<crawl date>.csv",)
+        return _Sets(valid=(), dates=frozenset(), labels=frozenset(), errors=no_set)
     sets: list[LabelSet] = []
     dates: set[date] = set()
+    labels: set[str] = set()
     errors: list[str] = []
     for path in files:
         name = path.relative_to(root).as_posix()
@@ -310,11 +324,17 @@ def _read_sets(root: Path) -> tuple[list[LabelSet], set[date], list[str]]:
                 errors.append(error)
             case crawl_date:
                 dates.add(crawl_date)
-                label_set, set_errors = _read_set(root, path, crawl_date)
+                label_set, set_errors, set_labels = _read_set(root, path, crawl_date)
                 errors += set_errors
+                labels |= set_labels
                 if label_set is not None:
                     sets.append(label_set)
-    return sets, dates, errors
+    return _Sets(
+        valid=tuple(sets),
+        dates=frozenset(dates),
+        labels=frozenset(labels),
+        errors=tuple(errors),
+    )
 
 
 # --- methods.csv and runs.csv -------------------------------------------------------------------
@@ -358,7 +378,7 @@ class RunRow(Record):
     verdict: Literal["PASS", "FAIL"]
 
 
-def _methods_errors(root: Path, set_dates: set[date], sets: Sequence[LabelSet]) -> list[str]:
+def _methods_errors(root: Path, set_dates: frozenset[date], sets: Sequence[LabelSet]) -> list[str]:
     """Every set has exactly one methods row, and its onsite_pair agrees with the set."""
     path = root / METHODS_FILE
     if not path.is_file():
@@ -387,6 +407,87 @@ def _methods_errors(root: Path, set_dates: set[date], sets: Sequence[LabelSet]) 
     return errors
 
 
+# --- photos and attribution.csv ------------------------------------------------------------------
+
+
+class Licence(StrEnum):
+    """Licences that allow committing the photo with the repository (spec FR-012, research R4)."""
+
+    PD = "PD"
+    CC0 = "CC0-1.0"
+    CC_BY_2 = "CC-BY-2.0"
+    CC_BY_3 = "CC-BY-3.0"
+    CC_BY_4 = "CC-BY-4.0"
+    CC_BY_SA_2 = "CC-BY-SA-2.0"
+    CC_BY_SA_3 = "CC-BY-SA-3.0"
+    CC_BY_SA_4 = "CC-BY-SA-4.0"
+
+
+# Page-ID forms only: none can carry a person's name (spec FR-015, research R4).
+SOURCE_URL_FORMS: Final[tuple[re.Pattern[str], ...]] = (
+    re.compile(r"https://commons\.wikimedia\.org/w/index\.php\?curid=\d+"),
+    re.compile(r"https://www\.flickr\.com/photo\.gne\?id=\d+"),
+    re.compile(r"https://unsplash\.com/photos/[A-Za-z0-9_-]{11}"),
+)
+_PHOTO_NAME: Final[re.Pattern[str]] = re.compile(r"(person|absent)-[a-z]+\.jpg")
+
+
+class AttributionRow(Record):
+    """Where a committed photo comes from, who took it, and its licence (spec FR-013)."""
+
+    path: Annotated[str, StringConstraints(pattern=r"^photos/(person|absent)-[a-z]+\.jpg$")]
+    source_url: str
+    author: Annotated[str, StringConstraints(min_length=1)]
+    licence: Licence
+
+    @field_validator("source_url")
+    @classmethod
+    def _page_id_form(cls, url: str) -> str:
+        if not any(form.fullmatch(url) for form in SOURCE_URL_FORMS):
+            raise ValueError(
+                "use the host's page-ID form: commons.wikimedia.org/w/index.php?curid=<n>, "
+                "www.flickr.com/photo.gne?id=<n> or unsplash.com/photos/<id>"
+            )
+        return url
+
+
+def _attribution_errors(root: Path, used_labels: frozenset[str]) -> list[str]:
+    """Photos and attribution rows match one to one, and every photo is used (spec FR-014)."""
+    photos_dir = root / "photos"
+    files = sorted(p.name for p in photos_dir.glob("*")) if photos_dir.is_dir() else []
+    errors = [
+        f"photos/{name}: photos are named <label>.jpg, e.g. person-a.jpg"
+        for name in files
+        if not _PHOTO_NAME.fullmatch(name)
+    ]
+    photos = {f"photos/{name}" for name in files if _PHOTO_NAME.fullmatch(name)}
+    path = root / ATTRIBUTION_FILE
+    if not path.is_file():
+        return [*errors, f"{ATTRIBUTION_FILE}: missing; one row per photo"]
+    raw, read_errors = _read_csv(path, ATTRIBUTION_FILE, ATTRIBUTION_COLUMNS)
+    rows, row_errors = _parse_rows(AttributionRow, raw, ATTRIBUTION_FILE)
+    errors += read_errors + row_errors
+    attributed: set[str] = set()
+    for line, row in rows:
+        where = f"{ATTRIBUTION_FILE}:{line}"
+        if row.path in attributed:
+            errors.append(f"{where}: duplicate row for {row.path}")
+        attributed.add(row.path)
+        if row.path not in photos:
+            errors.append(f"{where}: no photo at {row.path}")
+    if not read_errors and not row_errors:
+        errors += [
+            f"{photo}: no attribution row in {ATTRIBUTION_FILE}"
+            for photo in sorted(photos - attributed)
+        ]
+    errors += [
+        f"{photo}: no label set uses this photo; remove it or label it"
+        for photo in sorted(photos)
+        if photo.removeprefix("photos/").removesuffix(".jpg") not in used_labels
+    ]
+    return errors
+
+
 def read_run_log(root: Path) -> tuple[list[RunRow], list[str]]:
     """The run log's rows (empty when the file does not exist yet), or its errors."""
     path = root / RUNS_FILE
@@ -399,9 +500,13 @@ def read_run_log(root: Path) -> tuple[list[RunRow], list[str]]:
 
 def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:
     """Every file under ``root`` validated together: the folder, or None and every error found."""
-    sets, set_dates, errors = _read_sets(root)
-    errors += _methods_errors(root, set_dates, sets)
-    errors += read_run_log(root)[1]
+    sets = _read_sets(root)
+    errors = [
+        *sets.errors,
+        *_methods_errors(root, sets.dates, sets.valid),
+        *_attribution_errors(root, sets.labels),
+        *read_run_log(root)[1],
+    ]
     if errors:
         return None, tuple(errors)
-    return EvalFolder(root=root, sets=tuple(sorted(sets, key=lambda s: s.crawl_date))), ()
+    return EvalFolder(root=root, sets=tuple(sorted(sets.valid, key=lambda s: s.crawl_date))), ()
