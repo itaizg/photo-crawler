@@ -1,5 +1,9 @@
-"""The 3-attempt cap, in SQL (FR-023a, research R11a). Used only by ``PostgresIndexStore``."""
+"""Per-link history, in SQL: the 3-attempt cap (FR-023a, research R11a) and dead links (FR-023b).
 
+Used only by ``PostgresIndexStore``.
+"""
+
+from datetime import timedelta
 from typing import Final, LiteralString
 
 import psycopg
@@ -18,6 +22,22 @@ ON CONFLICT (url, kind) DO UPDATE SET
     3),
   last_error = EXCLUDED.last_error,
   last_attempt_at = now(),
+  last_run_id = EXCLUDED.last_run_id
+"""
+
+# Dead links (FR-023b): not failures and not attempts, so a table of their own.
+_IS_DEAD: Final[LiteralString] = """
+SELECT 1 FROM dead_link
+WHERE url = %(url)s AND kind = %(kind)s
+  AND (status = 410 OR last_checked_at > now() - %(recheck)s)
+"""
+
+_RECORD_DEAD: Final[LiteralString] = """
+INSERT INTO dead_link (url, kind, status, last_run_id)
+VALUES (%(url)s, %(kind)s, %(status)s, %(run_id)s)
+ON CONFLICT (url, kind) DO UPDATE SET
+  status = EXCLUDED.status,
+  last_checked_at = now(),
   last_run_id = EXCLUDED.last_run_id
 """
 
@@ -48,6 +68,19 @@ def record_failure(
 
 def record_success(conn: psycopg.Connection, url: str, kind: RequestKind) -> None:
     conn.execute("DELETE FROM fetch_attempt WHERE url = %s AND kind = %s", (url, kind))
+    conn.execute("DELETE FROM dead_link WHERE url = %s AND kind = %s", (url, kind))
+
+
+def is_dead(conn: psycopg.Connection, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+    """True when the link is known dead: a 410, or a 404 checked less than ``recheck`` ago."""
+    row = conn.execute(_IS_DEAD, {"url": url, "kind": kind, "recheck": recheck}).fetchone()
+    return row is not None
+
+
+def record_dead(
+    conn: psycopg.Connection, url: str, kind: RequestKind, status: int, run_id: str
+) -> None:
+    conn.execute(_RECORD_DEAD, {"url": url, "kind": kind, "status": status, "run_id": run_id})
 
 
 def record_detect_failure(conn: psycopg.Connection, image_id: int, run_id: str) -> None:

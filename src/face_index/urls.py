@@ -3,12 +3,17 @@
 import re
 from collections.abc import Mapping
 from typing import Final
-from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+from urllib.parse import parse_qsl, quote, urlencode, urlsplit, urlunsplit
 
 from face_index.config import TRACKING_PARAMS, TRACKING_PREFIXES, Site
 
 _DEFAULT_PORTS: Final[Mapping[str, int]] = {"http": 80, "https": 443}
 _SLASHES: Final[re.Pattern[str]] = re.compile(r"/{2,}")
+# Characters a logged path or query key keeps as is. Everything else (control characters such as
+# CR/LF, spaces, non-ASCII) is percent-encoded, so a crawled URL cannot forge a log line.
+_LOG_SAFE_PATH: Final[str] = "/%:@!$&'()*+,;=-._~"
+_LOG_SAFE_KEY: Final[str] = "%:@!$'()*+,;-._~/?[]"
+_LOG_SAFE_HOST: Final[str] = "-.:"  # names, IPv4 and IPv6 literals (brackets added by _netloc)
 
 
 def _netloc(host: str, port: int | None, scheme: str) -> str:
@@ -63,12 +68,21 @@ def in_scope(url: str, site: Site) -> bool:
 def for_log(url: str) -> str:
     """A URL safe to log: no userinfo, and every query value masked (signed URLs carry secrets).
 
-    Query keys are kept, so a log line still tells renditions apart by their parameter names.
+    Query keys are kept as sent (still percent-encoded, never decoded), so a log line still tells
+    renditions apart by their parameter names; a bare query token with no ``=`` is masked whole.
+    Host, path and keys are percent-encoded where needed, so the result is one printable line.
     """
     try:
         parts = urlsplit(url)
-        netloc = _netloc(parts.hostname or "", parts.port, parts.scheme) if parts.netloc else ""
+        host = quote(parts.hostname or "", safe=_LOG_SAFE_HOST)
+        netloc = _netloc(host, parts.port, parts.scheme) if parts.netloc else ""
     except ValueError:  # malformed (bad port, bad IPv6): log only what cannot leak a secret
         return "<malformed url>"
-    query = "&".join(f"{key}=…" for key, _ in parse_qsl(parts.query, keep_blank_values=True))
-    return urlunsplit((parts.scheme, netloc, parts.path, query, ""))
+    query = "&".join(_masked_pair(pair) for pair in parts.query.split("&") if pair)
+    path = quote(parts.path, safe=_LOG_SAFE_PATH)
+    return urlunsplit((parts.scheme, netloc, path, query, ""))
+
+
+def _masked_pair(pair: str) -> str:
+    key, has_value, _ = pair.partition("=")
+    return f"{quote(key, safe=_LOG_SAFE_KEY)}=…" if has_value else "…"

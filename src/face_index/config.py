@@ -4,6 +4,7 @@ DAG params and environment variables only override these values.
 """
 
 import os
+from datetime import timedelta
 from typing import Final, LiteralString
 
 from face_index.models import Record
@@ -92,6 +93,9 @@ MAX_DETECT_BATCHES: Final[int] = (
     1000  # below Airflow's default mapping limit (1024); the rest waits a run
 )
 MAX_ATTEMPTS: Final[int] = 3
+# A link that answered 404 is not requested again for this long; one that answered 410 never
+# is (FR-023b).
+DEAD_LINK_RECHECK: Final[timedelta] = timedelta(days=30)
 # How long a duplicate detection task waits for another worker's lock on the same image before
 # leaving the image pending for the next run.
 DETECT_LOCK_TIMEOUT_S: Final[int] = 120

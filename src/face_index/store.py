@@ -12,7 +12,7 @@ contract; no ``psycopg`` exception leaves this module:
 
 from collections.abc import Callable, Generator
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import datetime, timedelta
 from importlib.resources import files
 from typing import Any, Final, LiteralString
 
@@ -48,6 +48,16 @@ ON CONFLICT (page_id, image_id) DO UPDATE
 _OUTDATED_LINKS: Final[LiteralString] = """
 SELECT count(*) FROM page_image pi JOIN page p ON p.id = pi.page_id
 WHERE pi.page_id = %s AND pi.last_seen_at < p.last_crawled_at
+"""
+
+# A page the server now reports as gone (404/410): mark it crawled now with no link seen, so
+# search ignores all its links (FR-018). A URL never stored is not added.
+_RETIRE_PAGE: Final[LiteralString] = """
+WITH retired AS (
+  UPDATE page SET last_crawled_at = now() WHERE url = %s RETURNING id, last_crawled_at
+)
+SELECT count(*) FROM page_image pi JOIN retired p ON p.id = pi.page_id
+WHERE pi.last_seen_at < p.last_crawled_at
 """
 
 _UPSERT_PROFILE: Final[LiteralString] = """
@@ -381,6 +391,11 @@ class PostgresIndexStore:
 
     # -- attempt cap ------------------------------------------------------------------------
 
+    def retire_page(self, url: str) -> int:
+        with self._guard() as conn:
+            row = conn.execute(_RETIRE_PAGE, (url,)).fetchone()
+            return int(row[0]) if row else 0
+
     def outdated_links(self, page_id: int) -> int:
         with self._guard() as conn:
             row = conn.execute(_OUTDATED_LINKS, (page_id,)).fetchone()
@@ -397,6 +412,14 @@ class PostgresIndexStore:
     def record_success(self, url: str, kind: RequestKind) -> None:
         with self._guard() as conn:
             attempts.record_success(conn, url, kind)
+
+    def is_dead(self, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+        with self._guard() as conn:
+            return attempts.is_dead(conn, url, kind, recheck)
+
+    def record_dead(self, url: str, kind: RequestKind, status: int, run_id: str) -> None:
+        with self._guard() as conn:
+            attempts.record_dead(conn, url, kind, status, run_id)
 
     def record_detect_failure(self, image_id: int, run_id: str) -> None:
         with self._guard() as conn:

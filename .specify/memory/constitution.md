@@ -1,11 +1,17 @@
 <!--
 Sync Impact Report
 ==================
-Version change: 2.1.1 → 2.2.0
-Bump rationale: MINOR. Changes what failure isolation requires; approved by the project owner
-on 2026-11-15.
+Version change: 2.2.0 → 2.2.1
+Bump rationale: PATCH. Clarifies what counts as a failed request; approved by the project owner
+on 2026-11-16.
 
 Modified sections:
+  - Project Constraints (Failure isolation): a dead link (HTTP 404/410) is not a failed
+    request. It does not fail the step, but it MUST stay visible: logged with its URL, counted
+    in its own summary row, and recorded so later runs do not request it again until a
+    recheck (spec FR-023, FR-023b).
+
+Previous amendment (2.2.0), modified sections:
   - Project Constraints (Failure isolation): a failed page or image no longer leaves the run
     green. It still MUST NOT stop the run, but the step with the failed request and the run
     are marked failed after the work has finished, so a failure is not missed (spec FR-023).
@@ -426,7 +432,9 @@ Rationale: without memory, every session starts from scratch; with it, the work 
 - Failure isolation: a failure on one page or image MUST NOT stop the run; every other item is
   still processed. It MUST NOT go unnoticed either: the step in which a page or image request
   failed, and the run, are marked failed after that work has finished, and the cause MUST be
-  visible in the Airflow task logs and in the task's failure count (Principle XII).
+  visible in the Airflow task logs and in the task's failure count (Principle XII). A dead link
+  (HTTP 404/410) is not a failed request: it MUST be logged with its URL, counted in its own
+  summary row, and recorded so later runs do not request it again until a recheck.
 - Secrets: environment variables from a git-ignored `.env`, or generated at first start into a
   private Compose volume; never committed, never printed or logged. The search script uses a read-only database role (Principle XIV).
 
@@ -459,4 +467,4 @@ Rationale: without memory, every session starts from scratch; with it, the work 
   the assignment requirements it implements and evaluates it against these principles before
   implementation begins.
 
-**Version**: 2.2.0 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-15
+**Version**: 2.2.1 | **Ratified**: 2026-11-10 | **Last Amended**: 2026-11-16

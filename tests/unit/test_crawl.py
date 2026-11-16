@@ -1,8 +1,11 @@
 from collections.abc import Mapping
-from typing import Final
+from typing import Any, Final
+
+import pytest
 
 from face_index import config
 from face_index.crawl import CrawlResult, crawl_site
+from face_index.errors import InfrastructureError
 from face_index.http import HttpFetcher
 from face_index.urls import in_scope
 from tests.fakes import FakeResolver, MockSite, RecordingPacer, Reply, html_reply, robots_reply
@@ -76,7 +79,7 @@ def test_result_round_trips_through_json() -> None:
 
 
 def crawl_routes(
-    routes: dict[str, Reply], depth: int, cap: int | None
+    routes: dict[str, Reply], depth: int, cap: int | None, **hooks: Any
 ) -> tuple[CrawlResult, MockSite]:
     site = MockSite({"https://edition.cnn.com/robots.txt": robots_reply(), **routes})
     fetcher = HttpFetcher(
@@ -85,7 +88,7 @@ def crawl_routes(
         transport=site.transport(),
         scope=lambda u: in_scope(u, SITE),
     )
-    return crawl_site(SITE, fetcher, depth, cap), site
+    return crawl_site(SITE, fetcher, depth, cap, **hooks), site
 
 
 def test_failed_and_non_html_requests_count_toward_the_cap() -> None:
@@ -100,9 +103,65 @@ def test_failed_and_non_html_requests_count_toward_the_cap() -> None:
         depth=1,
         cap=3,
     )
-    assert site.requested("https://edition.cnn.com/gone")  # 404: a failed request
+    assert site.requested("https://edition.cnn.com/gone")  # 404: a sent request, a dead link
     assert not site.requested("https://edition.cnn.com/a")  # cap of 3 requests reached
     assert result.summary.to_json()["pages_left_by_cap.cnn"] == 1
+
+
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_dead_page_is_counted_and_recorded_with_its_status(status: int) -> None:
+    dead: list[tuple[str, int]] = []
+    result, _ = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/gone"]),
+            "https://edition.cnn.com/gone": Reply(status=status),
+        },
+        depth=1,
+        cap=None,
+        on_dead=lambda url, code: dead.append((url, code)),
+    )
+    assert dead == [("https://edition.cnn.com/gone", status)]
+    summary = result.summary.to_json()
+    assert summary["dead_link.page"] == 1
+    assert not any(k.startswith(("skipped.", "failures.")) for k in summary)
+
+
+def test_a_dead_page_is_retired_before_it_is_recorded() -> None:
+    """If retiring fails, nothing is recorded, so the retried task requests and retires it."""
+    dead: list[str] = []
+
+    def failing_retire(url: str) -> int:
+        raise InfrastructureError("database unavailable")
+
+    with pytest.raises(InfrastructureError):
+        crawl_routes(
+            {
+                "https://edition.cnn.com/": page(["/gone"]),
+                "https://edition.cnn.com/gone": Reply(status=404),
+            },
+            depth=1,
+            cap=None,
+            on_gone=failing_retire,
+            on_dead=lambda url, code: dead.append(url),
+        )
+    assert dead == []
+
+
+def test_a_known_dead_page_is_not_requested_and_uses_no_cap_budget() -> None:
+    known = "https://edition.cnn.com/gone"
+    result, site = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/gone", "/a"]),
+            known: Reply(status=404),
+            "https://edition.cnn.com/a": page([]),
+        },
+        depth=1,
+        cap=2,  # the home page and /a: the known dead link must not take a slot
+        is_dead=lambda url: url == known,
+    )
+    assert not site.requested(known)
+    assert site.requested("https://edition.cnn.com/a")
+    assert result.summary.to_json()["known_dead.page"] == 1
 
 
 def test_malformed_urls_are_skipped_not_fatal() -> None:
@@ -160,7 +219,12 @@ def test_a_redirect_refused_after_its_first_hop_counts_toward_the_cap() -> None:
 
 def test_a_crawl_where_every_request_failed_records_and_counts_them() -> None:
     failures: list[str] = []
-    site = MockSite({"https://edition.cnn.com/robots.txt": robots_reply()})  # home is a 404
+    site = MockSite(
+        {
+            "https://edition.cnn.com/robots.txt": robots_reply(),
+            "https://edition.cnn.com/": Reply(status=500),
+        }
+    )
     fetcher = HttpFetcher(
         pacer=RecordingPacer(),
         resolver=FakeResolver(),
@@ -174,7 +238,14 @@ def test_a_crawl_where_every_request_failed_records_and_counts_them() -> None:
 
 
 def test_a_failed_page_is_counted_and_the_crawl_goes_on() -> None:
-    result, _ = crawl_routes({"https://edition.cnn.com/": page(["/gone"])}, depth=1, cap=None)
+    result, _ = crawl_routes(
+        {
+            "https://edition.cnn.com/": page(["/broken"]),
+            "https://edition.cnn.com/broken": Reply(status=500),
+        },
+        depth=1,
+        cap=None,
+    )
     assert result.summary.to_json()["failures.crawl"] == 1
     assert [p.url for p in result.pages] == ["https://edition.cnn.com/"]
 

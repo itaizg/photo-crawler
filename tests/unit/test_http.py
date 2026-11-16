@@ -1,3 +1,4 @@
+import logging
 import socket
 import threading
 from collections.abc import Mapping
@@ -7,7 +8,7 @@ import httpx
 import pytest
 
 from face_index import config
-from face_index.errors import Disallowed, FetchRefused, ItemError
+from face_index.errors import Disallowed, FetchRefused, Gone, ItemError
 from face_index.http import HttpFetcher, SystemResolver
 from face_index.urls import in_scope
 from tests.fakes import (
@@ -195,6 +196,48 @@ def test_http_error_and_timeout_are_item_errors() -> None:
         fetcher.get_page(HOME)
 
 
+@pytest.mark.parametrize("status", [404, 410])
+def test_a_gone_page_or_image_is_a_sent_dead_link(status: int) -> None:
+    fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=status), HOME: Reply(status=status)})
+    for fetch, url in ((fetcher.get_page, HOME), (fetcher.get_image, IMG)):
+        with pytest.raises(Gone) as raised:
+            fetch(url)
+        assert raised.value.reason == "not_found"
+        assert raised.value.status == status
+        assert raised.value.sent
+        assert isinstance(raised.value, Disallowed)
+
+
+def test_gone_is_always_a_sent_request() -> None:
+    # it has no ``sent`` argument, so no caller can undercount the page cap
+    assert Gone("https://x.test/", 404).sent
+
+
+def test_httpx_request_log_never_shows_signed_query_values(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    signed = "https://media.cnn.com/a.jpg?token=s3cr3t&sig=abc123"
+    fetcher, _, _ = make({**ROBOTS, signed: Reply(status=500)})
+    # httpx logs each request at INFO; force that level so the test does not depend on
+    # whether Airflow (which quiets httpx) was imported first.
+    caplog.set_level(logging.INFO, logger="httpx")
+    with pytest.raises(ItemError):
+        fetcher.get_image(signed)
+    assert "HTTP Request" in caplog.text
+    assert "s3cr3t" not in caplog.text
+    assert "abc123" not in caplog.text
+    assert "token=" in caplog.text
+
+
+@pytest.mark.parametrize("status", [402, 403, 500])
+def test_other_http_errors_are_still_item_errors(status: int) -> None:
+    fetcher, _, _ = make({**ROBOTS, IMG: Reply(status=status), HOME: Reply(status=status)})
+    with pytest.raises(ItemError, match=f"http {status}"):
+        fetcher.get_page(HOME)
+    with pytest.raises(ItemError, match=f"http {status}"):
+        fetcher.get_image(IMG)
+
+
 def test_too_many_redirects() -> None:
     loop = Reply(status=302, headers={"location": HOME})
     fetcher, _, _ = make({**ROBOTS, HOME: loop})
@@ -215,7 +258,7 @@ def test_pages_need_a_scope() -> None:
 def test_ipv6_host_header_is_bracketed() -> None:
     url = "https://[2606:4700:4700::1111]/a.jpg"
     fetcher, site, _ = make({})
-    with pytest.raises(ItemError):
+    with pytest.raises(Gone):  # unrouted: the mock site answers 404, after the request was sent
         fetcher.get_image(url)
     _, request = site.requests[-1]
     assert request.headers["host"] == "[2606:4700:4700::1111]"

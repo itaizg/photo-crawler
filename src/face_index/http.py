@@ -25,15 +25,41 @@ from urllib.robotparser import RobotFileParser
 import httpx
 
 from face_index import config
-from face_index.errors import Disallowed, FetchRefused, ItemError
+from face_index.errors import Disallowed, FetchRefused, Gone, ItemError
 from face_index.models import ImageResponse, PageResponse, RequestKind
 from face_index.ports import Pacer, Resolver
+from face_index.urls import for_log
 
 log: Final[logging.Logger] = logging.getLogger(__name__)
 
 _REDIRECTS: Final[frozenset[int]] = frozenset({301, 302, 303, 307, 308})
+_GONE: Final[frozenset[int]] = frozenset({404, 410})  # a dead link: skipped, not a failure
 _DEFAULT_PORTS: Final[Mapping[str, int]] = {"http": 80, "https": 443}
 
+
+class _MaskUrls(logging.Filter):
+    """Masks the URL in httpx's own request log line ("HTTP Request: GET <url> ...").
+
+    httpx logs every request at INFO with the full query string, which would leak signed-URL
+    secrets. The filter keeps the line but passes each URL argument through ``for_log``, so the
+    guarantee holds whatever level the host application (Airflow, a CLI) gives the logger.
+    """
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, tuple):
+            record.args = tuple(
+                for_log(str(arg)) if isinstance(arg, httpx.URL) else arg for arg in record.args
+            )
+        return True
+
+
+def _mask_httpx_logs() -> None:
+    logger = logging.getLogger("httpx")
+    if not any(isinstance(f, _MaskUrls) for f in logger.filters):
+        logger.addFilter(_MaskUrls())
+
+
+_mask_httpx_logs()
 
 type _Lookup = Callable[[str], list[str]]
 
@@ -116,6 +142,8 @@ class HttpFetcher:
     def get_page(self, url: str) -> PageResponse:
         final_url, response = self._open(url, "page", config.PAGE_ACCEPT, check_scope=True)
         with closing(response):
+            if response.status_code in _GONE:
+                raise Gone(final_url, response.status_code)
             if response.status_code != 200:
                 raise ItemError(f"http {response.status_code}", final_url)
             content_type = response.headers.get("content-type", "")
@@ -131,6 +159,8 @@ class HttpFetcher:
     def get_image(self, url: str) -> ImageResponse:
         final_url, response = self._open(url, "image", config.IMAGE_ACCEPT, check_scope=False)
         with closing(response):
+            if response.status_code in _GONE:
+                raise Gone(final_url, response.status_code)
             if response.status_code != 200:
                 raise ItemError(f"http {response.status_code}", final_url)
             body = self._read(response, self._max_download, final_url)

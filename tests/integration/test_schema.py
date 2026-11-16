@@ -77,6 +77,21 @@ def test_check_constraints_reject_invalid_rows(
 
 
 @pytest.mark.usefixtures("store")
+@pytest.mark.parametrize(
+    "values",
+    [("https://x/", "page", 500, "r1"), ("https://x/", "video", 404, "r1")],
+)
+def test_dead_link_accepts_only_404_or_410_and_known_kinds(
+    sql: psycopg.Connection, values: tuple[object, ...]
+) -> None:
+    with pytest.raises(psycopg.errors.CheckViolation):
+        sql.execute(
+            "INSERT INTO dead_link (url, kind, status, last_run_id) VALUES (%s, %s, %s, %s)",
+            values,
+        )
+
+
+@pytest.mark.usefixtures("store")
 def test_page_depth_is_capped(sql: psycopg.Connection) -> None:
     with pytest.raises(psycopg.errors.CheckViolation):
         sql.execute(

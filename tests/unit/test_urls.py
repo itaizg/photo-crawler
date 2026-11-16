@@ -73,6 +73,19 @@ def test_in_scope(url: str, site: Site, expected: bool) -> None:
         ("https://img.test:8443/a.jpg", "https://img.test:8443/a.jpg"),
         ("https://img.test:bad/a.jpg?token=t", "<malformed url>"),
         ("http://[::1/a.jpg?token=t", "<malformed url>"),
+        # a bare token (no "=") is masked whole, not logged as a key
+        ("https://img.test/a.jpg?s3cr3t&w=200", "https://img.test/a.jpg?…&w=…"),
+        # an encoded CR/LF in a key stays encoded: no forged log line
+        (
+            "https://img.test/a.jpg?a%0D%0Afake%20line=1",
+            "https://img.test/a.jpg?a%0D%0Afake%20line=…",
+        ),
+        # control or line-separator characters in the host are percent-encoded too
+        ("https://a\x0bb.com/x", "https://a%0Bb.com/x"),
+        ("https://a\u2028b.com/x", "https://a%E2%80%A8b.com/x"),
+        ("https://[::1]:8443/x?k=v", "https://[::1]:8443/x?k=…"),
+        # raw control or non-ASCII characters in the path or a key are percent-encoded
+        ("https://img.test/a\x0bb/é.jpg?k\x00=1", "https://img.test/a%0Bb/%C3%A9.jpg?k%00=…"),
     ],
 )
 def test_for_log_masks_secrets(raw: str, expected: str) -> None:

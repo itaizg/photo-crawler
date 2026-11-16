@@ -6,7 +6,7 @@ adapters (``HttpFetcher``, ``PostgresPacer``, ``PillowNormalizer``, ``DeepFaceEm
 """
 
 from collections.abc import Callable, Sequence
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Protocol
 
 from face_index.models import (
@@ -122,11 +122,29 @@ class IndexStore(Protocol):
         """Links of this page not seen in its latest crawl (FR-018). Read-only; deletes nothing."""
         ...
 
+    def retire_page(self, url: str) -> int:
+        """The page is gone (HTTP 404/410): count it as crawled now, with no link seen.
+
+        Search then ignores all its links, as for any link a crawl did not see (FR-018). Deletes
+        nothing, and a URL that was never stored is not added. Returns the links now outdated.
+        """
+        ...
+
     def is_abandoned(self, url: str, kind: RequestKind, max_attempts: int) -> bool: ...
 
     def record_failure(self, url: str, kind: RequestKind, error: str, run_id: str) -> None: ...
 
-    def record_success(self, url: str, kind: RequestKind) -> None: ...
+    def record_success(self, url: str, kind: RequestKind) -> None:
+        """The link answered: clear its failure history and any dead-link record."""
+        ...
+
+    def is_dead(self, url: str, kind: RequestKind, recheck: timedelta) -> bool:
+        """The link is known dead (FR-023b): a 410, or a 404 checked less than ``recheck`` ago."""
+        ...
+
+    def record_dead(self, url: str, kind: RequestKind, status: int, run_id: str) -> None:
+        """Record that the link answered 404 or 410 in this run (FR-023b)."""
+        ...
 
     def record_detect_failure(self, image_id: int, run_id: str) -> None: ...
 
