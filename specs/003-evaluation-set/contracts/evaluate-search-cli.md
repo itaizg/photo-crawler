@@ -50,8 +50,8 @@ person-b              3        2    0.67      0       0
     missed: https://edition.cnn.com/2026/11/20/politics/…
 person-c              2        2    1.00      0       1
     label error (page not indexed): https://edition.cnn.com/2026/11/19/world/…
-absent-a              0        0       –      0       0
-absent-b              0        1       –      1       0
+absent-a              0        0       -      0       0
+absent-b              0        1       -      1       0
     extra:  https://edition.cnn.com/2026/11/20/us/…
 FAIL
 ```

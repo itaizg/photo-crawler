@@ -98,7 +98,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 1 (write first, see them fail)
 
-- [ ] T011 [P] [US1] Rewrite `tests/unit/test_evaluate_search.py` from the TOML fixture to label-set folders in `tmp_path`, using `FakeSearchIndex` and `FakeEmbedder`. Assert:
+- [X] T011 [P] [US1] Rewrite `tests/unit/test_evaluate_search.py` from the TOML fixture to label-set folders in `tmp_path`, using `FakeSearchIndex` and `FakeEmbedder`. Assert:
   - recall and missed pages are reported (keep the existing 4-of-5 = 0.80 PASS case);
   - an extra page makes the verdict FAIL;
   - an absent label with any page makes the verdict FAIL;
@@ -112,12 +112,12 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Implementation for User Story 1
 
-- [ ] T012 [US1] In `scripts/evaluate_search.py`:
+- [X] T012 [US1] In `scripts/evaluate_search.py`:
   - **Remove** `tomllib`, `Person`, `Absent`, `Labels` and `parse_labels`.
   - **Rename** `PersonReport` to `LabelReport`, with fields `label`, `expected`, `returned`, `missed`, `extra`, `label_errors` (data-model.md).
   - **Update** `evaluate_person(label, pages, returned, known)` so that unknown pages become `label_errors` and are excluded from `expected` and `missed`. Add `evaluate_absent(label, returned)`.
   - **Change** `passes()` to the verdict in data-model.md. Keep `MIN_RECALL = 0.80`.
-- [ ] T013 [US1] Rewrite `run(folder: Path, crawl_date: date, index: SearchIndex, embedder: FaceEmbedder, *, log_to: Path | None = None) -> int` in `scripts/evaluate_search.py`, following the order of work in `contracts/evaluate-search-cli.md`:
+- [X] T013 [US1] Rewrite `run(folder: Path, crawl_date: date, index: SearchIndex, embedder: FaceEmbedder, *, log_to: Path | None = None) -> int` in `scripts/evaluate_search.py`, following the order of work in `contracts/evaluate-search-cli.md`:
   - load with `eval_set.read_folder` (print every error and exit 2 if any), pick the set, then read `profile_id` (exit 2 if missing) and `index_size`;
   - call `known_pages` once with all labelled URLs;
   - embed every photo via `prepare_query`, catching `NoFaceError` and `QueryImageError` per photo (the model boundary, constitution VIII), collecting each path with its reason, and exiting 2 if there are any;
@@ -125,7 +125,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - print exactly the format in the contract.
 
   `log_to` is accepted and ignored until T030.
-- [ ] T014 [US1] Replace `main()` in `scripts/evaluate_search.py` with an `argparse` parser for `FOLDER` (default `queries/eval`), `--set`, `--log` and `--check`, with the exit 64 cases from the contract. It opens `PostgresSearchIndex(config.database_dsn())` with `closing` and `DeepFaceEmbedder()`, and calls `run`, passing `log_to=folder / "runs.csv"` only when `--log` is given. Catch `InfrastructureError` at this boundary to print a DSN-free error and exit 2. Update the module docstring to the new usage. This makes T011 pass.
+- [X] T014 [US1] Replace `main()` in `scripts/evaluate_search.py` with an `argparse` parser for `FOLDER` (default `queries/eval`), `--set`, `--log` and `--check`, with the exit 64 cases from the contract. It opens `PostgresSearchIndex(config.database_dsn())` with `closing` and `DeepFaceEmbedder()`, and calls `run`, passing `log_to=folder / "runs.csv"` only when `--log` is given. Catch `InfrastructureError` at this boundary to print a DSN-free error and exit 2. Update the module docstring to the new usage. This makes T011 pass.
 - [ ] T015 [US1] [HUMAN] Label the first set:
   - Run the indexer at default depth.
   - Take a local snapshot of the database (`docker compose exec postgres pg_dump …` to a file outside the repo).
