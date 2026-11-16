@@ -148,7 +148,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests for User Story 2 (write first, see them fail)
 
-- [ ] T019 [P] [US2] Add set-level validation tests to `tests/unit/test_eval_set.py`. `eval_set.read_folder` must return each of these errors with its file and line:
+- [X] T019 [P] [US2] Add set-level validation tests to `tests/unit/test_eval_set.py`. `eval_set.read_folder` must return each of these errors with its file and line:
   - fewer than 5 present labels, and fewer than 5 absent labels;
   - no absent look-alike, and no small-face row;
   - `onsite_pair=true` with no present look-alike row, and `onsite_pair=false` with one;
@@ -157,7 +157,7 @@ description: "Task list for feature 003: Search Evaluation Set"
   - a `runs.csv` header or type error.
 
   It must collect every error across all files instead of stopping at the first, and return no errors for a valid folder.
-- [ ] T020 [P] [US2] Create `tests/integration/test_evaluate_search_e2e.py` with the fixtures from research R9:
+- [X] T020 [P] [US2] Create `tests/integration/test_evaluate_search_e2e.py` with the fixtures from research R9:
   - seed pgvector through `PostgresIndexStore` (`store` fixture) with images from `tests.images.photo(seed=…)`;
   - use a `FakeEmbedder(lookup=…)` that maps each normalized JPEG to an identity key, so the same key gives identical embeddings;
   - build evaluation folders in `tmp_path` with real 5 + 5 minimums;
@@ -174,14 +174,14 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Implementation for User Story 2
 
-- [ ] T022 [US2] Implement in `src/face_index/eval_set.py`:
+- [X] T022 [US2] Implement in `src/face_index/eval_set.py`:
   - `_methods_errors`, `_run_log_errors`, and the set-minimum and methods-coverage rules from `data-model.md`, each returning `list[str]`;
   - add them to `read_folder`, so it returns them with the other errors. No `try` is involved in collecting them.
 
   This makes T019 pass.
-- [ ] T023 [US2] Wire `--check` in `scripts/evaluate_search.py`: print each error from `eval_set.read_folder` and exit 2, or print `ok <file>` per file and exit 0. This needs no DSN and no model import. Move the `DeepFaceEmbedder` import inside the non-check path so `--check` doesn't load TensorFlow.
-- [ ] T024 [US2] Make T020 pass. Adjust only the test's seeding helpers, or the evaluator if T020 exposes a real defect, which must then be described in the commit message.
-- [ ] T025 [US2] Add an `eval-set` job to `.github/workflows/ci.yml`, after `test`:
+- [X] T023 [US2] Wire `--check` in `scripts/evaluate_search.py`: print each error from `eval_set.read_folder` and exit 2, or print `ok <file>` per file and exit 0. This needs no DSN and no model import. Move the `DeepFaceEmbedder` import inside the non-check path so `--check` doesn't load TensorFlow.
+- [X] T024 [US2] Make T020 pass. Adjust only the test's seeding helpers, or the evaluator if T020 exposes a real defect, which must then be described in the commit message.
+- [X] T025 [US2] Add an `eval-set` job to `.github/workflows/ci.yml`, after `test`:
   - `runs-on: ubuntu-latest`, `timeout-minutes: 5`;
   - the same `postgres` service block and `FACE_INDEX_TEST_DSN` env as `test`;
   - `actions/checkout` at the same pinned SHA with `fetch-depth: 0`, then `astral-sh/setup-uv` at the same SHA with `enable-cache: true`, then `uv sync --locked`.

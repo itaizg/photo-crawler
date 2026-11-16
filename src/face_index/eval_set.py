@@ -9,19 +9,52 @@ them at once, so collecting errors needs no exception handling (constitution VII
 
 import re
 from collections.abc import Mapping, Sequence
-from datetime import date
+from datetime import date, datetime
 from enum import StrEnum
 from pathlib import Path
 from typing import Annotated, Final, Literal, Self
 
 import pandas as pd
-from pydantic import StringConstraints, ValidationError, field_validator, model_validator
+from pydantic import (
+    NonNegativeInt,
+    StringConstraints,
+    ValidationError,
+    field_validator,
+    model_validator,
+)
 
 from face_index import config
 from face_index.models import Record
 from face_index.urls import host_of, normalize_page_url
 
 SET_COLUMNS: Final[tuple[str, ...]] = ("label", "page_url", "hard_case", "lookalike_of")
+METHODS_COLUMNS: Final[tuple[str, ...]] = (
+    "crawl_date",
+    "found_by",
+    "labeller",
+    "snapshot_holder",
+    "onsite_pair",
+)
+RUN_COLUMNS: Final[tuple[str, ...]] = (
+    "run_at",
+    "label_set",
+    "labels_sha256",
+    "model_profile",
+    "threshold",
+    "faces",
+    "images",
+    "pages",
+    "label",
+    "expected",
+    "returned",
+    "missed",
+    "extra",
+    "label_errors",
+    "verdict",
+)
+METHODS_FILE: Final[str] = "methods.csv"
+RUNS_FILE: Final[str] = "runs.csv"
+MIN_LABELS: Final[int] = 5  # per role, per set (spec FR-001a, FR-002)
 
 LABEL_PATTERN: Final[str] = r"^(person|absent)-[a-z]+$"
 _SET_NAME: Final[re.Pattern[str]] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -215,41 +248,160 @@ def _set_rule_errors(name: str, rows: Sequence[tuple[int, SetRow]]) -> list[str]
     return errors
 
 
-def _read_set(root: Path, path: Path) -> tuple[LabelSet | None, list[str]]:
-    name = path.relative_to(root).as_posix()
+def _minimum_errors(name: str, rows: Sequence[SetRow]) -> list[str]:
+    """Each set's minimums over distinct labels (spec FR-001a to FR-003)."""
+    present = {r.label for r in rows if role(r.label) == "present"}
+    absent = {r.label for r in rows if role(r.label) == "absent"}
+    errors = [
+        f"{name}: needs at least {MIN_LABELS} {kind} labels, has {len(labels)}"
+        for kind, labels in (("present", present), ("absent", absent))
+        if len(labels) < MIN_LABELS
+    ]
+    if not any(r.hard_case is HardCase.LOOK_ALIKE and role(r.label) == "absent" for r in rows):
+        errors.append(f"{name}: needs an absent look-alike (hard_case look_alike on an absent row)")
+    if not any(r.hard_case is HardCase.SMALL_FACE for r in rows):
+        errors.append(f"{name}: needs a small-face page (hard_case small_face)")
+    return errors
+
+
+def _has_onsite_pair(label_set: LabelSet) -> bool:
+    return any(
+        r.hard_case is HardCase.LOOK_ALIKE and role(r.label) == "present" for r in label_set.rows
+    )
+
+
+def _set_date(name: str, path: Path) -> date | str:
+    """The crawl date a set file is named by, or the naming error."""
     if path.suffix != ".csv" or not _SET_NAME.match(path.stem):
-        return None, [f"{name}: a set file is named by its crawl date, YYYY-MM-DD.csv"]
-    try:
-        crawl_date = date.fromisoformat(path.stem)
+        return f"{name}: a set file is named by its crawl date, YYYY-MM-DD.csv"
+    try:  # file-name boundary: a well-formed but impossible date such as 2026-13-40
+        return date.fromisoformat(path.stem)
     except ValueError:
-        return None, [f"{name}: {path.stem} is not a valid date"]
+        return f"{name}: {path.stem} is not a valid date"
+
+
+def _read_set(root: Path, path: Path, crawl_date: date) -> tuple[LabelSet | None, list[str]]:
+    name = path.relative_to(root).as_posix()
     raw, errors = _read_csv(path, name, SET_COLUMNS)
     rows, row_errors = _parse_rows(SetRow, raw, name)
     errors += row_errors + _set_rule_errors(name, rows)
-    for label in dict.fromkeys(row.label for _, row in rows):
+    parsed = [row for _, row in rows]
+    if not errors:  # minimums over a partly unreadable set would only add noise
+        errors += _minimum_errors(name, parsed)
+    for label in dict.fromkeys(row.label for row in parsed):
         if not (root / photo_path(label)).is_file():
             errors.append(f"{name}: {label} has no photo at {photo_path(label)}")
-    label_set = LabelSet(crawl_date=crawl_date, rows=tuple(row for _, row in rows))
+    label_set = LabelSet(crawl_date=crawl_date, rows=tuple(parsed))
     return (None if errors else label_set), errors
 
 
-def _read_sets(root: Path) -> tuple[list[LabelSet], list[str]]:
+def _read_sets(root: Path) -> tuple[list[LabelSet], set[date], list[str]]:
+    """The valid sets, the crawl date of every well-named set file, and every error."""
     files = sorted(p for p in (root / "sets").glob("*") if p.is_file())
     if not files:
-        return [], ["sets/: no label set; add sets/<crawl date>.csv"]
+        return [], set(), ["sets/: no label set; add sets/<crawl date>.csv"]
     sets: list[LabelSet] = []
+    dates: set[date] = set()
     errors: list[str] = []
     for path in files:
-        label_set, set_errors = _read_set(root, path)
-        errors += set_errors
-        if label_set is not None:
-            sets.append(label_set)
-    return sets, errors
+        name = path.relative_to(root).as_posix()
+        match _set_date(name, path):
+            case str() as error:
+                errors.append(error)
+            case crawl_date:
+                dates.add(crawl_date)
+                label_set, set_errors = _read_set(root, path, crawl_date)
+                errors += set_errors
+                if label_set is not None:
+                    sets.append(label_set)
+    return sets, dates, errors
+
+
+# --- methods.csv and runs.csv -------------------------------------------------------------------
+
+
+def _true_or_false(value: object) -> object:
+    if value not in ("true", "false"):
+        raise ValueError("must be true or false")
+    return value == "true"
+
+
+class MethodRow(Record):
+    """How one label set was labelled (spec FR-025, FR-025a)."""
+
+    crawl_date: date
+    found_by: Literal["browse", "search", "both"]
+    labeller: Annotated[str, StringConstraints(min_length=1)]
+    snapshot_holder: Annotated[str, StringConstraints(min_length=1)]
+    onsite_pair: bool
+
+    _onsite_pair = field_validator("onsite_pair", mode="before")(_true_or_false)
+
+
+class RunRow(Record):
+    """One label's result in one logged real-model run (spec FR-027)."""
+
+    run_at: datetime
+    label_set: date
+    labels_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{12}$")]
+    model_profile: Annotated[str, StringConstraints(min_length=1)]
+    threshold: float
+    faces: NonNegativeInt
+    images: NonNegativeInt
+    pages: NonNegativeInt
+    label: Label
+    expected: NonNegativeInt
+    returned: NonNegativeInt
+    missed: NonNegativeInt
+    extra: NonNegativeInt
+    label_errors: NonNegativeInt
+    verdict: Literal["PASS", "FAIL"]
+
+
+def _methods_errors(root: Path, set_dates: set[date], sets: Sequence[LabelSet]) -> list[str]:
+    """Every set has exactly one methods row, and its onsite_pair agrees with the set."""
+    path = root / METHODS_FILE
+    if not path.is_file():
+        return [f"{METHODS_FILE}: missing; one row per label set"]
+    raw, errors = _read_csv(path, METHODS_FILE, METHODS_COLUMNS)
+    rows, row_errors = _parse_rows(MethodRow, raw, METHODS_FILE)
+    errors += row_errors
+    by_date = {s.crawl_date: s for s in sets}
+    seen: set[date] = set()
+    for line, row in rows:
+        where = f"{METHODS_FILE}:{line}"
+        if row.crawl_date in seen:
+            errors.append(f"{where}: more than one row for {row.crawl_date}")
+        seen.add(row.crawl_date)
+        if row.crawl_date not in set_dates:
+            errors.append(f"{where}: no label set sets/{row.crawl_date}.csv for {row.crawl_date}")
+        label_set = by_date.get(row.crawl_date)
+        if label_set is not None and row.onsite_pair != _has_onsite_pair(label_set):
+            has = "has" if _has_onsite_pair(label_set) else "has no"
+            errors.append(
+                f"{where}: onsite_pair is {str(row.onsite_pair).lower()}, but {label_set.file} "
+                f"{has} on-site look-alike pair"
+            )
+    if not row_errors:
+        errors += [f"sets/{d}.csv: no {METHODS_FILE} row for {d}" for d in sorted(set_dates - seen)]
+    return errors
+
+
+def read_run_log(root: Path) -> tuple[list[RunRow], list[str]]:
+    """The run log's rows (empty when the file does not exist yet), or its errors."""
+    path = root / RUNS_FILE
+    if not path.is_file():
+        return [], []
+    raw, errors = _read_csv(path, RUNS_FILE, RUN_COLUMNS)
+    rows, row_errors = _parse_rows(RunRow, raw, RUNS_FILE)
+    return [row for _, row in rows], errors + row_errors
 
 
 def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:
     """Every file under ``root`` validated together: the folder, or None and every error found."""
-    sets, errors = _read_sets(root)
+    sets, set_dates, errors = _read_sets(root)
+    errors += _methods_errors(root, set_dates, sets)
+    errors += read_run_log(root)[1]
     if errors:
         return None, tuple(errors)
     return EvalFolder(root=root, sets=tuple(sorted(sets, key=lambda s: s.crawl_date))), ()

@@ -168,3 +168,85 @@ def test_an_unreadable_csv_is_reported_not_raised(tmp_path: Path) -> None:
     write_folder(tmp_path)
     (tmp_path / SET_FILE).write_bytes(b"\xff\xfe\x00broken")
     assert any(e.startswith(SET_FILE) for e in errors_for(tmp_path))
+
+
+# --- set minimums, methods and run log (US2) --------------------------------------------------
+
+
+def test_minimum_counts_are_per_set(tmp_path: Path) -> None:
+    rows = [r for r in default_rows() if r[0] not in ("person-e", "absent-e")]
+    write_folder(tmp_path, rows)
+    errors = errors_for(tmp_path)
+    assert any(e.startswith(SET_FILE) and "5 present labels" in e for e in errors), errors
+    assert any(e.startswith(SET_FILE) and "5 absent labels" in e for e in errors), errors
+
+
+def test_an_absent_look_alike_and_a_small_face_page_are_required(tmp_path: Path) -> None:
+    rows = [(label, url, "none", "") for label, url, _, _ in default_rows()]
+    write_folder(tmp_path, rows)
+    errors = errors_for(tmp_path)
+    assert any("absent look-alike" in e for e in errors), errors
+    assert any("small_face" in e for e in errors), errors
+
+
+def test_onsite_pair_must_agree_with_the_set(tmp_path: Path) -> None:
+    write_folder(tmp_path, onsite_pair=True)
+    assert any(e.startswith("methods.csv:2:") and "onsite_pair" in e for e in errors_for(tmp_path))
+
+    pair = with_row(2, ("person-b", page(2), "look_alike", "person-a"))
+    write_folder(tmp_path, pair, onsite_pair=False)
+    assert any(e.startswith("methods.csv:2:") and "onsite_pair" in e for e in errors_for(tmp_path))
+
+    write_folder(tmp_path, pair, onsite_pair=True)
+    assert eval_set.read_folder(tmp_path)[1] == ()
+
+
+def test_every_set_has_a_methods_row_and_every_row_a_set(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    write_csv(
+        tmp_path / "methods.csv",
+        ("crawl_date", "found_by", "labeller", "snapshot_holder", "onsite_pair"),
+        [("2026-10-01", "both", "labeller", "labeller", "false")],
+    )
+    errors = errors_for(tmp_path)
+    assert any(e.startswith(SET_FILE) and "methods.csv" in e for e in errors), errors
+    assert any(e.startswith("methods.csv:2:") and "2026-10-01" in e for e in errors), errors
+
+
+@pytest.mark.parametrize(
+    "row",
+    [
+        ("2026-11-20", "guessed", "labeller", "labeller", "false"),
+        ("2026-11-20", "both", "labeller", "labeller", "yes"),
+        ("2026-11-20", "both", "", "labeller", "false"),
+    ],
+)
+def test_a_bad_methods_row_is_reported(tmp_path: Path, row: Row) -> None:
+    write_folder(tmp_path)
+    write_csv(
+        tmp_path / "methods.csv",
+        ("crawl_date", "found_by", "labeller", "snapshot_holder", "onsite_pair"),
+        [row],
+    )
+    assert any(e.startswith("methods.csv:2:") for e in errors_for(tmp_path))
+
+
+def test_a_bad_run_log_is_reported(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    runs = tmp_path / "runs.csv"
+    runs.write_text(runs.read_text(encoding="utf-8").replace("verdict", "result"), encoding="utf-8")
+    assert any(e.startswith("runs.csv:1:") for e in errors_for(tmp_path))
+
+    write_folder(tmp_path)
+    good = (
+        "2026-11-20T18:04:11Z,2026-11-20,a1b2c3d4e5f6,facenet512,0.30,"
+        "10,5,3,person-a,2,2,0,0,0,PASS\n"
+    )
+    with runs.open("a", encoding="utf-8") as f:
+        f.write(good)
+        f.write(good.replace(",2,2,0,0,0,PASS", ",two,2,0,0,0,PASS"))
+        f.write(good.replace("PASS", "MAYBE"))
+    errors = errors_for(tmp_path)
+    assert not any(e.startswith("runs.csv:2:") for e in errors), errors
+    assert any(e.startswith("runs.csv:3:") for e in errors), errors
+    assert any(e.startswith("runs.csv:4:") for e in errors), errors

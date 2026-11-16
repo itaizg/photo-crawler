@@ -134,6 +134,34 @@ class FakeEmbedder:
         ]
 
 
+class IdentityEmbedder:
+    """One face per known photo, embedded on an axis only its identity shares.
+
+    ``identities`` maps a JPEG's sha256 hex digest to an identity name. Each identity gets its own
+    axis (``vector``), so the cosine distance is 0 within an identity and 1 across identities,
+    unlike ``FakeEmbedder``, whose vectors all lie within 0.30 of each other. Unknown photos have
+    no face.
+    """
+
+    def __init__(self, identities: Mapping[str, str] | None = None) -> None:
+        self.identities = dict(identities or {})
+        self._axes: dict[str, int] = {}
+
+    def vector(self, identity: str) -> tuple[float, ...]:
+        axis = self._axes.setdefault(identity, len(self._axes))
+        return tuple(1.0 if j == axis else 0.0 for j in range(512))
+
+    def embed(self, jpeg: bytes) -> list[DetectedFace]:
+        identity = self.identities.get(hashlib.sha256(jpeg).hexdigest())
+        if identity is None:
+            return []
+        return [
+            DetectedFace(
+                box=Box(x=4, y=4, w=16, h=16), confidence=0.99, embedding=self.vector(identity)
+            )
+        ]
+
+
 class FakeSearchIndex:
     """In-memory ``SearchIndex``: canned pages, filtered by the threshold like the real query.
 
