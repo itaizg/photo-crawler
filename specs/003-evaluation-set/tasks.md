@@ -40,10 +40,10 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Tests (write first, see them fail)
 
-- [ ] T004 [P] Write tests for `PostgresSearchIndex.known_pages` and `PostgresSearchIndex.index_size` in `tests/integration/test_search_store.py`, using the existing `seed` fixture:
+- [X] T004 [P] Write tests for `PostgresSearchIndex.known_pages` and `PostgresSearchIndex.index_size` in `tests/integration/test_search_store.py`, using the existing `seed` fixture:
   - `known_pages` returns exactly the given URLs that have a `page` row, returns an empty set for an empty input, and doesn't fail on a URL containing `'`;
   - `index_size` returns faces (the same number as `indexed_face_count`), images with status `indexed`, and pages.
-- [ ] T005 [P] Write loader tests in `tests/unit/test_eval_set.py` that build folders in `tmp_path`, with tiny JPEGs from `tests.images.photo`. Assert that `eval_set.read_folder` returns `None` for the folder and an error starting with `<file>:<line>:` (header = line 1) for each case, and that two broken files in one folder produce both errors:
+- [X] T005 [P] Write loader tests in `tests/unit/test_eval_set.py` that build folders in `tmp_path`, with tiny JPEGs from `tests.images.photo`. Assert that `eval_set.read_folder` returns `None` for the folder and an error starting with `<file>:<line>:` (header = line 1) for each case, and that two broken files in one folder produce both errors:
   - a wrong header, and a missing column;
   - a bad `hard_case` enum;
   - a non-https URL, a host not in an enabled site's `page_hosts`, and a non-canonical URL (e.g. a trailing `/` or `utm_` parameter that `normalize_page_url` removes);
@@ -61,15 +61,15 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 ### Implementation
 
-- [ ] T006 Add a frozen `IndexSize(Record)` model with fields `faces: int`, `images: int` and `pages: int` to `src/face_index/models.py`, next to `PageMatch`.
-- [ ] T007 Add `known_pages(self, urls: Sequence[str]) -> frozenset[str]` and `index_size(self, profile_id: int) -> IndexSize` to the `SearchIndex` Protocol in `src/face_index/ports.py`, with docstrings that say both are read-only.
-- [ ] T008 Implement both methods in `PostgresSearchIndex` in `src/face_index/search_store.py`, as parameterized SQL constants next to `_FACE_COUNT`:
+- [X] T006 Add a frozen `IndexSize(Record)` model with fields `faces: int`, `images: int` and `pages: int` to `src/face_index/models.py`, next to `PageMatch`.
+- [X] T007 Add `known_pages(self, urls: Sequence[str]) -> frozenset[str]` and `index_size(self, profile_id: int) -> IndexSize` to the `SearchIndex` Protocol in `src/face_index/ports.py`, with docstrings that say both are read-only.
+- [X] T008 Implement both methods in `PostgresSearchIndex` in `src/face_index/search_store.py`, as parameterized SQL constants next to `_FACE_COUNT`:
   - `SELECT url FROM page WHERE url = ANY(%s)`;
   - one `SELECT` returning the three counts. Faces use the same predicate as `_FACE_COUNT`; images are those with `status = 'indexed'`; pages are all `page` rows.
 
   Both go through `_guard()`. This makes T004 pass.
-- [ ] T009 [P] Extend `FakeSearchIndex` in `tests/fakes.py` with constructor arguments `known: Collection[str] | None = None` (None means every URL is known) and `size: IndexSize = IndexSize(faces=10, images=5, pages=3)`, plus the two methods, so the fake still satisfies `SearchIndex` under ty.
-- [ ] T010 Create `src/face_index/eval_set.py` with a module docstring that points to `contracts/eval-set-files.md`. It contains:
+- [X] T009 [P] Extend `FakeSearchIndex` in `tests/fakes.py` with constructor arguments `known: Collection[str] | None = None` (None means every URL is known) and `size: IndexSize = IndexSize(faces=10, images=5, pages=3)`, plus the two methods, so the fake still satisfies `SearchIndex` under ty.
+- [X] T010 Create `src/face_index/eval_set.py` with a module docstring that points to `contracts/eval-set-files.md`. It contains:
   - **Models** (frozen `Record`s):
     - `Label`, a constrained `str` with `role` and `photo` derived through functions or properties;
     - `HardCase`, a `StrEnum` with `none`, `small_face` and `look_alike`;

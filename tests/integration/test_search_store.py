@@ -17,7 +17,7 @@ import pytest
 
 from face_index import model_profile
 from face_index.errors import IndexNotReady, InfrastructureError
-from face_index.models import Box, DetectedFace, NormalizedImage
+from face_index.models import Box, DetectedFace, IndexSize, NormalizedImage
 from face_index.search_store import PostgresSearchIndex, search_sql
 from face_index.store import PostgresIndexStore
 from tests import images
@@ -222,6 +222,27 @@ def test_profile_lookup_and_face_count(seed: Seeder, index: PostgresSearchIndex)
     assert index.profile_id(model_profile.KEY) == seed.profile_id
     assert index.profile_id("missing") is None
     assert index.indexed_face_count(seed.profile_id) == 2
+
+
+def test_known_pages_are_the_crawled_ones(seed: Seeder, index: PostgresSearchIndex) -> None:
+    seed.page("https://cnn.test/a")
+    seed.page("https://cnn.test/it's")
+    asked = ["https://cnn.test/a", "https://cnn.test/it's", "https://cnn.test/never-crawled"]
+    assert index.known_pages(asked) == frozenset({"https://cnn.test/a", "https://cnn.test/it's"})
+    assert index.known_pages([]) == frozenset()
+
+
+def test_index_size_counts_faces_indexed_images_and_pages(
+    seed: Seeder, index: PostgresSearchIndex
+) -> None:
+    first = seed.page("https://cnn.test/a")
+    seed.page("https://cnn.test/b")
+    seed.image(first, [QUERY, ORTHOGONAL])
+    seed.image(first, [QUERY])
+    seed.image(first, [], index=False)  # pending: neither its image nor faces count
+    size = index.index_size(seed.profile_id)
+    assert size == IndexSize(faces=3, images=2, pages=2)
+    assert size.faces == index.indexed_face_count(seed.profile_id)
 
 
 def test_empty_database_is_not_ready(db_dsn: str) -> None:

@@ -1,15 +1,16 @@
 """Test doubles for the ports, shared by unit, integration and smoke tests."""
 
 import hashlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Final, LiteralString
 
 import httpx
 
 from face_index.errors import ItemError
-from face_index.models import Box, DetectedFace, PageMatch, Record, RequestKind
+from face_index.models import Box, DetectedFace, IndexSize, PageMatch, Record, RequestKind
 
 PUBLIC_IP: Final[LiteralString] = "93.184.216.34"
+DEFAULT_INDEX_SIZE: Final[IndexSize] = IndexSize(faces=10, images=5, pages=3)
 
 
 class FakeClock:
@@ -138,6 +139,7 @@ class FakeSearchIndex:
 
     ``pages`` holds the candidate pages for every face; ``pages_by_face`` overrides that with a
     function of ``(embedding, max_distance)``. Every ``matching_pages`` call is recorded.
+    ``known`` lists the indexed page URLs (None: every URL is indexed).
     """
 
     def __init__(
@@ -147,12 +149,16 @@ class FakeSearchIndex:
         pages: Sequence[PageMatch] = (),
         pages_by_face: Callable[[Sequence[float], float], list[PageMatch]] | None = None,
         raise_on_connect: Exception | None = None,
+        known: Collection[str] | None = None,
+        size: IndexSize = DEFAULT_INDEX_SIZE,
     ) -> None:
         self._profiles = dict(profiles) if profiles is not None else None
         self._face_count = face_count
         self._pages = list(pages)
         self._pages_by_face = pages_by_face
         self._raise = raise_on_connect
+        self._known = frozenset(known) if known is not None else None
+        self._size = size
         self.calls: list[tuple[tuple[float, ...], float, int]] = []
         self.closed = False
 
@@ -173,6 +179,12 @@ class FakeSearchIndex:
         if self._pages_by_face is not None:
             return self._pages_by_face(embedding, max_distance)
         return [p for p in self._pages if p.best_distance < max_distance]
+
+    def known_pages(self, urls: Sequence[str]) -> frozenset[str]:
+        return frozenset(urls) if self._known is None else self._known.intersection(urls)
+
+    def index_size(self, profile_id: int) -> IndexSize:
+        return self._size
 
     def close(self) -> None:
         self.closed = True
