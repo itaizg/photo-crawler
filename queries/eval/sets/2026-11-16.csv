@@ -6,6 +6,6 @@ person-d,https://edition.cnn.com/world/europe/ukraine,small_face,
 person-e,https://edition.cnn.com/world/europe/ukraine,none,
 absent-a,,none,
 absent-b,,none,
-absent-c,,look_alike,person-e
+absent-c,,none,
 absent-d,,look_alike,person-c
 absent-e,,none,
