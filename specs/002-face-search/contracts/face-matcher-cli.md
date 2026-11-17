@@ -5,7 +5,7 @@ The interface the searcher uses, and what tests assert. Implemented in `src/face
 ## Invocation
 
 ```text
-docker compose run --rm face-matcher IMAGE [--threshold T] [--face N] [--details]
+docker compose run --rm face-matcher IMAGE [--threshold T] [--min-face PX] [--face N] [--details]
 docker compose run --rm face-matcher IMAGE --list-faces
 
 # Same module from the host, against the Compose database on 127.0.0.1:
@@ -20,9 +20,10 @@ FACE_INDEX_DSN=postgresql://faces@127.0.0.1:5432/faces \
 | Option | Default | Meaning | Validation |
 |---|---|---|---|
 | `--threshold T` | `0.30` (`model_profile.MATCH_THRESHOLD`) | A face matches when its cosine distance is `< T` | Float in (0, 2], or exit 64 |
+| `--min-face PX` | `0` (every face) | Compare only indexed faces whose box is at least PX pixels on its shorter side, in the normalized image (longest side ≤ 1024) | Integer in [0, 1024], or exit 64 |
 | `--face N` | all faces | Search only face `N` | Integer ≥ 1. If the photo has fewer faces: exit 64, message states how many were found |
 | `--details` | off | Adds distance, lead mark and matching image URLs | – |
-| `--list-faces` | off | Print faces and write the annotated copy. No search | Not allowed together with `--face`, `--details` or `--threshold` (exit 64) |
+| `--list-faces` | off | Print faces and write the annotated copy. No search | Not allowed together with `--face`, `--details`, `--threshold` or `--min-face` (exit 64) |
 | `-h, --help` | | Usage, defaults and exit statuses | – |
 
 All argument checks run before the database is contacted or the model is loaded.

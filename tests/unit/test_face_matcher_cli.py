@@ -284,6 +284,29 @@ def test_threshold_two_is_accepted_and_passed_on(tmp_path: Path) -> None:
     assert [c[1] for c in index.calls] == [2.0]
 
 
+def test_min_face_defaults_to_every_face_and_is_passed_on(tmp_path: Path) -> None:
+    index = FakeSearchIndex()
+    assert run([str(photo_file(tmp_path))], index) == 0
+    assert run([str(photo_file(tmp_path)), "--min-face", "40"], index) == 0
+    assert index.min_faces == [0, 40]
+
+
+@pytest.mark.parametrize("value", ["-1", "1025", "2.5", "abc"])
+def test_bad_min_face_is_a_usage_error_before_any_work(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], value: str
+) -> None:
+    probe = NeverCalled()
+    with pytest.raises(SystemExit) as exited:
+        face_matcher.main(
+            [str(photo_file(tmp_path)), "--min-face", value],
+            index_factory=probe.index,
+            embedder=probe,
+        )
+    assert exited.value.code == face_matcher.EXIT_USAGE
+    assert "[0, 1024]" in capsys.readouterr().err
+    assert not probe.used
+
+
 def test_details_show_distance_lead_and_images(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -373,7 +396,9 @@ def test_list_faces_prints_boxes_and_saves_a_numbered_copy(
     assert saved.read_bytes() != first  # overwritten (one box instead of two)
 
 
-@pytest.mark.parametrize("extra", [["--face", "1"], ["--details"], ["--threshold", "0.3"]])
+@pytest.mark.parametrize(
+    "extra", [["--face", "1"], ["--details"], ["--threshold", "0.3"], ["--min-face", "40"]]
+)
 def test_list_faces_conflicts_with_search_options(tmp_path: Path, extra: list[str]) -> None:
     with pytest.raises(SystemExit) as exited:
         run([str(photo_file(tmp_path)), "--list-faces", *extra])

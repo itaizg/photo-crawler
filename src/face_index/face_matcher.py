@@ -64,6 +64,7 @@ class Options(Record):
     threshold: Annotated[float, Field(gt=0.0, le=2.0, allow_inf_nan=False)] = (
         model_profile.MATCH_THRESHOLD
     )
+    min_face: Annotated[int, Field(ge=0, le=1024)] = 0
     face: Annotated[int, Field(ge=1)] | None = None
     list_faces: bool = False
     details: bool = False
@@ -72,6 +73,7 @@ class Options(Record):
 _RULES: Final[Mapping[str, str]] = {
     "threshold": "the cosine distance threshold must be in (0, 2]",
     "face": "the face number must be 1 or more",
+    "min_face": "the minimum face size must be a whole number of pixels in [0, 1024]",
 }
 
 
@@ -100,6 +102,16 @@ def _parse(argv: Sequence[str] | None) -> Options:
         ),
     )
     parser.add_argument(
+        "--min-face",
+        dest="min_face",
+        default=None,
+        metavar="PX",
+        help=(
+            "compare only indexed faces at least PX pixels on their shorter side, "
+            "in the normalized image (default: 0, every face)"
+        ),
+    )
+    parser.add_argument(
         "--face",
         metavar="N",
         help="search only face N (faces are numbered from 1, left to right)",
@@ -122,6 +134,7 @@ def _parse(argv: Sequence[str] | None) -> Options:
                 ("--face", args.face is not None),
                 ("--details", args.details),
                 ("--threshold", args.threshold is not None),
+                ("--min-face", args.min_face is not None),
             )
             if used
         ]
@@ -218,7 +231,7 @@ def _run(
         if options.list_faces:
             return _list_faces(options.image, normalized, faces)
         chosen = select_faces(faces, options.face)
-        results = search_faces(chosen, index, profile_id, options.threshold)
+        results = search_faces(chosen, index, profile_id, options.threshold, options.min_face)
     sys.stdout.write(_format(results, options.details))
     return EXIT_OK
 

@@ -7,6 +7,7 @@
   - Is an interactive "which face?" prompt (when run in a terminal) worth bringing back?
   - Should `--face largest` be offered as a shortcut?
 - [ ] **Search script: noisy faces from the index.** Brief: [noisy-index-faces.md](docs/briefs/noisy-index-faces.md). A 50-image spot check of the first full CNN run (2026-11-11) found every box on a face, but some faces are depictions (statues, posters, helmet artwork, silhouettes) and some are tiny background faces (12–16 px). Consider a minimum face size, or ranking by face size, when matching. Renditions of the same photo at different sizes are stored as separate images by design, so results may list the same picture twice under one page.
+- [ ] **Search accuracy fails SC-001 and SC-003 on the first label set.** Results: README, [Search accuracy evaluation](README.md#results). On the corrected 2026-11-16 set, 2 of 5 people are found on none of their pages, and 2 of 5 absent people match 4 pages, while no present person gets an extra page. True matches reach a distance of 0.392 and wrong ones start at 0.233, so no threshold passes. A `--min-face PX` size filter was tried at the pre-chosen 40 px: the same 4 false matches remain (they are clear faces) and person-c loses a true page, so it stays off by default (README, Face-size filter). Next: try several query photos per person, a stronger embedding model, or score normalization, each measured on a second label set. Do not tune the threshold or the face size to pass.
 
 ## Open decisions (from the Sourcery review, 2026-11-11)
 

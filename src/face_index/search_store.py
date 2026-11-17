@@ -17,12 +17,20 @@ from pgvector.psycopg import register_vector
 
 from face_index import db
 from face_index.errors import IndexNotReady, InfrastructureError
-from face_index.models import PageMatch
+from face_index.models import IndexSize, PageMatch
 
 _PROFILE_ID: Final[LiteralString] = "SELECT id FROM model_profile WHERE key = %s"
 _FACE_COUNT: Final[LiteralString] = """
 SELECT count(*) FROM face f JOIN image i ON i.id = f.image_id
 WHERE f.model_profile_id = %s AND i.status = 'indexed'
+"""
+_KNOWN_PAGES: Final[LiteralString] = "SELECT url FROM page WHERE url = ANY(%s)"
+_INDEX_SIZE: Final[LiteralString] = """
+SELECT
+    (SELECT count(*) FROM face f JOIN image i ON i.id = f.image_id
+     WHERE f.model_profile_id = %s AND i.status = 'indexed'),
+    (SELECT count(*) FROM image WHERE status = 'indexed'),
+    (SELECT count(*) FROM page)
 """
 
 
@@ -71,7 +79,11 @@ class PostgresSearchIndex:
             return int(row[0]) if row else 0
 
     def matching_pages(
-        self, embedding: Sequence[float], max_distance: float, profile_id: int
+        self,
+        embedding: Sequence[float],
+        max_distance: float,
+        profile_id: int,
+        min_face: int = 0,
     ) -> list[PageMatch]:
         with self._guard() as conn:
             register_vector(conn)  # the profile row exists, so the vector type does too
@@ -81,6 +93,7 @@ class PostgresSearchIndex:
                     "q": np.asarray(embedding, dtype=np.float32),
                     "max_dist": max_distance,
                     "profile_id": profile_id,
+                    "min_face": min_face,
                 },
             ).fetchall()
         return [
@@ -92,3 +105,16 @@ class PostgresSearchIndex:
             )
             for url, distance, lead, image_urls in rows
         ]
+
+    def known_pages(self, urls: Sequence[str]) -> frozenset[str]:
+        if not urls:
+            return frozenset()
+        with self._guard() as conn:
+            rows = conn.execute(_KNOWN_PAGES, (list(urls),)).fetchall()
+        return frozenset(str(url) for (url,) in rows)
+
+    def index_size(self, profile_id: int) -> IndexSize:
+        with self._guard() as conn:
+            row = conn.execute(_INDEX_SIZE, (profile_id,)).fetchone()
+        faces, images, pages = row if row else (0, 0, 0)
+        return IndexSize(faces=int(faces), images=int(images), pages=int(pages))

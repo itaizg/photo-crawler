@@ -103,6 +103,14 @@ class PageMatch(Record):
     image_urls: tuple[str, ...]
 
 
+class IndexSize(Record):
+    """How much the index holds under one model profile (feature 003, run log)."""
+
+    faces: int
+    images: int
+    pages: int
+
+
 class FaceResult(Record):
     face: QueryFace
     pages: tuple[PageMatch, ...]  # closest first; empty means "no matching pages"

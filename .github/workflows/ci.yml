@@ -52,6 +52,66 @@ jobs:
       - run: uv sync --locked --group dag
       - run: uv run --locked pytest -m "not model" --durations=10
 
+  # Feature 003: the evaluation set's files, and the evaluator against a mock (research R8).
+  # Runs on every pull request, so it is never a skipped required check.
+  eval-set:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: faces
+          POSTGRES_DB: faces_test
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faces -d faces_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      FACE_INDEX_TEST_DSN: postgresql://faces:ci-${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:5432/faces_test
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          enable-cache: true
+      - run: uv sync --locked
+      - name: Validate the evaluation files
+        run: uv run --locked python scripts/evaluate_search.py --check
+      - name: Report the evaluation results
+        if: ${{ !cancelled() }}
+        run: >-
+          uv run --locked python scripts/eval_report.py
+          --out "$RUNNER_TEMP/eval-report.html" --summary "$GITHUB_STEP_SUMMARY"
+      - name: Attach the report to the run
+        if: ${{ !cancelled() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: eval-report
+          path: ${{ runner.temp }}/eval-report.html
+          if-no-files-found: warn
+          retention-days: 30
+      - name: The run and distance logs are append-only
+        if: github.event_name == 'pull_request'
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          # The base branch's log must be an unchanged prefix: rows may only be added at the end.
+          for log in queries/eval/runs.csv queries/eval/distances.csv; do
+            base="$RUNNER_TEMP/base-$(basename "$log")"
+            if git show "origin/${BASE_REF}:${log}" > "$base" 2>/dev/null; then
+              if ! head -c "$(wc -c < "$base")" "$log" | cmp -s - "$base"; then
+                echo "$log is append-only: existing lines were changed, removed or reordered, or rows were inserted before them" >&2
+                exit 1
+              fi
+            fi
+          done
+      - name: Evaluator end to end against a mock
+        run: uv run --locked pytest tests/integration/test_evaluate_search_e2e.py --durations=5
+
   compose-config:
     runs-on: ubuntu-latest
     steps:

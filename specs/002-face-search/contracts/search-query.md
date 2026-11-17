@@ -8,6 +8,7 @@ The session is read-only (`SET default_transaction_read_only = on`, research R5)
 -- %(q)s: query embedding, vector(512)
 -- %(max_dist)s: threshold; a face matches when its cosine distance is strictly below it
 -- %(profile_id)s: model_profile.id whose key equals face_index.model_profile.KEY
+-- %(min_face)s: smallest indexed face searched, in normalized-image pixels on its shorter side (0: all)
 WITH matches AS (
     SELECT f.image_id,
            min(f.embedding <=> %(q)s) AS distance
@@ -15,6 +16,7 @@ WITH matches AS (
     JOIN image i ON i.id = f.image_id AND i.status = 'indexed'
     WHERE f.model_profile_id = %(profile_id)s
       AND f.embedding <=> %(q)s < %(max_dist)s
+      AND least(f.w, f.h) >= %(min_face)s
     GROUP BY f.image_id
 )
 SELECT p.url,
@@ -44,6 +46,7 @@ ORDER BY best_distance, p.url;
 | `f.model_profile_id = …` | FR-003, FR-005a | Faces from an older model runtime are never compared (read contract guarantee 1) |
 | `i.status = 'indexed'` | FR-005a | Images still mid-run (`pending`) are invisible (guarantee 2) |
 | `<=> … < %(max_dist)s` | FR-005 | Strict comparison. No `ORDER BY … LIMIT` on `face`, so this is an exact scan and returns every match (research R3) |
+| `least(f.w, f.h) >= %(min_face)s` | feature 003 follow-up | Optional size filter (`--min-face`, default 0 = every face); see `docs/briefs/noisy-index-faces.md` |
 | `GROUP BY f.image_id` in `matches` | FR-007 | An image with several matching faces counts once, with its closest face |
 | `pi.last_seen_at >= p.last_crawled_at` | FR-006a | A link the page's latest crawl didn't refresh is ignored (research R4) |
 | `GROUP BY p.url` | FR-007, SC-004 | Each page once per searched face |

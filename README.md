@@ -87,6 +87,7 @@ Results go to standard output, and progress and errors go to standard error. `gr
 | Option | Default | Meaning |
 |---|---|---|
 | `--threshold T` | `0.30` | A stored face matches when its cosine distance is **below** T. T must be in (0, 2]. 0.30 is DeepFace's recommended threshold for Facenet512 with cosine distance; lower is stricter. |
+| `--min-face PX` | `0` (every face) | Compare only indexed faces whose box is at least PX pixels on its shorter side, in the normalized image (longest side at most 1024). Small background faces give unreliable embeddings, so this can remove false matches; it can also drop a person who appears only small. Off by default until measured ([noisy-index-faces.md](docs/briefs/noisy-index-faces.md)). |
 | `--face N` | all faces | Search only face N |
 | `--details` | off | Also print each page's best distance, `lead` when the match is the page's main (preview) image, and the matching image URLs |
 | `--list-faces` | off | Print the faces with their boxes and save `queries/<name>.faces.jpg` with the numbers drawn on. No search. It stays on your machine and is overwritten next time. |
@@ -236,6 +237,110 @@ SMOKE PASSED
 
 **Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
 
+## Search accuracy evaluation
+
+The search is measured against hand-labelled label sets committed under [`queries/eval/`](queries/eval/), each from one crawl of the site: at least 5 people who appear on it, with every page they appear on, and at least 5 people who do not. Each person has one openly licensed photo that is not from the site, named by a neutral label (`person-a`, `absent-a`) and attributed in `attribution.csv`. Every set includes hard cases: a look-alike of a labelled person, a page where the face is small, and two labelled people who resemble each other when the crawl has them. The criteria are the face search's SC-001 to SC-003: at least 80% of each person's pages found, no page returned that does not show the person, and nothing returned for people not on the site.
+
+Run it from the host against the Compose database, as the read-only role (the password is read from the Compose secrets volume, nothing is typed or committed):
+
+```bash
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
+```
+
+It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. With `--log`, the run is appended to [`runs.csv`](queries/eval/runs.csv), and every page's best distance up to 0.50 to `queries/eval/distances.csv`, so a run can be read as a curve, not only as one verdict.
+
+CI validates the files and runs the evaluator against a seeded mock on every pull request. It also renders the committed results as an HTML report: the verdict, the per-label table, a chart of every logged page distance against the threshold, and the run history. The report is attached to each workflow run as the `eval-report` artifact, and its summary appears on the run's page. To build it locally:
+
+```bash
+uv run python scripts/eval_report.py --out eval-report.html
+```
+
+### Results
+
+**Label set 2026-11-16, run 2026-11-17 10:34 UTC: FAIL.** The run used the labeller's snapshot of the 2026-11-16 CNN crawl (15,822 faces, 5,160 images, 97 pages), profile `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, at the default threshold of 0.30. The table is copied from the run's output; every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+
+| label | expected | returned | recall | extra | label errors |
+|---|---:|---:|---:|---:|---:|
+| person-a | 3 | 3 | 1.00 | 0 | 0 |
+| person-b | 3 | 0 | 0.00 | 0 | 0 |
+| person-c (small face on 1 page) | 6 | 6 | 1.00 | 0 | 0 |
+| person-d (small face on 1 page) | 2 | 0 | 0.00 | 0 | 0 |
+| person-e | 2 | 2 | 1.00 | 0 | 0 |
+| absent-a | 0 | 0 | - | 0 | 0 |
+| absent-b | 0 | 0 | - | 0 | 0 |
+| absent-c | 0 | 1 | - | 1 | 0 |
+| absent-d (look-alike of person-c) | 0 | 3 | - | 3 | 0 |
+| absent-e | 0 | 0 | - | 0 | 0 |
+
+Against the criteria:
+
+- **SC-001, recall of at least 0.80: fails for 2 of 5 people.** person-b and person-d were not found on any of their 5 pages between them.
+- **SC-002, no extra pages for present people: passes.** No present person was returned on a page that does not show them.
+- **SC-003, nothing returned for absent people: fails for 2 of 5.** absent-c matched 1 page and the look-alike absent-d matched 3. In the match review, the labeller judged that none of these pages shows the person.
+
+**How the labels were completed.** The set was labelled by browsing, and the first run (the first block in `runs.csv`) reported 8 extra pages. The labeller then reviewed every matched image with `face-matcher --details` and confirmed that each extra page does show the person. Pages are labelled from what their images show, so those pages were added to the set. Pages above the threshold were reviewed the same way, which added 3 pages for person-b and person-d that the search does not return. Each person is therefore labelled on the pages the review found, which may still miss a page the search never ranked.
+
+**What the distances show.** The run at 13:19 UTC repeated these counts with `--log`, which also recorded every page's best distance to each query photo up to 0.50 in [`distances.csv`](queries/eval/distances.csv) (the CI report charts them):
+
+| query | true pages (distance) | closest wrong page (distance) |
+|---|---|---|
+| person-a | 0.150, 0.171, 0.256 | 0.413 |
+| person-b | 0.313, 0.342, 0.344 | 0.365 |
+| person-c | 0.100 to 0.123 (6 pages) | 0.342 |
+| person-d | 0.365, 0.392 | 0.349 |
+| person-e | 0.157, 0.158 | 0.370 |
+| absent-c | none | 0.280, then 0.349 |
+| absent-d | none | 0.233, 0.296, 0.299, then 0.303 |
+
+- **For person-a, c and e the search separates cleanly:** true pages at 0.26 or less, the nearest wrong page at 0.34 or more.
+- **person-b is a near miss.** All 3 pages are ranked above any wrong page but lie just past 0.30.
+- **person-d cannot be found by a threshold.** A wrong page (0.349) is closer than both true pages.
+- **No single threshold separates true from wrong matches.** absent-d's wrong pages start at 0.233, below person-b's true pages. Across the set:
+
+  | threshold | true pages found (of 16) | wrong pages returned |
+  |---:|---:|---:|
+  | 0.30 | 11 | 4 |
+  | 0.35 | 14 | 10, including 1 each for person-c and person-d |
+  | 0.40 | 16 | 38 |
+
+  A higher threshold trades the recall failure for more false matches and also breaks SC-002, so the default stays at 0.30. These numbers come from this set alone and are not a basis for choosing a threshold; tuning on them would overfit it.
+- **A few pages are close to many faces.** `/travel/news`, `/world/heroes` and `/world/americas` are within 0.40 of three different query photos each, and include absent-d's three false matches. `/world` does the same, but it is an index page with many faces. A face on those pages that resembles many people (small, blurred or side-on) would explain this; it is the case in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md), and those pages' faces are the first thing to inspect.
+- **Every labelled page is within 0.50** of its person's photo, so the misses come from where the cutoff sits, not from faces missing from the index.
+
+**Face-size filter: tried at 40 px, not adopted.** `--min-face PX` (on `face_matcher` and the evaluator) compares only indexed faces at least PX pixels on their shorter side. The value was fixed at 40 px before the run, from the brief's common floor for Facenet-style models, not chosen from these results. The run at 14:27 UTC (`min_face_px=40` in `runs.csv`) compares with the unfiltered run at 13:19, and with a control run at 4 px (14:28), which removes almost no face:
+
+| | no filter | 4 px (control) | 40 px |
+|---|---:|---:|---:|
+| verdict | FAIL | FAIL | FAIL |
+| true pages returned (of 16) | 11 | 11 | 10 |
+| wrong pages below 0.30 | 4 | 4 | 4 |
+| wrong pages below 0.40 | 38 | 38 | 19 |
+
+The control run's 188 logged distances equal the unfiltered run's exactly, so the filter changes nothing by itself; the differences at 40 px come from the faces it removes.
+
+- **It does not remove the false matches.** absent-c's page (0.280) and absent-d's three pages (0.238 to 0.299) come from faces of 40 px or more, so they are clear faces that look like those people, not tiny background faces.
+- **It costs a true page.** person-c is no longer found on `/politics/president-donald-trump-47` (0.110 before), where the face is under 40 px. That is the "appears only small" case this set lacked. person-c's recall drops to 0.83, still above 0.80. person-b's `/world/middle-east` page moves from 0.342 to 0.445 for the same reason.
+- **It halves the near misses** between 0.30 and 0.40 (38 wrong pages to 19), including the pages that were close to several queries (`/travel/news` for person-c, `/world` for absent-d). Small faces were adding noise there, but not at the threshold in use.
+
+The filter stays available and off by default (0). The remaining false matches are clear look-alikes, which a size filter cannot separate. The next things to try are other approaches: several query photos per person, a stronger embedding model, or score normalization. Any of them needs a second label set to check against.
+
+**Hard cases in this set.**
+- The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
+- The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
+
+### Labelling method and its limits
+
+How each set was labelled (browsing, searching or both), by whom and on which crawl date is in [`queries/eval/methods.csv`](queries/eval/methods.csv). The labeller keeps a snapshot of that crawl's index locally, so the numbers can be re-run; it is never committed, because it holds face embeddings of people who gave no licence.
+
+- **Recall is only as good as the labels.** A page the labeller did not find is invisible to the measurement.
+- **The sample is small** and limited to public figures with openly licensed photos.
+- **Rendition checks are manual.** That a query photo is not a copy of an indexed image is checked in review, from the attribution's source page.
+- **Results are tied to one crawl.** The site changes hourly. On an index crawled on another date, labelled pages that are gone are reported as label errors and the run fails; that is drift, not a search failure. To measure a new crawl, add a new label set for it ([quickstart §5](specs/003-evaluation-set/quickstart.md)).
+
+### Correcting a set or taking a photo down
+
+A set may be corrected (a labelling mistake, a wrong licence, a takedown request) as long as every set keeps its minimums: a removed label is replaced in the same change. After a change to the latest set or one of its photos, that set needs a fresh logged run before CI passes, so these results never describe inputs that have since changed. Attribution or methods corrections need no new run, since they change no result ([quickstart §5b](specs/003-evaluation-set/quickstart.md)). Deleting a photo does not remove it from git history; for a takedown, a maintainer also rewrites the history on the remote.
+
 ## Known limitations
 
 - **SC-011 (a default run on the enabled sites within 30 minutes) is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
@@ -244,7 +349,7 @@ SMOKE PASSED
 - **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.
 - **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A size filter is an open decision ([TODO.md](TODO.md)).
 - **A look-alike can pass the default threshold.** First live check (2026-11-13, CNN index of about 9.5k faces): searching with an indexed one-face selfie returned its own 4 pages (distance ≤ 0.004) and one more page at 0.261. That page shows a different man, whose face is only about 55 px wide in a 270×480 red-carpet photo. Small faces give less reliable embeddings, so this is the case [noisy-index-faces.md](docs/briefs/noisy-index-faces.md) is about. The threshold was not tuned to hide it; the labelled evaluation (SC-001 to SC-003) is what decides whether a face-size filter or a stricter default is needed.
-- **Accuracy (SC-001 to SC-003)** is measured with `scripts/evaluate_search.py` against hand-labelled photos, which are not in the repository (licensing). See [specs/002-face-search/quickstart.md](specs/002-face-search/quickstart.md) §7.
+- **Accuracy (SC-001 to SC-003)** is measured against the committed evaluation set; see [Search accuracy evaluation](#search-accuracy-evaluation) for the results and their limits.
 
 - The face matching script (and the constitution's final check, "run it against the resulting database") arrives with feature 002.
 

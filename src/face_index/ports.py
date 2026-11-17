@@ -12,6 +12,7 @@ from typing import Protocol
 from face_index.models import (
     DetectedFace,
     ImageResponse,
+    IndexSize,
     NormalizedImage,
     PageMatch,
     PageResponse,
@@ -165,9 +166,25 @@ class SearchIndex(Protocol):
         ...
 
     def matching_pages(
-        self, embedding: Sequence[float], max_distance: float, profile_id: int
+        self,
+        embedding: Sequence[float],
+        max_distance: float,
+        profile_id: int,
+        min_face: int = 0,
     ) -> list[PageMatch]:
-        """Pages with a face strictly closer than ``max_distance``, closest first."""
+        """Pages with a face strictly closer than ``max_distance``, closest first.
+
+        Only indexed faces whose box is at least ``min_face`` pixels on its shorter side are
+        compared (0: every face).
+        """
+        ...
+
+    def known_pages(self, urls: Sequence[str]) -> frozenset[str]:
+        """Which of ``urls`` the crawler has indexed (a ``page`` row exists). Read-only."""
+        ...
+
+    def index_size(self, profile_id: int) -> IndexSize:
+        """Faces on indexed images under this profile, indexed images, and pages. Read-only."""
         ...
 
     def close(self) -> None: ...

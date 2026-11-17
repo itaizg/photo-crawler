@@ -75,12 +75,17 @@ def select_faces(faces: Sequence[QueryFace], number: int | None) -> list[QueryFa
 
 
 def search_faces(
-    faces: Sequence[QueryFace], index: SearchIndex, profile_id: int, threshold: float
+    faces: Sequence[QueryFace],
+    index: SearchIndex,
+    profile_id: int,
+    threshold: float,
+    min_face: int = 0,
 ) -> list[FaceResult]:
     """One index query per face; pages come back de-duplicated and closest first (FR-006, 007)."""
     return [
         FaceResult(
-            face=face, pages=tuple(index.matching_pages(face.embedding, threshold, profile_id))
+            face=face,
+            pages=tuple(index.matching_pages(face.embedding, threshold, profile_id, min_face)),
         )
         for face in faces
     ]

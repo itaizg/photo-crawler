@@ -1,15 +1,16 @@
 """Test doubles for the ports, shared by unit, integration and smoke tests."""
 
 import hashlib
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from typing import Final, LiteralString
 
 import httpx
 
 from face_index.errors import ItemError
-from face_index.models import Box, DetectedFace, PageMatch, Record, RequestKind
+from face_index.models import Box, DetectedFace, IndexSize, PageMatch, Record, RequestKind
 
 PUBLIC_IP: Final[LiteralString] = "93.184.216.34"
+DEFAULT_INDEX_SIZE: Final[IndexSize] = IndexSize(faces=10, images=5, pages=3)
 
 
 class FakeClock:
@@ -133,11 +134,40 @@ class FakeEmbedder:
         ]
 
 
+class IdentityEmbedder:
+    """One face per known photo, embedded on an axis only its identity shares.
+
+    ``identities`` maps a JPEG's sha256 hex digest to an identity name. Each identity gets its own
+    axis (``vector``), so the cosine distance is 0 within an identity and 1 across identities,
+    unlike ``FakeEmbedder``, whose vectors all lie within 0.30 of each other. Unknown photos have
+    no face.
+    """
+
+    def __init__(self, identities: Mapping[str, str] | None = None) -> None:
+        self.identities = dict(identities or {})
+        self._axes: dict[str, int] = {}
+
+    def vector(self, identity: str) -> tuple[float, ...]:
+        axis = self._axes.setdefault(identity, len(self._axes))
+        return tuple(1.0 if j == axis else 0.0 for j in range(512))
+
+    def embed(self, jpeg: bytes) -> list[DetectedFace]:
+        identity = self.identities.get(hashlib.sha256(jpeg).hexdigest())
+        if identity is None:
+            return []
+        return [
+            DetectedFace(
+                box=Box(x=4, y=4, w=16, h=16), confidence=0.99, embedding=self.vector(identity)
+            )
+        ]
+
+
 class FakeSearchIndex:
     """In-memory ``SearchIndex``: canned pages, filtered by the threshold like the real query.
 
     ``pages`` holds the candidate pages for every face; ``pages_by_face`` overrides that with a
     function of ``(embedding, max_distance)``. Every ``matching_pages`` call is recorded.
+    ``known`` lists the indexed page URLs (None: every URL is indexed).
     """
 
     def __init__(
@@ -147,13 +177,18 @@ class FakeSearchIndex:
         pages: Sequence[PageMatch] = (),
         pages_by_face: Callable[[Sequence[float], float], list[PageMatch]] | None = None,
         raise_on_connect: Exception | None = None,
+        known: Collection[str] | None = None,
+        size: IndexSize = DEFAULT_INDEX_SIZE,
     ) -> None:
         self._profiles = dict(profiles) if profiles is not None else None
         self._face_count = face_count
         self._pages = list(pages)
         self._pages_by_face = pages_by_face
         self._raise = raise_on_connect
+        self._known = frozenset(known) if known is not None else None
+        self._size = size
         self.calls: list[tuple[tuple[float, ...], float, int]] = []
+        self.min_faces: list[int] = []
         self.closed = False
 
     def profile_id(self, key: str) -> int | None:
@@ -167,12 +202,23 @@ class FakeSearchIndex:
         return self._face_count
 
     def matching_pages(
-        self, embedding: Sequence[float], max_distance: float, profile_id: int
+        self,
+        embedding: Sequence[float],
+        max_distance: float,
+        profile_id: int,
+        min_face: int = 0,
     ) -> list[PageMatch]:
         self.calls.append((tuple(embedding), max_distance, profile_id))
+        self.min_faces.append(min_face)
         if self._pages_by_face is not None:
             return self._pages_by_face(embedding, max_distance)
         return [p for p in self._pages if p.best_distance < max_distance]
+
+    def known_pages(self, urls: Sequence[str]) -> frozenset[str]:
+        return frozenset(urls) if self._known is None else self._known.intersection(urls)
+
+    def index_size(self, profile_id: int) -> IndexSize:
+        return self._size
 
     def close(self) -> None:
         self.closed = True

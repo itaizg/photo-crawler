@@ -17,7 +17,7 @@ import pytest
 
 from face_index import model_profile
 from face_index.errors import IndexNotReady, InfrastructureError
-from face_index.models import Box, DetectedFace, NormalizedImage
+from face_index.models import Box, DetectedFace, IndexSize, NormalizedImage
 from face_index.search_store import PostgresSearchIndex, search_sql
 from face_index.store import PostgresIndexStore
 from tests import images
@@ -53,6 +53,7 @@ class Seeder:
         url: str | None = None,
         lead: bool = False,
         index: bool = True,
+        size: int = 8,
     ) -> int:
         self._seed += 1
         seed = self._seed
@@ -70,7 +71,11 @@ class Seeder:
         )
         if index:
             faces = [
-                DetectedFace(box=Box(x=1 + 10 * i, y=1, w=8, h=8), confidence=0.99, embedding=vec)
+                DetectedFace(
+                    box=Box(x=1 + (size + 2) * i, y=1, w=size, h=size),
+                    confidence=0.99,
+                    embedding=vec,
+                )
                 for i, vec in enumerate(vectors)
             ]
             self.store.process_pending(image_id, lambda _p: faces, self.profile_id)
@@ -222,6 +227,52 @@ def test_profile_lookup_and_face_count(seed: Seeder, index: PostgresSearchIndex)
     assert index.profile_id(model_profile.KEY) == seed.profile_id
     assert index.profile_id("missing") is None
     assert index.indexed_face_count(seed.profile_id) == 2
+
+
+def test_min_face_skips_smaller_faces_inclusively(seed: Seeder, index: PostgresSearchIndex) -> None:
+    small = seed.page("https://cnn.test/small")
+    large = seed.page("https://cnn.test/large")
+    mixed = seed.page("https://cnn.test/mixed")
+    seed.image(small, [at_distance(0.10)], size=12)
+    seed.image(large, [at_distance(0.20)], size=40)
+    seed.image(mixed, [at_distance(0.05)], size=12)
+    seed.image(mixed, [at_distance(0.25)], size=40)
+
+    def found(min_face: int) -> list[tuple[str, float]]:
+        return [
+            (m.url, round(m.best_distance, 6))
+            for m in index.matching_pages(QUERY, 0.30, seed.profile_id, min_face)
+        ]
+
+    assert [u for u, _ in found(0)] == [
+        "https://cnn.test/mixed",
+        "https://cnn.test/small",
+        "https://cnn.test/large",
+    ]
+    # A page keeps only its large faces: "mixed" is now ranked by its 40 px face.
+    assert found(40) == [("https://cnn.test/large", 0.2), ("https://cnn.test/mixed", 0.25)]
+    assert found(41) == []
+
+
+def test_known_pages_are_the_crawled_ones(seed: Seeder, index: PostgresSearchIndex) -> None:
+    seed.page("https://cnn.test/a")
+    seed.page("https://cnn.test/it's")
+    asked = ["https://cnn.test/a", "https://cnn.test/it's", "https://cnn.test/never-crawled"]
+    assert index.known_pages(asked) == frozenset({"https://cnn.test/a", "https://cnn.test/it's"})
+    assert index.known_pages([]) == frozenset()
+
+
+def test_index_size_counts_faces_indexed_images_and_pages(
+    seed: Seeder, index: PostgresSearchIndex
+) -> None:
+    first = seed.page("https://cnn.test/a")
+    seed.page("https://cnn.test/b")
+    seed.image(first, [QUERY, ORTHOGONAL])
+    seed.image(first, [QUERY])
+    seed.image(first, [], index=False)  # pending: neither its image nor faces count
+    size = index.index_size(seed.profile_id)
+    assert size == IndexSize(faces=3, images=2, pages=2)
+    assert size.faces == index.indexed_face_count(seed.profile_id)
 
 
 def test_empty_database_is_not_ready(db_dsn: str) -> None:
