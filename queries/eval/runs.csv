@@ -29,3 +29,13 @@ run_at,label_set,labels_sha256,model_profile,threshold,faces,images,pages,label,
 2026-11-17T10:34:21Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-c,0,1,0,1,0,FAIL
 2026-11-17T10:34:21Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-d,0,3,0,3,0,FAIL
 2026-11-17T10:34:21Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-e,0,0,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,person-a,3,3,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,person-b,3,0,3,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,person-c,6,6,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,person-d,2,0,2,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,person-e,2,2,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-a,0,0,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-b,0,0,0,0,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-c,0,1,0,1,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-d,0,3,0,3,0,FAIL
+2026-11-17T13:19:03Z,2026-11-16,9f57e0b488b1,retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21,0.30,15822,5160,97,absent-e,0,0,0,0,0,FAIL
