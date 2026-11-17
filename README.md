@@ -4,6 +4,25 @@ System for crawling a website. It extracts images containing people with visible
 
 This repository contains the **image indexer** (the Airflow pipeline, feature 001), the **face matching script** (`face_index.face_matcher`, feature 002) and a labelled **evaluation set** that measures the search's accuracy (feature 003). Specs, plans and contracts are under `specs/`; open items are in [TODO.md](TODO.md).
 
+### Where things are
+
+| What | Where |
+| --- | --- |
+| Airflow DAG (`image_indexer`) | [dags/image_indexer.py](dags/image_indexer.py) |
+| Pipeline code the DAG wraps (crawl, normalize, detect, embed, store) | [src/face_index/](src/face_index/) |
+| Face matching script | [src/face_index/face_matcher.py](src/face_index/face_matcher.py), run as the `face-matcher` Compose service |
+| Docker Compose file | [docker-compose.yml](docker-compose.yml) |
+| Search evaluation (script, labelled queries, results) | [scripts/evaluate_search.py](scripts/evaluate_search.py), [queries/eval/](queries/eval/), [docs/search-evaluation.md](docs/search-evaluation.md) |
+| Tests | [tests/](tests/) |
+| How to run the pipeline | [below](#how-to-run-the-pipeline) |
+| How to use the face matching script | [below](#how-to-use-the-face-matching-script) |
+| Libraries and models | [below](#libraries-and-models) |
+| Approach and architecture decisions | [below](#approach-and-architecture-decisions) |
+| Example usage and expected outputs | [below](#example-usage-and-expected-outputs) |
+| Search accuracy results | [below](#search-accuracy-evaluation) |
+
+`specs/`, `.specify/` and `docs/briefs/` are process records (specifications, plans and design briefs) kept for traceability. They are not code, and you don't need to read them first.
+
 ## How to run the pipeline
 
 Requirements: Docker with Compose v2 and at least 8 GB of memory for Docker.
