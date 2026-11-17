@@ -272,7 +272,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 
 - [X] T034 Run the full local gate: `uv run pre-commit run --all-files`, `uv run pytest -m "not model"` and `uv run python scripts/evaluate_search.py --check`. Fix only the failures this feature introduced.
 - [X] T035 [P] Check for leftovers: `grep -rn "labels.toml\|tomllib\|parse_labels" scripts src tests docs specs/002-face-search README.md` should return nothing. Also check that no committed file under `queries/eval/` contains a real name, by reviewing `attribution.csv`'s `author` column (photographers only) and the file names.
-- [ ] T036 Walk through `specs/003-evaluation-set/quickstart.md` §§1 to 4 on a fresh clone, then tick the spec's success criteria SC-001 to SC-007 in `specs/003-evaluation-set/notes.md` with evidence: command output, the CI run link, the job duration.
+- [X] T036 Walk through `specs/003-evaluation-set/quickstart.md` §§1 to 4 on a fresh clone, then tick the spec's success criteria SC-001 to SC-007 in `specs/003-evaluation-set/notes.md` with evidence: command output, the CI run link, the job duration.
 
 ---
 

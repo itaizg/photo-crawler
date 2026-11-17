@@ -13,7 +13,7 @@ Validation guide for feature 003. Formats: [contracts/eval-set-files.md](contrac
 uv run python scripts/evaluate_search.py --check
 ```
 
-Expected: one `ok` line per file, exit 0. This is the first step of the CI `eval-set` job.
+Expected: `ok queries/eval`, exit 0; otherwise one line per error, each naming its file and line, and exit 2. This is the first step of the CI `eval-set` job.
 
 ## 2. Run the mock end-to-end tests (as CI does)
 
