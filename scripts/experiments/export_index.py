@@ -52,7 +52,7 @@ ORDER BY pi.image_id, p.url
 def baseline_key() -> str:
     """A pattern for the Facenet512 baseline's profile keys, under any library versions.
 
-    The baseline was indexed before ArcFace, possibly with other DeepFace or TensorFlow versions
+    The baseline may have been indexed with other DeepFace or TensorFlow versions
     than the ones installed now, so only the model setup is matched, not the version suffix.
     """
     key = model_profile.profile_key("0.0.0", "0.0", snapshot.BASELINE)

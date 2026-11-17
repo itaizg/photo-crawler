@@ -60,16 +60,18 @@ def test_a_pair_without_a_distance_must_be_labelled() -> None:
         pair(False, None)
 
 
-def test_the_committed_fit_is_the_match_threshold() -> None:
-    """The cutoff is not a typed-in number: it is the fit of the committed pairs.
+def test_the_committed_fit_reproduces_the_reported_cutoff() -> None:
+    """The committed pairs refit to the 0.47 reported for ArcFace (docs/search-evaluation.md).
 
-    Changing the model, the labels or the threshold without refitting
-    (scripts/experiments/fit_threshold.py) fails here, as the DeepFace comparison used to.
+    ArcFace was not confirmed on set 2026-11-17, so the match threshold stays Facenet512's; the
+    fit is kept as the record of what the candidate would have used.
     """
     pairs, errors = eval_set.read_threshold_fit(EVAL)
     assert errors == []
-    assert {p.model for p in pairs} == {model_profile.MODEL}
-    assert eval_set.fit_threshold(pairs) == model_profile.MATCH_THRESHOLD
+    assert {p.model for p in pairs} == {"ArcFace"}
+    assert {p.label_set for p in pairs} == {date(2026, 11, 16)}  # fitted on 2026-11-16 only
+    assert eval_set.fit_threshold(pairs) == 0.47
+    assert model_profile.MODEL == "Facenet512"
 
 
 # -- scripts/experiments/fit_threshold.py ---------------------------------------------------------

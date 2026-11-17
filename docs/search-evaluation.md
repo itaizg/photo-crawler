@@ -219,13 +219,26 @@ Absent people below every true page: ArcFace raw has absent-a and absent-c, the 
   uv run python scripts/experiments/run.py --set 2026-11-16 --eval <clean copy of queries/eval>
   ```
 
+## Confirmation on the 2026-11-17 set: not confirmed
+
+The rule was fixed before any run on this set ([search-experiments.md](briefs/search-experiments.md#choice-for-confirmation-recorded-2026-11-17-before-any-run-on-set-2026-11-17)): ArcFace with raw cosine and no re-ranking is confirmed only if it improves both AUC and recall at zero false matches over Facenet512 there too. Scored on 2026-11-17 (16,816 faces, 5,577 images, 97 pages; 10 present people with 58 true pages, 10 absent people); the Facenet512 row reproduced the logged run first.
+
+| Model | Recall at zero false matches | AUC | Separable | Absent ok |
+|---|---|---|---|---|
+| Facenet512 (current) | 0.28 | 0.913 | 7/10 | 0/10 |
+| ArcFace | 0.28 | 0.912 | 4/10 | 0/10 |
+
+ArcFace does not improve either number, so **the default stays Facenet512**. Its gain on 2026-11-16 (0.88 against 0.62) did not carry over to 20 new people and a new crawl: the earlier result was most likely the luck of choosing the best of 12 combinations on 10 people, plus labels completed from Facenet512's matches. The other 17 combinations on this set are descriptive only, and none beats the baseline on both numbers either (`eval-snapshots/`, local).
+
+**The fitted ArcFace threshold, for information.** The cutoff fitted on 2026-11-16 alone is 0.47 (`scripts/experiments/fit_threshold.py`, pairs in [`threshold-fit.csv`](../queries/eval/threshold-fit.csv)). Read out of sample on 2026-11-17, it finds 19 of 58 true pages with 1 wrong page: 4 of 10 people reach recall 0.80, 9 of 10 get no extra page, and all 10 absent people return nothing. It is not adopted, because the model it belongs to was not confirmed.
+
 ## Improvement log
 
 | Date | Change | Result on the 2026-11-16 set | Status |
 |---|---|---|---|
 | 2026-11-17 | Face-size filter `--min-face 40` | Same 4 false matches, one true page lost | Not adopted |
 | 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case; AUC also lower, except Facenet512 with query expansion (+0.002) | Not adopted |
-| 2026-11-17 | ArcFace, raw cosine, no re-ranking | ArcFace: recall at zero false matches 0.88 (14 of 16), separable 5/5, absent people below every true page 2/5, AUC 0.999. Baseline Facenet512: 0.62 (10 of 16), 4/5, 0/5, AUC 0.994. No single threshold passes with either | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
+| 2026-11-17 | ArcFace, raw cosine, no re-ranking | ArcFace: recall at zero false matches 0.88 (14 of 16), separable 5/5, absent people below every true page 2/5, AUC 0.999. Baseline Facenet512: 0.62 (10 of 16), 4/5, 0/5, AUC 0.994. No single threshold passes with either | **Not confirmed** on the 2026-11-17 set (below); the default stays Facenet512 |
 
 ## Labelling method and its limits
 

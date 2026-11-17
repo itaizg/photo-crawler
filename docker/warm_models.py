@@ -1,4 +1,4 @@
-"""Build-time step: download and cache the RetinaFace and ArcFace weights.
+"""Build-time step: download and cache the RetinaFace and Facenet512 weights.
 
 Runs inside `docker build`, so pipeline runs never download models (research R9).
 Weights land under `$DEEPFACE_HOME/.deepface/weights`.

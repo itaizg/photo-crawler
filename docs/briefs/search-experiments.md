@@ -70,3 +70,7 @@ The second command is the sanity check; the full run refuses to start until it p
 Scored on set 2026-11-16 (sanity check passed). Only one combination meets the rule above: **ArcFace, raw cosine, no re-ranking**. AUC 0.999 against the baseline's 0.994, recall at zero false matches 0.88 against 0.62, separable people 5/5 against 4/5. The gain is +1 true page for person-a and +3 for person-b; without person-b it still improves recall at zero false matches (11/13 against 10/13). ArcFace with T-norm scores close to it but is not chosen: this brief allows at most one.
 
 The confirmation compares this combination with the baseline (Facenet512, raw, none) on set 2026-11-17, with the same metrics. It is confirmed if it improves both AUC and recall at zero false matches there too. The other combinations are also scored on 2026-11-17, but only as a description; they cannot be chosen from that set.
+
+## Confirmation result (2026-11-17)
+
+**Not confirmed.** On set 2026-11-17, ArcFace (raw, none) scored AUC 0.912 and recall at zero false matches 0.28, against the baseline's 0.913 and 0.28. It improves neither, so the default stays Facenet512. Details: [search-evaluation.md](../search-evaluation.md#confirmation-on-the-2026-11-17-set-not-confirmed).

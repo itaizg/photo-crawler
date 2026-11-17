@@ -39,7 +39,7 @@ def _major_minor(full: str) -> str:
 
 
 def profile_key(deepface_version: str, tensorflow_version: str, model: str = MODEL) -> str:
-    """The profile key; ``model`` is only passed by the experiments, to name the old model."""
+    """The profile key; ``model`` is only passed by the experiments, to name another model."""
     align = "align" if ALIGN else "noalign"
     return (
         f"{DETECTOR}+{model}+{DISTANCE}+{align}+{NORMALIZATION}"

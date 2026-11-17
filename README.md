@@ -56,7 +56,7 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 
 The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, dead links (HTTP 404/410), known dead links not requested, links abandoned, and outdated page links. A page link is outdated when a re-crawl of the page no longer finds that image there. The download task logs each such page (`outdated links page=… count=…`), the links are kept, and the search ignores them.
 
-**Re-index after a model change.** The face model, its detector settings and the DeepFace and TensorFlow versions form the model profile key. The search compares only faces of the current profile, so after the key changes (as it did when the model changed from Facenet512 to ArcFace) the existing faces cannot be found until they are embedded again. Run the pipeline with `reindex` set:
+**Re-index after a model change.** The face model, its detector settings and the DeepFace and TensorFlow versions form the model profile key. The search compares only faces of the current profile, so after the key changes (after a DeepFace or TensorFlow upgrade, or a model change) the existing faces cannot be found until they are embedded again. Run the pipeline with `reindex` set:
 
 ```bash
 docker compose exec airflow-scheduler airflow dags trigger image_indexer \
@@ -98,7 +98,7 @@ The script takes a photo, finds every face in it, and prints every crawled page 
 docker compose run --rm face-matcher queries/alice.jpg
 ```
 
-The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, ArcFace, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
+The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, Facenet512, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
 
 **Output.** One group per face found in the photo. Faces are numbered from 1, left to right, and each header shows the face's box in the normalized photo. Under each header are the matching page URLs, closest match first, each page once. This is an illustration of the format, not a recorded run:
 
@@ -147,7 +147,7 @@ The full command-line contract is in [specs/002-face-search/contracts/face-match
 |---|---|
 | Orchestration | Apache Airflow 3.4 (LocalExecutor, Task SDK) |
 | Face detection | DeepFace with the **RetinaFace** detector, confidence ≥ 0.9 |
-| Face embeddings | DeepFace **ArcFace** (512-d), aligned, `base` normalization, **cosine** distance (Facenet512 until 2026-11-17; see Experiments) |
+| Face embeddings | DeepFace **Facenet512** (512-d), aligned, `base` normalization, **cosine** distance (ArcFace was tried and not confirmed; see the evaluation) |
 | Storage | PostgreSQL 17 + **pgvector** (HNSW index, `vector_cosine_ops`) |
 | Crawling | httpx (manual redirects, IP pinning), BeautifulSoup + lxml, `urllib.robotparser` |
 | Images | Pillow |
@@ -279,7 +279,7 @@ It prints a per-label table, then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 mea
 - **Nothing returned for absent people: fails for 2 of 5,** with 4 wrong pages, 3 of them for a look-alike.
 - **No threshold passes.** True matches reach a distance of 0.392 and wrong ones start at 0.233. The threshold was not tuned to hide this.
 
-**What was tried since** (measured on 2026-11-17). A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate. Recall at zero false matches (true pages ranked above every wrong page): ArcFace 0.88 (14 of 16), Facenet512 0.62 (10 of 16). Separable people: 5/5 against 4/5; absent people below every true page: 2/5 against 0/5 (AUC 0.999 against 0.994, near 1 for both). **ArcFace does not pass either:** no single threshold meets all three criteria, since 2 true pages and 3 absent people still overlap. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
+**What was tried since** (measured on 2026-11-17). A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate. Recall at zero false matches (true pages ranked above every wrong page): ArcFace 0.88 (14 of 16), Facenet512 0.62 (10 of 16). Separable people: 5/5 against 4/5; absent people below every true page: 2/5 against 0/5 (AUC 0.999 against 0.994, near 1 for both). **ArcFace does not pass either:** no single threshold meets all three criteria, since 2 true pages and 3 absent people still overlap. **It was not confirmed.** On the held-out 2026-11-17 set (10 present and 10 absent people), ArcFace with raw cosine scored recall at zero false matches 0.28 and AUC 0.912, against Facenet512's 0.28 and 0.913; separable people 4/10 against 7/10. The rule fixed before that run required a gain on both, so the default stays Facenet512 ([search-evaluation.md](docs/search-evaluation.md#confirmation-on-the-2026-11-17-set-not-confirmed)).
 
 **How the labels were made, and their bias.** One labeller browsed the 2026-11-16 crawl for each person's pages, then reviewed every page the search matched or nearly matched (`face-matcher --details`) and added the pages that do show the person; the method is recorded in [`methods.csv`](queries/eval/methods.csv). Recall is only as good as those labels: a page that neither browsing nor the search surfaced is invisible to the measurement, and because the review started from the search's own matches (Facenet512's), the labels lean towards pages Facenet512 ranks well; a page only ArcFace ranks high may be scored as a wrong page for ArcFace. The sample is small (10 people, all public figures with openly licensed photos), one labeller judged every page, and the results describe that one crawl, since the site changes hourly.
 
