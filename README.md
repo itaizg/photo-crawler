@@ -324,7 +324,33 @@ The control run's 188 logged distances equal the unfiltered run's exactly, so th
 
 The filter stays available and off by default (0). The remaining false matches are clear look-alikes, which a size filter cannot separate. The next things to try are other approaches: several query photos per person, a stronger embedding model, or score normalization. Any of them needs a second label set to check against.
 
-**Experiments.** Whether hubness reduction (CSLS), score normalization (T-norm), query expansion or the ArcFace model separate true from wrong matches better is measured offline, on a local export of the index, with a grid and metrics fixed before any run: [search-experiments.md](docs/briefs/search-experiments.md). Results will be added here; no default changes before a second label set confirms them.
+**Experiments.** Whether hubness reduction (CSLS), score normalization (T-norm), query expansion or the ArcFace model separate true from wrong matches better is measured offline, on a local export of the index, with a grid and metrics fixed before any run: [search-experiments.md](docs/briefs/search-experiments.md). Results below are exploratory, on the 10 people of the 2026-11-16 set; no default changes before a second label set confirms them.
+
+Every combination, over the 5 present and 5 absent people (16 true pages). AUC compares true pages against all wrong pages. Recall at zero false matches is the share of true pages that score better than every wrong page, absent people included. Separable is the number of people whose true pages all beat their own wrong pages. Absent ok is the number of absent people whose best wrong page scores below every true page. The Facenet512 raw row reproduces the logged run (checked before anything was reported).
+
+| Model | Score | Re-ranking | AUC | Recall at zero false matches | Separable | Absent ok |
+|---|---|---|---|---|---|---|
+| Facenet512 (current) | raw cosine | none | 0.994 | 0.62 | 4/5 | 0/5 |
+| Facenet512 | CSLS | none | 0.976 | 0.12 | 3/5 | 0/5 |
+| Facenet512 | T-norm | none | 0.986 | 0.38 | 4/5 | 0/5 |
+| Facenet512 | raw cosine | query expansion | 0.996 | 0.31 | 4/5 | 0/5 |
+| Facenet512 | CSLS | query expansion | 0.985 | 0.00 | 4/5 | 0/5 |
+| Facenet512 | T-norm | query expansion | 0.991 | 0.00 | 4/5 | 0/5 |
+| ArcFace | raw cosine | none | **0.999** | **0.88** | **5/5** | **2/5** |
+| ArcFace | CSLS | none | 0.946 | 0.12 | 3/5 | 0/5 |
+| ArcFace | T-norm | none | 0.999 | 0.81 | 5/5 | 2/5 |
+| ArcFace | raw cosine | query expansion | 0.996 | 0.31 | 4/5 | 0/5 |
+| ArcFace | CSLS | query expansion | 0.991 | 0.00 | 5/5 | 0/5 |
+| ArcFace | T-norm | query expansion | 0.995 | 0.06 | 4/5 | 0/5 |
+
+What the table shows:
+
+- **Re-scoring does not help Facenet512.** CSLS and T-norm lower both AUC and recall. Query expansion raises AUC by 0.002 and halves recall, because it pulls wrong pages closer too. The same holds on ArcFace.
+- **The model is what helps.** ArcFace with raw cosine and no re-ranking is the only row that beats the baseline on both AUC and recall. Recall rises from 10 to 14 of 16 true pages, all 5 people become separable (person-d was not), and 2 of 5 absent people score below every true page. ArcFace with T-norm is close but adds nothing over raw.
+- **One combination is worth confirming: ArcFace, raw cosine, no re-ranking.** The gain is spread over three people but not evenly: person-b gains 3 of the 4 extra true pages, person-a 1 and person-d becomes separable. Without person-b it still beats the baseline (recall 11 against 10 pages, 4 against 3 separable people), so it is not carried by one person, but it leans on one.
+- **Not a result yet.** The set is 10 people, one labeller and one crawl; one true page is 6 points of recall. The best of 12 combinations on one set can win by luck. ArcFace distances are on a different scale, so the 0.30 threshold does not carry over, and a new threshold must be chosen on a second label set, not here. The ArcFace index would also need a full re-embedding and a new schema profile.
+
+The snapshots and the per-person results stay local (`eval-snapshots/`, never committed), because they hold embeddings of people who gave no licence.
 
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
