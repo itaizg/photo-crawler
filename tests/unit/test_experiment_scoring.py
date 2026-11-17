@@ -192,3 +192,30 @@ def test_a_snapshot_survives_save_and_load(tmp_path: Path) -> None:
     assert (back.boxes == snap.boxes).all()
     assert (back.embeddings == snap.embeddings).all()
     assert back.image_pages == snap.image_pages
+
+
+def load_script(name: str) -> ModuleType:
+    sys.path.insert(0, str(SCRIPT.parent))  # the scripts import their sibling modules by name
+    spec = importlib.util.spec_from_file_location(
+        f"experiment_{name}", SCRIPT.parent / f"{name}.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_the_export_reads_pgvector_vectors_and_page_links() -> None:
+    from pgvector import Vector
+
+    export = load_script("export_index")
+    a = np.linspace(0.0, 1.0, 512, dtype=np.float32)
+    faces = [(7, 1, 2, 30, 40, Vector(a)), (9, 0, 0, 64, 64, Vector(a[::-1].copy()))]
+    links = [(7, "https://a"), (7, "https://b"), (9, "https://b")]
+    snap = export.to_snapshot(faces, links)
+    assert snap.face_image.tolist() == [7, 9]
+    assert snap.boxes.tolist() == [[1, 2, 30, 40], [0, 0, 64, 64]]
+    assert np.allclose(snap.embeddings[0], a)
+    assert np.allclose(snap.embeddings[1], a[::-1])
+    assert snap.image_pages == {7: ("https://a", "https://b"), 9: ("https://b",)}

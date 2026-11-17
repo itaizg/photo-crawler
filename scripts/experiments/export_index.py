@@ -15,11 +15,12 @@ import sys
 from collections.abc import Sequence
 from contextlib import closing
 from datetime import date
-from typing import Final, LiteralString
+from typing import Any, Final, LiteralString
 
 import numpy as np
 import psycopg
 import snapshot
+from numpy.typing import NDArray
 from pgvector.psycopg import register_vector
 
 from face_index import model_profile
@@ -47,13 +48,26 @@ def export(conn: psycopg.Connection) -> snapshot.Snapshot:
     register_vector(conn)
     faces = conn.execute(_FACES, (model_profile.KEY,)).fetchall()
     links = conn.execute(_LINKS).fetchall()
+    return to_snapshot(faces, links)
+
+
+def _vector(value: object) -> NDArray[np.float32]:
+    """pgvector 0.5 loads ``vector`` columns as ``Vector`` objects, older versions as arrays."""
+    to_numpy = getattr(value, "to_numpy", None)
+    return np.asarray(to_numpy() if callable(to_numpy) else value, dtype=np.float32)
+
+
+def to_snapshot(
+    faces: Sequence[Sequence[Any]], links: Sequence[Sequence[Any]]
+) -> snapshot.Snapshot:
+    """The snapshot from the rows of ``_FACES`` and ``_LINKS``."""
     pages: dict[int, list[str]] = {}
     for image, url in links:
         pages.setdefault(int(image), []).append(str(url))
     return snapshot.Snapshot(
         face_image=np.asarray([r[0] for r in faces], dtype=np.int64),
         boxes=np.asarray([r[1:5] for r in faces], dtype=np.int64).reshape(-1, 4),
-        embeddings=np.asarray([r[5] for r in faces], dtype=np.float32).reshape(
+        embeddings=np.asarray([_vector(r[5]) for r in faces], dtype=np.float32).reshape(
             -1, model_profile.DIMENSIONS
         ),
         image_pages={i: tuple(u) for i, u in pages.items()},
