@@ -112,6 +112,21 @@ def test_query_expansion_averages_the_top_faces() -> None:
     assert np.allclose(sc.expand(q, f, n=2), expected)
 
 
+def test_query_expansion_skips_renditions_of_a_taken_face() -> None:
+    q = unit(0)
+    f = unit(10, 10.5, 30, 90)  # faces 0 and 1 are one photo at two sizes
+    assert 1.0 - f[0] @ f[1] < sc.SAME_PHOTO_DISTANCE
+    assert np.allclose(sc.expand(q, f, n=2), sc.normalize(q + f[0] + f[1]))  # pre-registered
+    expected = sc.normalize(q + f[0] + f[2])  # the next distinct face instead
+    assert np.allclose(sc.expand(q, f, n=2, skip_same_photo=True), expected)
+
+
+def test_query_expansion_skip_keeps_distinct_faces() -> None:
+    q = unit(0)
+    f = unit(10, 30, 90)
+    assert np.allclose(sc.expand(q, f, n=2, skip_same_photo=True), sc.expand(q, f, n=2))
+
+
 def test_pages_take_each_pages_best_face() -> None:
     pages = sc.Pages.build([7, 7, 8, 9], {7: ["https://a", "https://b"], 8: ["https://b"]})
     assert pages.urls == ("https://a", "https://b")

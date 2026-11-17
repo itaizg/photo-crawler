@@ -15,10 +15,11 @@ from numpy.typing import NDArray
 
 type Matrix = NDArray[np.float64]
 type Score = Literal["raw", "csls", "tnorm"]
-type Rerank = Literal["none", "qe"]
+type Rerank = Literal["none", "qe", "qe-skip"]
 
 SCORES: Final[tuple[Score, ...]] = ("raw", "csls", "tnorm")
-RERANKS: Final[tuple[Rerank, ...]] = ("none", "qe")
+# "qe-skip" was added after the pre-registered grid: query expansion without renditions.
+RERANKS: Final[tuple[Rerank, ...]] = ("none", "qe", "qe-skip")
 CSLS_K: Final[int] = 10
 SAME_PHOTO_DISTANCE: Final[float] = 0.02  # renditions of one photo are not neighbours (brief)
 QE_N: Final[int] = 2
@@ -51,11 +52,32 @@ def neighbour_means(
     return out
 
 
-def expand(queries: Matrix, index: Matrix, n: int = QE_N) -> Matrix:
-    """Average query expansion: each query averaged with its ``n`` closest index faces."""
+def expand(
+    queries: Matrix, index: Matrix, n: int = QE_N, *, skip_same_photo: bool = False
+) -> Matrix:
+    """Average query expansion: each query averaged with its ``n`` closest index faces.
+
+    With ``skip_same_photo``, a face closer than ``SAME_PHOTO_DISTANCE`` to a neighbour already
+    taken (another rendition of the same photo) is passed over for the next distinct face.
+    """
     sims = queries @ index.T
-    top = np.argsort(-sims, axis=1, kind="stable")[:, :n]
+    order = np.argsort(-sims, axis=1, kind="stable")
+    if skip_same_photo:
+        top = np.array([_distinct(index, row, n) for row in order], dtype=np.int64)
+    else:
+        top = order[:, :n]
     return normalize(queries + index[top].sum(axis=1))
+
+
+def _distinct(index: Matrix, order: NDArray[np.int64], n: int) -> list[int]:
+    """The first ``n`` faces in ``order`` that are not renditions of one taken before."""
+    taken: list[int] = []
+    for face in order:
+        if all(index[face] @ index[t] <= 1.0 - SAME_PHOTO_DISTANCE for t in taken):
+            taken.append(int(face))
+            if len(taken) == n:
+                break
+    return taken
 
 
 def scores(
