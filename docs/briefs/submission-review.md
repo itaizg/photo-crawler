@@ -87,7 +87,7 @@ Fix what the review found, in priority order: claims the code does not keep come
 
 1. `EXPLAIN` of the search query shows an index scan on `face_embedding_hnsw`. The evaluator, run against the 2026-11-16 snapshot, reproduces the logged distances in `queries/eval/distances.csv` exactly. A test covers the larger-k repeat when more than k faces match.
 2. The README and `search-evaluation.md` give ArcFace's and the baseline's numbers separately, lead with recall at zero false matches, and say no single threshold passes with ArcFace either.
-3. The ArcFace-normalization row and the corrected query-expansion rows are reported, labelled as added after pre-registration. The original rows are unchanged.
+3. The ArcFace-normalization row and the corrected query-expansion rows are reported, labelled as added or corrected after pre-registration. The original rows are unchanged.
 4. `evaluation-set.md` fixes the second set's labelling method (browse first, then a pooled review of both models), and the limits section names the current set's bias.
 5. `FACE_MODEL_PROFILE=arcface` (or the chosen name) indexes and searches end to end in the Compose stack, with its own documented threshold. The default run and default search are unchanged.
 6. The README is under 150 lines, contains no internal identifiers, has dated and current example outputs, states the crawl coverage, and maps each deliverable to its location.

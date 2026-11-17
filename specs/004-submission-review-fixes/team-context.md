@@ -21,7 +21,9 @@ Skills: none of the registry's default or external skills match (they cover Helm
 
 _Searched 34 CDR entries and the skills registry; 9 modules matched (4 High)._
 
-## Key directives for this feature
+## Notes on how the directives may apply (not binding)
+
+These are discovery notes, not new rules. How this project applies the team directives changes only with the user's explicit approval (CLAUDE.md); planning confirms or drops each note with the user.
 
 - **Constitution 3 / project XII**: surface every failure; the larger-k fallback must never silently truncate results.
 - **Constitution 4, 9 / project XIII–XIV**: least privilege for the secret files (goal 9); the search keeps the read-only reader role.
