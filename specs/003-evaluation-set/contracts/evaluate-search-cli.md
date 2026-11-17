@@ -34,7 +34,7 @@ There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESH
 2. Connect; read the profile id (none → exit 2) and the index size (no faces → exit 2). Record the labels version before any photo is read.
 3. Call `known_pages` with every labelled URL of the selected set. A missing URL becomes a label error for its label.
 4. Embed every photo. Each photo with no detected face (`NoFaceError`) or that can't be decoded or detected (`QueryImageError`) is listed with its reason; if any, exit 2. The largest face of each photo is used.
-5. Search each label's face with `search_faces` up to the report ceiling (0.50, research R12). Pages strictly below the default threshold are the returned pages; the others are only logged.
+5. Search each label's face with `search_faces` up to the report ceiling (`REPORT_CEILING`: 0.80 from the ArcFace switch on, 0.50 for the runs logged with Facenet512; research R12). Pages strictly below the default threshold are the returned pages; the others are only logged.
 6. If the labels version changed during the run, exit 2 without logging. Otherwise print the report and the verdict; with `--log`, append to `runs.csv` and `distances.csv`. Error messages escape control characters taken from the files.
 
 ## Output

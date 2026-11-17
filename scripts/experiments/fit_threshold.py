@@ -1,6 +1,6 @@
 """Fit the ArcFace match threshold on the label sets' snapshots (docs/briefs/search-experiments.md).
 
-    uv run python scripts/experiments/fit_threshold.py --set 2026-11-16 --set 2026-11-17
+    uv run python scripts/experiments/fit_threshold.py --set 2026-11-16 --confirm 2026-11-17
 
 Needs the ArcFace snapshots (reembed.py) and the face models; no database. Scores each label's
 query photo against every page of the set's snapshot, raw cosine and best face per page, and
@@ -10,8 +10,12 @@ unit test repeats the fit on it, so the match threshold in model_profile.py cann
 its data. The file holds distances and labels only: no embeddings and no names.
 
 Prints the fitted cutoff and what the three criteria of the evaluator (SC-001 to SC-003) read at
-the cutoffs worth comparing. The cutoff is fitted on the same sets it is then read on, so those
-numbers are in-sample. Exit 0 on success, 2 when an input is missing.
+the cutoffs worth comparing. ``--set`` names the sets the cutoff is fitted on; their numbers are
+in-sample. ``--confirm`` names sets that are only read at the fitted cutoff: they never enter the
+fit or the CSV, so their numbers are an out-of-sample check. A present person's page missing from
+the labels counts as a wrong page here, as in the evaluator, so incomplete labels pull the cutoff
+down; that is the labelling bias the README states, not something the fit can correct.
+Exit 0 on success, 2 when an input is missing.
 """
 
 import argparse
@@ -87,8 +91,14 @@ def write(target: Path, pairs: Sequence[FitPair]) -> None:
             )
 
 
-def reading(pairs: Sequence[FitPair], cutoff: float) -> str:
-    """The pooled pair-level numbers and the evaluator's criteria at one cutoff."""
+def reading(
+    pairs: Sequence[FitPair], cutoff: float, label_sets: Sequence[eval_set.LabelSet]
+) -> str:
+    """The pooled pair-level numbers and the evaluator's criteria at one cutoff.
+
+    The people of each set come from the set itself, not from the pairs: an absent person with
+    no page within the ceiling has no pair, and must still count in SC-003.
+    """
     matched = [p for p in pairs if p.distance is not None and p.distance < cutoff]
     tp = sum(p.labelled for p in matched)
     fp = len(matched) - tp
@@ -100,9 +110,10 @@ def reading(pairs: Sequence[FitPair], cutoff: float) -> str:
         f"  pairs: precision {precision:.3f}, recall {recall:.3f}, F1 {f1:.3f} "
         f"({tp} of {positives} labelled pages, {fp} other pages)"
     ]
-    for crawl_date in sorted({p.label_set for p in pairs}):
+    for label_set in sorted(label_sets, key=lambda s: s.crawl_date):
+        crawl_date = label_set.crawl_date
         here = [p for p in pairs if p.label_set == crawl_date]
-        labels = sorted({p.label for p in here})
+        labels = sorted(label_set.labels())
         present = [x for x in labels if eval_set.role(x) == "present"]
         absent = [x for x in labels if eval_set.role(x) == "absent"]
 
@@ -136,15 +147,21 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "--set", dest="dates", type=date.fromisoformat, action="append", required=True
     )
+    parser.add_argument(
+        "--confirm", dest="confirm", type=date.fromisoformat, action="append", default=[]
+    )
     parser.add_argument("--eval", dest="eval_dir", type=Path, default=run.EVAL)
     args = parser.parse_args(argv)
+    if overlap := set(args.dates) & set(args.confirm):
+        print(f"error: a set cannot be fitted and confirmed: {sorted(overlap)}", file=sys.stderr)
+        return 2
 
     folder, errors = eval_set.read_folder(args.eval_dir)
     if folder is None:
         print(f"error: the evaluation folder is not valid: {errors}", file=sys.stderr)
         return 2
-    pairs: list[FitPair] = []
-    for crawl_date in args.dates:
+    chosen: dict[date, eval_set.LabelSet] = {}
+    for crawl_date in [*args.dates, *args.confirm]:
         label_set = folder.set_for(crawl_date)
         if label_set is None:
             print(f"error: no label set {crawl_date}", file=sys.stderr)
@@ -152,15 +169,22 @@ def main(argv: Sequence[str] | None = None) -> int:
         if not snapshot.path(crawl_date, MODEL).is_file():
             print(f"error: no {MODEL} snapshot for {crawl_date}; see the brief", file=sys.stderr)
             return 2
-        pairs += pairs_for(label_set, args.eval_dir)
+        chosen[crawl_date] = label_set
+    fitted = [chosen[d] for d in args.dates]
+    pairs = [p for s in fitted for p in pairs_for(s, args.eval_dir)]
     target = args.eval_dir / eval_set.FIT_FILE
     write(target, pairs)
     cutoff = eval_set.fit_threshold(pairs)
     print(f"{len(pairs)} pairs written to {target}\n")
     print(f"fitted cutoff {cutoff:.2f} (maximum pooled pair-level F1, lowest on a tie):")
-    print(reading(pairs, cutoff))
+    print(reading(pairs, cutoff, fitted))
     print(f"\nDeepFace's own ArcFace cosine cutoff {DEEPFACE_CUTOFF:.2f}:")
-    print(reading(pairs, DEEPFACE_CUTOFF))
+    print(reading(pairs, DEEPFACE_CUTOFF, fitted))
+    if args.confirm:
+        held_out = [chosen[d] for d in args.confirm]
+        checked = [p for s in held_out for p in pairs_for(s, args.eval_dir)]
+        print(f"\nout of sample (not fitted, not written) at the fitted cutoff {cutoff:.2f}:")
+        print(reading(checked, cutoff, held_out))
     print("\ncurve (cutoff: pooled F1)")
     for step in range(1, round(eval_set.REPORT_CEILING / eval_set.FIT_STEP) + 1):
         t = round(step * eval_set.FIT_STEP, 2)

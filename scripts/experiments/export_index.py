@@ -30,7 +30,7 @@ _FACES: Final[LiteralString] = """
 SELECT f.image_id, f.x, f.y, f.w, f.h, f.embedding
 FROM face f
 JOIN image i ON i.id = f.image_id AND i.status = 'indexed'
-JOIN model_profile m ON m.id = f.model_profile_id AND m.key = %s
+JOIN model_profile m ON m.id = f.model_profile_id AND m.key LIKE %s
 ORDER BY f.id
 """
 # The search's visibility rules (src/face_index/search_query.sql): indexed images, and links the
@@ -45,11 +45,13 @@ ORDER BY pi.image_id, p.url
 
 
 def baseline_key() -> str:
-    """The profile key of the Facenet512 baseline, which was the index's model before ArcFace."""
-    profile = model_profile.current_profile()
-    return model_profile.profile_key(
-        profile.deepface_version, profile.tensorflow_version, snapshot.BASELINE
-    )
+    """A pattern for the Facenet512 baseline's profile keys, under any library versions.
+
+    The baseline was indexed before ArcFace, possibly with other DeepFace or TensorFlow versions
+    than the ones installed now, so only the model setup is matched, not the version suffix.
+    """
+    key = model_profile.profile_key("0.0.0", "0.0", snapshot.BASELINE)
+    return key.split("@", 1)[0].replace("%", r"\%").replace("_", r"\_") + "@%"
 
 
 def export(conn: psycopg.Connection) -> snapshot.Snapshot:

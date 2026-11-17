@@ -60,7 +60,8 @@ class IndexStore(Protocol):
 
         Their faces under the other profile are deleted, the stored JPEG is kept, and the next
         detection embeds them again under ``profile_id``. All or nothing. Returns the number of
-        images re-queued; images with no faces (``no_faces``) are left as they are.
+        images re-queued; images with no faces (``no_faces``) are left as they are, so it raises
+        ``ValueError`` when any other profile detected faces with other settings.
         """
         ...
 

@@ -87,6 +87,7 @@ MIN_RECALL: Final[float] = 0.80  # feature 002 SC-001: each present label's reca
 # Pages up to this distance are logged with their distance, so a run can be read as a curve
 # (research R12). Only pages below the match threshold count as returned.
 REPORT_CEILING: Final[float] = 0.80  # beyond ArcFace's DeepFace cutoff (0.68); was 0.50
+FACENET512_CEILING: Final[float] = 0.50  # the ceiling of every run logged with Facenet512
 FIT_STEP: Final[float] = 0.01  # the match threshold is a two-decimal number everywhere
 
 LABEL_PATTERN: Final[str] = r"^(person|absent)-[a-z]+$"
@@ -126,6 +127,11 @@ def role(label: str) -> Role:
 def photo_path(label: str) -> str:
     """A label's one query photo, relative to the evaluation folder (spec FR-005)."""
     return f"photos/{label}.jpg"
+
+
+def report_ceiling(profile_key: str) -> float:
+    """How far a logged run searched: 0.50 for Facenet512 runs, the current ceiling after."""
+    return FACENET512_CEILING if "+Facenet512+" in profile_key else REPORT_CEILING
 
 
 class HardCase(StrEnum):

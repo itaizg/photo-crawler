@@ -256,3 +256,20 @@ def test_embedding_in_parallel_matches_one_process_and_counts_failures(
     assert together == alone  # same faces, in image order
     assert [image for image, _ in alone] == [7, 7, 9, 9, 9, 10]
     assert failed_alone == failed_together == 1
+
+
+def test_the_baseline_is_found_under_any_library_versions() -> None:
+    """Faces indexed before a DeepFace or TensorFlow upgrade must still export (LIKE pattern)."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    spec = importlib.util.spec_from_file_location(
+        "experiment_export", SCRIPT.parent / "export_index.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    export = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(export)
+    pattern = export.baseline_key()
+    assert pattern == "retinaface+Facenet512+cosine+align+base@%"
+    for versions in (("0.0.95", "2.20"), ("0.0.104", "2.21")):
+        key = export.model_profile.profile_key(*versions, "Facenet512")
+        assert key.startswith(pattern.removesuffix("%"))

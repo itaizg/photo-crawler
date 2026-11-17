@@ -18,13 +18,13 @@ from html import escape
 from pathlib import Path
 from typing import Final
 
-from face_index import eval_set, model_profile
+from face_index import eval_set
 from face_index.eval_set import DistanceRow, RunRow
 
 EXIT_OK: Final[int] = 0
 EXIT_INVALID: Final[int] = 2
 MIN_RECALL: Final[float] = eval_set.MIN_RECALL
-CEILING: Final[float] = eval_set.REPORT_CEILING  # pages beyond it are logged without a distance
+CEILING: Final[float] = eval_set.REPORT_CEILING  # the chart's axis; each run has its own ceiling
 
 type Run = tuple[RunRow, ...]
 
@@ -170,10 +170,10 @@ def _x(distance: float | None) -> float:
     return _LEFT + min(distance, CEILING) / CEILING * _PLOT
 
 
-def _mark(row: DistanceRow, y: float) -> str:
+def _mark(row: DistanceRow, y: float, ceiling: float) -> str:
     x = _x(row.distance)
     where = (
-        f"not found up to {CEILING:.2f}" if row.distance is None else f"distance {row.distance:.3f}"
+        f"not found up to {ceiling:.2f}" if row.distance is None else f"distance {row.distance:.3f}"
     )
     kind = "labelled page" if row.labelled else "not a labelled page"
     tip = f"<title>{escape(row.label)} · {escape(row.page_url)} · {where} · {kind}</title>"
@@ -184,7 +184,9 @@ def _mark(row: DistanceRow, y: float) -> str:
     return f'<polygon class="wrong" points="{points}">{tip}</polygon>'
 
 
-def _chart(labels: Sequence[str], rows: Sequence[DistanceRow]) -> str:
+def _chart(
+    labels: Sequence[str], rows: Sequence[DistanceRow], ceiling: float, threshold: float
+) -> str:
     height = _TOP + len(labels) * _ROW + 24
     width = _LEFT + _PLOT + _LANE + 8
     parts = [
@@ -200,12 +202,12 @@ def _chart(labels: Sequence[str], rows: Sequence[DistanceRow]) -> str:
         parts.append(f'<text x="{x:.1f}" y="{bottom + 16}" text-anchor="middle">{tick:.1f}</text>')
     lane = _x(None)
     parts.append(f'<text x="{lane:.1f}" y="{bottom + 16}" text-anchor="middle">not found</text>')
-    t = _x(model_profile.MATCH_THRESHOLD)
+    t = _x(threshold)
     parts.append(
         f'<line class="threshold" x1="{t:.1f}" x2="{t:.1f}" y1="{_TOP - 14}" y2="{bottom}"/>'
     )
     parts.append(
-        f'<text x="{t + 4:.1f}" y="{_TOP - 16}">threshold {model_profile.MATCH_THRESHOLD:.2f}'
+        f'<text x="{t + 4:.1f}" y="{_TOP - 16}">threshold {threshold:.2f}'
         " (matches are left of it)</text>"
     )
     for i, label in enumerate(labels):
@@ -214,7 +216,7 @@ def _chart(labels: Sequence[str], rows: Sequence[DistanceRow]) -> str:
             f'<text x="{_LEFT - 10}" y="{y + 4:.1f}" text-anchor="end">{escape(label)}</text>'
         )
         own = sorted((r for r in rows if r.label == label), key=lambda r: r.labelled)
-        parts += [_mark(r, y) for r in own]  # labelled pages drawn last, on top
+        parts += [_mark(r, y, ceiling) for r in own]  # labelled pages drawn last, on top
     parts.append("</svg>")
     return "".join(parts)
 
@@ -257,12 +259,14 @@ def _distances_html(run: Run, distances: Sequence[DistanceRow]) -> str:
             "<p>This run was logged before page distances were recorded. The next run with "
             "<code>--log</code> records them.</p>"
         )
+    ceiling = eval_set.report_ceiling(first.model_profile)
+    chart = _chart([r.label for r in run], own, ceiling, first.threshold)
     return (
         "<p>Each mark is one page's best distance to the label's query photo, up to "
-        f"{CEILING:.2f}. A page is returned when it is left of the threshold. Labelled pages "
+        f"{ceiling:.2f}. A page is returned when it is left of the threshold. Labelled pages "
         "that were not found up to the ceiling sit in the last column. Hover a mark for its "
         "page.</p>"
-        f'<div class="card">{_legend()}{_chart([r.label for r in run], own)}</div>'
+        f'<div class="card">{_legend()}{chart}</div>'
         f"{_distance_table(own)}"
     )
 

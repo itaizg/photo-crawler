@@ -1,5 +1,8 @@
+import importlib.util
+import sys
 from datetime import date
 from pathlib import Path
+from types import ModuleType
 
 import pytest
 
@@ -67,3 +70,55 @@ def test_the_committed_fit_is_the_match_threshold() -> None:
     assert errors == []
     assert {p.model for p in pairs} == {model_profile.MODEL}
     assert eval_set.fit_threshold(pairs) == model_profile.MATCH_THRESHOLD
+
+
+# -- scripts/experiments/fit_threshold.py ---------------------------------------------------------
+
+SCRIPTS = Path(__file__).resolve().parents[2] / "scripts" / "experiments"
+
+
+def load_fit() -> ModuleType:
+    sys.path.insert(0, str(SCRIPTS))  # the script imports its sibling modules by name
+    spec = importlib.util.spec_from_file_location("fit_threshold", SCRIPTS / "fit_threshold.py")
+    assert spec is not None
+    assert spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module
+
+
+def test_an_absent_person_with_no_pair_still_counts_in_sc003() -> None:
+    folder, errors = eval_set.read_folder(EVAL)
+    assert folder is not None, errors
+    label_set = folder.set_for(date(2026, 11, 16))
+    assert label_set is not None
+    absent = label_set.absent()
+    only_one = [
+        FitPair(
+            model="ArcFace",
+            label_set=label_set.crawl_date,
+            label=absent[0],
+            page_url="https://edition.cnn.com/world",
+            labelled=False,
+            distance=0.70,
+        ),
+    ] + [  # every present person has its labelled pages, as pairs_for writes them
+        FitPair(
+            model="ArcFace",
+            label_set=label_set.crawl_date,
+            label=label,
+            page_url=url,
+            labelled=True,
+            distance=0.30,
+        )
+        for label, urls in label_set.present().items()
+        for url in urls
+    ]
+    text = load_fit().reading(only_one, 0.50, [label_set])
+    assert f"/{len(absent)} absent people" in text
+
+
+def test_a_set_cannot_be_fitted_and_confirmed(capsys: pytest.CaptureFixture[str]) -> None:
+    args = ["--set", "2026-11-16", "--confirm", "2026-11-16"]
+    assert load_fit().main(args) == 2
+    assert "fitted and confirmed" in capsys.readouterr().err

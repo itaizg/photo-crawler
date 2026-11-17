@@ -549,3 +549,17 @@ def test_requeue_resets_the_attempt_count(
     sql.execute("UPDATE image SET detect_attempts = 2 WHERE id = %s", (image_id,))
     store.requeue_other_profiles(current)
     assert one(sql, "SELECT detect_attempts FROM image WHERE id = %s", image_id) == 0
+
+
+def test_requeue_refuses_when_detection_settings_changed(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    """A no_faces image has no JPEG left, so a new detector could never see it: refuse."""
+    current = store.init_schema()
+    old = _other_profile(sql)
+    sql.execute("UPDATE model_profile SET min_face_confidence = 0.5 WHERE id = %s", (old,))
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    store.process_pending(image_id, lambda _: [face(1)], profile_id=old)
+    with pytest.raises(ValueError, match="detection settings changed since old-model"):
+        store.requeue_other_profiles(current)
+    assert one(sql, "SELECT status FROM image WHERE id = %s", image_id) == "indexed"
