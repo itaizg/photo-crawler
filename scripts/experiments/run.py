@@ -137,6 +137,13 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="run", description=__doc__.splitlines()[0])
     parser.add_argument("--set", dest="crawl_date", type=date.fromisoformat, required=True)
     parser.add_argument("--only", choices=["baseline"], help="only the sanity check")
+    parser.add_argument(
+        "--models",
+        nargs="+",
+        choices=list(snapshot.MODELS),
+        default=list(snapshot.MODELS),
+        help="score only these models' half of the grid (default: both); an early look",
+    )
     args = parser.parse_args(argv)
 
     folder, errors = eval_set.read_folder(EVAL)
@@ -144,7 +151,10 @@ def main(argv: Sequence[str] | None = None) -> int:
     if label_set is None:
         print(f"error: no valid label set {args.crawl_date}: {errors}", file=sys.stderr)
         return 2
-    models = ["Facenet512"] if args.only else list(snapshot.MODELS)
+    models = ["Facenet512"] if args.only else args.models
+    if "Facenet512" not in models:  # the sanity check runs on it, before anything is reported
+        print("error: --models must include Facenet512 (the sanity check)", file=sys.stderr)
+        return 2
     missing = [m for m in models if not snapshot.path(args.crawl_date, m).is_file()]
     if missing:
         print(f"error: no snapshot for {', '.join(missing)}; see the brief", file=sys.stderr)

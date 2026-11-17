@@ -219,3 +219,40 @@ def test_the_export_reads_pgvector_vectors_and_page_links() -> None:
     assert np.allclose(snap.embeddings[0], a)
     assert np.allclose(snap.embeddings[1], a[::-1])
     assert snap.image_pages == {7: ("https://a", "https://b"), 9: ("https://b",)}
+
+
+# -- the parallel re-embedding (scripts/experiments/reembed.py) ---------------------------------
+
+
+class FakeEmbedder:
+    """Faces for every JPEG except b"bad", which fails as an undecodable image would."""
+
+    def embed(self, jpeg: bytes) -> list[object]:
+        from face_index.errors import ItemError
+        from face_index.models import Box, DetectedFace
+
+        if jpeg == b"bad":
+            raise ItemError("JPEG could not be decoded")
+        n = len(jpeg)
+        return [
+            DetectedFace(
+                box=Box(x=i, y=0, w=10, h=10), confidence=0.99, embedding=(float(n),) * 512
+            )
+            for i in range(n)
+        ]
+
+
+def test_embedding_in_parallel_matches_one_process_and_counts_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from concurrent.futures import ThreadPoolExecutor
+
+    reembed = load_script("reembed")
+    monkeypatch.setattr(reembed, "_EMBEDDER", FakeEmbedder())
+    items = [(7, b"ab"), (8, b"bad"), (9, b"abc"), (10, b"a")]
+    alone, failed_alone = reembed.embed_batch(items, None)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        together, failed_together = reembed.embed_batch(items, pool)
+    assert together == alone  # same faces, in image order
+    assert [image for image, _ in alone] == [7, 7, 9, 9, 9, 10]
+    assert failed_alone == failed_together == 1
