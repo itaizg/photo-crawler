@@ -66,6 +66,17 @@ Fix what the review found, in priority order: claims the code does not keep come
     - Check that the crawl task's XCom payload stays under Airflow's size limit at about 190 pages. At thousands of pages, the payload's existing compact list form may not be enough.
     - Download and detection run one after the other, so detection waits for every download, about 50 minutes at this size. Overlapping them is a possible later speed-up, not part of this goal.
 
+## Revisions after review (2026-11-17)
+
+The Sourcery reviews of PR #18 found places where this brief and spec 004 now disagree. Where they do, spec 004 holds the later decision:
+
+- **Goal 1:** the nearest-neighbour batch is fetched with the profile rule inside the index scan (pgvector's iterative scan), not filtered afterwards, so other profiles' faces cannot shorten it (spec FR-001).
+- **Goal 3:** the re-embedding path is `face_index.faces.DeepFaceEmbedder`, used by `reembed.py`; `snapshot.ModelEmbedder` no longer exists.
+- **Goal 4:** six query-expansion rows are re-scored, not four (three scorings for each of the two models). Done on 2026-11-17: [search-evaluation.md](../search-evaluation.md).
+- **Goal 5:** page origins go in a separate, validated provenance file next to the set; `methods.csv` keeps one row per set (spec FR-015).
+- **Goal 6:** the ArcFace threshold is fitted on 2026-11-16 and read out of sample on 2026-11-17; the default moves only if the confirmation holds (spec FR-019).
+- **Goal 9:** Airflow's password file also holds the superuser's password, for Airflow's own metadata connection; a separate Airflow role removes it (spec FR-031a).
+
 ## Constraints
 
 - **No tuning on the 2026-11-16 set.** No threshold, k, face size or model default is chosen from its results. New experiment rows are reported as additions or corrections, beside the pre-registered ones.
