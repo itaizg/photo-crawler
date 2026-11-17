@@ -1,8 +1,8 @@
 # Mission Brief — Search Experiments
 
-Origin: the first evaluation (README, [Search accuracy evaluation](../../README.md#search-accuracy-evaluation)). On label set 2026-11-16 the search fails SC-001 and SC-003 at the 0.30 threshold. The 40 px face-size filter did not help: the 4 false matches are clear look-alike faces, and for person-d a wrong page is closer than both true pages. This brief measures, offline, whether standard retrieval techniques separate true from wrong matches better than raw cosine distance, alone or combined.
+Origin: the first evaluation ([search-evaluation.md](../search-evaluation.md)). On label set 2026-11-16 the search fails SC-001 and SC-003 at the 0.30 threshold. The 40 px face-size filter did not help: the 4 false matches are clear look-alike faces, and for person-d a wrong page is closer than both true pages. This brief measures, offline, whether standard retrieval techniques separate true from wrong matches better than raw cosine distance, alone or combined.
 
-**Status: run on 2026-11-17; results in the README (Experiments).** Of the 12 combinations only ArcFace with raw cosine and no re-ranking met the rule below; it is to be confirmed on a second label set before anything changes.
+**Status: run on 2026-11-17; results in [search-evaluation.md](../search-evaluation.md#experiments).** Of the 12 combinations only ArcFace with raw cosine and no re-ranking met the rule below; it is to be confirmed on a second label set before anything changes.
 
 **This brief was written before any experiment was run.** The grid, the hyperparameters and the metrics below are fixed here and were not changed after seeing results. Every combination is reported, not only the best one.
 

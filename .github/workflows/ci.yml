@@ -121,8 +121,22 @@ jobs:
   model-smoke:
     if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref == 'refs/heads/main')
     runs-on: ubuntu-latest
+    # The real-model search test indexes a face and searches it, so it needs Postgres like the test job.
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: faces
+          POSTGRES_DB: faces_test
+          POSTGRES_PASSWORD: ci-${{ github.run_id }}-${{ github.run_attempt }}
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U faces -d faces_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DEEPFACE_HOME: ${{ github.workspace }}/.deepface
+      FACE_INDEX_TEST_DSN: postgresql://faces:ci-${{ github.run_id }}-${{ github.run_attempt }}@127.0.0.1:5432/faces_test
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
