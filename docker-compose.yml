@@ -39,7 +39,7 @@ x-airflow-common: &airflow-common
 
 services:
   db-secrets:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.7-pg17
     user: "0:0"
     entrypoint: /bin/bash
     command:
@@ -57,7 +57,10 @@ services:
         } > pgpass
         chown "$${AIRFLOW_UID}:0" pgpass
         chmod 600 pgpass
-        chmod 644 postgres_password writer_password reader_password
+        # Read only by the Postgres server, which runs as postgres (entrypoint and init script);
+        # host commands read them through `docker compose exec`, which runs as root.
+        chown postgres:postgres postgres_password writer_password reader_password
+        chmod 400 postgres_password writer_password reader_password
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-faces}
       AIRFLOW_UID: ${AIRFLOW_UID:-50000}
@@ -66,7 +69,7 @@ services:
     restart: "no"
 
   postgres:
-    image: pgvector/pgvector:pg17
+    image: pgvector/pgvector:0.8.7-pg17
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-faces}
       POSTGRES_DB: faces

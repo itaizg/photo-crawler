@@ -22,7 +22,7 @@ Airflow pools prevent collisions: one HTTP slot per site and N slots for CPU-hea
 
 **Primary Dependencies**: Apache Airflow 3.x (LocalExecutor, Task SDK `airflow.sdk`), `deepface` + `tf-keras` + `tensorflow` (CPU), `httpx`, `beautifulsoup4` + `lxml`, `pillow`, `psycopg[binary]` 3, `pgvector` (Python adapter), `numpy`. Robots rules use the standard-library `urllib.robotparser`.
 
-**Storage**: One Postgres 17 instance with the pgvector extension (`pgvector/pgvector:pg17` image). It holds two databases: `airflow` (orchestrator metadata) and `faces` (the index). Embeddings are stored as `vector(512)` with an HNSW cosine index, and JPEG bytes as `bytea`.
+**Storage**: One Postgres 17 instance with the pgvector extension (`pgvector/pgvector:0.8.7-pg17` image, pinned 2026-11-17; was the floating `pg17` tag). It holds two databases: `airflow` (orchestrator metadata) and `faces` (the index). Embeddings are stored as `vector(512)` with an HNSW cosine index, and JPEG bytes as `bytea`.
 
 **Testing**: pytest, offline ([constitution IV](../../.specify/memory/constitution.md)):
 - HTTP is faked with `httpx.MockTransport` and HTML fixtures captured from the live sites.
