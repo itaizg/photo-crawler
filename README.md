@@ -81,7 +81,7 @@ docker compose run --rm face-matcher queries/alice.jpg
 
 The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, ArcFace, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
 
-**Output.** One group per face found in the photo. Faces are numbered from 1, left to right, and each header shows the face's box in the normalized photo. Under each header are the matching page URLs, closest match first, each page once:
+**Output.** One group per face found in the photo. Faces are numbered from 1, left to right, and each header shows the face's box in the normalized photo. Under each header are the matching page URLs, closest match first, each page once. This is an illustration of the format, not a recorded run:
 
 ```text
 # face 1 x=212 y=96 w=118 h=151: 3 pages
@@ -179,7 +179,7 @@ Keep the venv outside iCloud (`export UV_PROJECT_ENVIRONMENT=$HOME/.venvs/photo-
 
 ## Example usage and expected outputs
 
-All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker. This is not the spec's reference machine (4 cores, 16 GB), and only CNN could be crawled (people.com refuses the crawler, see Known limitations). These runs predate disabling people.com, so the smoke output below still shows its 402.
+All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker. This is not the spec's reference machine (4 cores, 16 GB), and only CNN could be crawled. They were recorded before people.com was disabled (see Known limitations), so the first run's summary still counts its refusal as a crawl failure.
 
 **First default run** (`airflow dags trigger image_indexer`, empty index), 72 min. This is the `summarize` task log:
 
@@ -204,7 +204,7 @@ failures                                 2
 abandoned (3 attempts)                   0
 ```
 
-Per stage: crawl 0.9 min, download 16.3 min (held at the 5 req/s image limit), face detection 54.8 min (2 workers, about 1.4 s per image each). The crawl failure is people.com's HTTP 402; the download failure is one image that returned HTTP 500.
+Per stage: crawl 0.9 min, download 16.3 min (held at the 5 req/s image limit), face detection 54.8 min (2 workers, about 1.4 s per image each). The crawl failure is People's HTTP 402, recorded before the site was disabled; the download failure is one image that returned HTTP 500.
 
 **Second default run** right after the first, 2 min 10 s. Known URLs are not downloaded again; new articles add new images:
 
@@ -217,21 +217,19 @@ analyzed, no faces                       9
 faces stored                           138
 ```
 
-**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages and the links it saw on them, except the orphan-face check, which covers the whole `face` table:
+**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site, 2026-11-11), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages and the links it saw on them, except the orphan-face check, which covers the whole `face` table:
 
 ```
 INFO: cnn crawled (1 page)
-WARN: people has no page this run (see the failing links below)
 PASS: at least one site crawled this run (1)
 PASS: faces on this run's pages (392)
 PASS: images are JPEG and at most 1024 px (0)
 PASS: every face is linked to a page (0)
 PASS: every face on this run's pages has a 512-d embedding (0)
-failing link this run: https://people.com/ | 3 | http 402
 SMOKE PASSED
 ```
 
-**Stored data checks** (quickstart §3), on the index after both runs:
+**Stored data checks** (the [indexer quickstart's stored data checks](specs/001-image-indexer/quickstart.md#3-check-the-stored-data-sc-003-sc-005-sc-006)), on the index after both runs, 2026-11-11:
 
 | Check | Result |
 |---|---|
@@ -243,11 +241,11 @@ SMOKE PASSED
 | Model profile | `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, 512 |
 | Analyzed images missing dimensions or a time | 0 |
 
-**Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
+**Spot check** (no face box on a region without a face), 2026-11-11: 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
 
 ## Search accuracy evaluation
 
-The search is measured against hand-labelled label sets in [`queries/eval/`](queries/eval/): at least 5 people who appear on the crawled site, with every page they appear on, and at least 5 who do not, each with one openly licensed photo from outside the site. The criteria are the face search's SC-001 to SC-003: at least 80% of each person's pages found, no page returned that does not show the person, and nothing returned for people not on the site. Run it against the Compose database, as the read-only role:
+The search is measured against hand-labelled label sets in [`queries/eval/`](queries/eval/): at least 5 people who appear on the crawled site, with every page they appear on, and at least 5 who do not, each with one openly licensed photo from outside the site. The criteria are the face search's [three accuracy targets](specs/002-face-search/spec.md#measurable-outcomes): at least 80% of each person's pages found, no page returned that does not show the person, and nothing returned for people not on the site. Run it against the Compose database, as the read-only role:
 
 ```bash
 PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
@@ -255,14 +253,14 @@ PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_passwor
 
 It prints a per-label table, then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate. CI validates the label files and runs the evaluator against a mock on every pull request, and attaches an HTML report of the committed results (`eval-report`).
 
-**Result on label set 2026-11-16, at the default threshold of 0.30: FAIL.** 5 present people (16 true pages) and 5 absent people, on a 15,822-face CNN index:
+**Result on label set 2026-11-16, run on 2026-11-17, at the default threshold of 0.30: FAIL.** 5 present people (16 true pages) and 5 absent people, on a 15,822-face CNN index:
 
-- **SC-001 fails for 2 of 5 people.** person-b and person-d were found on none of their pages (5 between them); person-a, c and e were found on all of theirs.
-- **SC-002 passes.** No present person was returned on a page that does not show them.
-- **SC-003 fails for 2 of 5 absent people,** with 4 wrong pages, 3 of them for a look-alike.
+- **Finding at least 80% of each person's pages fails for 2 of 5 people.** person-b and person-d were found on none of their pages (5 between them); person-a, c and e were found on all of theirs.
+- **No extra pages passes.** No present person was returned on a page that does not show them.
+- **Nothing returned for absent people fails for 2 of 5,** with 4 wrong pages, 3 of them for a look-alike.
 - **No threshold passes.** True matches reach a distance of 0.392 and wrong ones start at 0.233. The threshold was not tuned to hide this.
 
-**What was tried since.** A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate. Recall at zero false matches (true pages ranked above every wrong page): ArcFace 0.88 (14 of 16), Facenet512 0.62 (10 of 16). Separable people: 5/5 against 4/5; absent people below every true page: 2/5 against 0/5 (AUC 0.999 against 0.994, near 1 for both). **ArcFace does not pass either:** no single threshold meets all three criteria, since 2 true pages and 3 absent people still overlap. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
+**What was tried since** (measured on 2026-11-17). A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate. Recall at zero false matches (true pages ranked above every wrong page): ArcFace 0.88 (14 of 16), Facenet512 0.62 (10 of 16). Separable people: 5/5 against 4/5; absent people below every true page: 2/5 against 0/5 (AUC 0.999 against 0.994, near 1 for both). **ArcFace does not pass either:** no single threshold meets all three criteria, since 2 true pages and 3 absent people still overlap. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
 
 **How the labels were made, and their bias.** One labeller browsed the 2026-11-16 crawl for each person's pages, then reviewed every page the search matched or nearly matched (`face-matcher --details`) and added the pages that do show the person; the method is recorded in [`methods.csv`](queries/eval/methods.csv). Recall is only as good as those labels: a page that neither browsing nor the search surfaced is invisible to the measurement, and because the review started from the search's own matches (Facenet512's), the labels lean towards pages Facenet512 ranks well; a page only ArcFace ranks high may be scored as a wrong page for ArcFace. The sample is small (10 people, all public figures with openly licensed photos), one labeller judged every page, and the results describe that one crawl, since the site changes hourly.
 
@@ -270,7 +268,7 @@ Full results, distances, the experiments and the labelling method and its limits
 
 ## Known limitations
 
-- **SC-011 (a default run on the enabled sites within 30 minutes) is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
+- **The 30-minute target for a default run on the enabled sites is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
 - **people.com is disabled.** It answers the crawler's honest User-Agent (`photo-crawler/0.1.0`) with HTTP 402 from Cloudflare, and its terms forbid scraping. The crawler does not disguise itself to get around this, so the site stays in `config.SITES` with `enabled=False` and the DAG has no `crawl_people`/`download_people` tasks. Leaving People out and documenting why was agreed with the assignment's reviewer (2026-11-15); the other option offered, indexing lead images from People's public news sitemap, was not taken. With the site's permission, set `enabled=True` to crawl it again; while it refuses, a run that includes it records the 402, marks `crawl_people` and the run failed, and still indexes CNN.
 - **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.
 - **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A 40 px size filter was measured and not adopted, because the false matches are clear look-alike faces ([search-evaluation.md](docs/search-evaluation.md)).
