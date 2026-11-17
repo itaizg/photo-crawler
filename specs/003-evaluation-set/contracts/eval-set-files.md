@@ -56,8 +56,8 @@ crawl_date,found_by,labeller,snapshot_holder,onsite_pair
 ## `runs.csv`
 
 ```csv
-run_at,label_set,labels_sha256,model_profile,threshold,faces,images,pages,label,expected,returned,missed,extra,label_errors,verdict
-2026-11-20T18:04:11Z,2026-11-20,a1b2c3d4e5f6,facenet512-retinaface-cosine,0.30,4812,2960,61,person-a,4,4,0,0,0,PASS
+run_at,label_set,labels_sha256,model_profile,threshold,min_face_px,faces,images,pages,label,expected,returned,missed,extra,label_errors,verdict
+2026-11-20T18:04:11Z,2026-11-20,a1b2c3d4e5f6,facenet512-retinaface-cosine,0.30,0,4812,2960,61,person-a,4,4,0,0,0,PASS
 ```
 
 - Rows are appended only. CI rejects a pull request in which the base branch's log is not an unchanged prefix of the new one.

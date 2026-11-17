@@ -188,6 +188,7 @@ class FakeSearchIndex:
         self._known = frozenset(known) if known is not None else None
         self._size = size
         self.calls: list[tuple[tuple[float, ...], float, int]] = []
+        self.min_faces: list[int] = []
         self.closed = False
 
     def profile_id(self, key: str) -> int | None:
@@ -201,9 +202,14 @@ class FakeSearchIndex:
         return self._face_count
 
     def matching_pages(
-        self, embedding: Sequence[float], max_distance: float, profile_id: int
+        self,
+        embedding: Sequence[float],
+        max_distance: float,
+        profile_id: int,
+        min_face: int = 0,
     ) -> list[PageMatch]:
         self.calls.append((tuple(embedding), max_distance, profile_id))
+        self.min_faces.append(min_face)
         if self._pages_by_face is not None:
             return self._pages_by_face(embedding, max_distance)
         return [p for p in self._pages if p.best_distance < max_distance]

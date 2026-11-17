@@ -87,6 +87,7 @@ Results go to standard output, and progress and errors go to standard error. `gr
 | Option | Default | Meaning |
 |---|---|---|
 | `--threshold T` | `0.30` | A stored face matches when its cosine distance is **below** T. T must be in (0, 2]. 0.30 is DeepFace's recommended threshold for Facenet512 with cosine distance; lower is stricter. |
+| `--min-face PX` | `0` (every face) | Compare only indexed faces whose box is at least PX pixels on its shorter side, in the normalized image (longest side at most 1024). Small background faces give unreliable embeddings, so this can remove false matches; it can also drop a person who appears only small. Off by default until measured ([noisy-index-faces.md](docs/briefs/noisy-index-faces.md)). |
 | `--face N` | all faces | Search only face N |
 | `--details` | off | Also print each page's best distance, `lead` when the match is the page's main (preview) image, and the matching image URLs |
 | `--list-faces` | off | Print the faces with their boxes and save `queries/<name>.faces.jpg` with the numbers drawn on. No search. It stays on your machine and is overwritten next time. |
@@ -305,6 +306,8 @@ Against the criteria:
   A higher threshold trades the recall failure for more false matches and also breaks SC-002, so the default stays at 0.30. These numbers come from this set alone and are not a basis for choosing a threshold; tuning on them would overfit it.
 - **A few pages are close to many faces.** `/travel/news`, `/world/heroes` and `/world/americas` are within 0.40 of three different query photos each, and include absent-d's three false matches. `/world` does the same, but it is an index page with many faces. A face on those pages that resembles many people (small, blurred or side-on) would explain this; it is the case in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md), and those pages' faces are the first thing to inspect.
 - **Every labelled page is within 0.50** of its person's photo, so the misses come from where the cutoff sits, not from faces missing from the index.
+
+**Face-size filter (in progress).** `--min-face PX` (on `face_matcher` and the evaluator) compares only indexed faces at least PX pixels on their shorter side. The value to try was fixed at 40 px before any filtered run, from the brief's common floor for Facenet-style models, not chosen from these results: picking the value that scores best on this set would overfit it. Filtered runs are logged with `min_face_px`, next to the unfiltered ones, and the default stays 0 until a second label set confirms the effect.
 
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. A later set should add a page where a person appears only small.

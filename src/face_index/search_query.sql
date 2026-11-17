@@ -1,6 +1,7 @@
 -- %(q)s: query embedding, vector(512)
 -- %(max_dist)s: threshold; a face matches when its cosine distance is strictly below it
 -- %(profile_id)s: model_profile.id whose key equals face_index.model_profile.KEY
+-- %(min_face)s: smallest indexed face searched, in normalized-image pixels on its shorter side (0: all)
 WITH matches AS (
     SELECT f.image_id,
            min(f.embedding <=> %(q)s) AS distance
@@ -8,6 +9,7 @@ WITH matches AS (
     JOIN image i ON i.id = f.image_id AND i.status = 'indexed'
     WHERE f.model_profile_id = %(profile_id)s
       AND f.embedding <=> %(q)s < %(max_dist)s
+      AND least(f.w, f.h) >= %(min_face)s
     GROUP BY f.image_id
 )
 SELECT p.url,

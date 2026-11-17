@@ -133,6 +133,33 @@ def test_run_prints_the_report_and_passes(
     assert out.strip().endswith("PASS")
     assert {threshold for _, threshold, _ in index.calls} == {ev.REPORT_CEILING}
     assert len(index.calls) == len(PRESENT) + len(ABSENT)
+    assert set(index.min_faces) == {0}
+    assert "min face 0 px" in out
+
+
+def test_min_face_is_searched_printed_and_logged(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    runs.unlink()
+    index = FakeSearchIndex(pages_by_face=by_label(all_found()))
+    embedder = FakeEmbedder(default_faces=1)
+    assert ev.run(root, None, index, embedder, log_to=runs, min_face=40) == ev.EXIT_PASS
+    assert set(index.min_faces) == {40}
+    assert "min face 40 px" in capsys.readouterr().out
+    rows, errors = ev.eval_set.read_run_log(root)
+    assert errors == []
+    assert {r.min_face_px for r in rows} == {40}
+
+
+@pytest.mark.parametrize(
+    "argv", [["--min-face", "-1"], ["--min-face", "x"], ["--check", "--min-face", "40"]]
+)
+def test_bad_or_misplaced_min_face_is_a_usage_error(tmp_path: Path, argv: list[str]) -> None:
+    with pytest.raises(SystemExit) as exited:
+        ev.main([str(write_folder(tmp_path)), *argv])
+    assert exited.value.code == ev.EXIT_USAGE
 
 
 def test_run_reports_a_label_error_and_fails(
@@ -242,6 +269,7 @@ def test_a_logged_run_appends_one_row_per_label(tmp_path: Path) -> None:
     assert first.label_set.isoformat() == "2026-11-20"
     assert first.model_profile == model_profile.KEY
     assert first.threshold == model_profile.MATCH_THRESHOLD
+    assert first.min_face_px == 0
     assert (first.faces, first.images, first.pages) == (10, 5, 3)
     assert (first.expected, first.returned, first.missed, first.extra) == (2, 2, 0, 0)
     assert {r.verdict for r in rows} == {"PASS"}

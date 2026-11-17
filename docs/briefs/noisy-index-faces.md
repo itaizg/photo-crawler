@@ -2,6 +2,8 @@
 
 Source of truth: [assignment.md](../assignment.md). Quoted text is from the assignment; anything else is interpretation. Origin: [TODO.md](../../TODO.md), "Search script: noisy faces from the index". Lands with or after feature 002.
 
+**Status (2026-11-17):** the size filter exists as `--min-face PX` on `face_matcher` and `scripts/evaluate_search.py` (query time, `least(face.w, face.h) >= PX`, default 0). The first evaluation at 40 px is pending; the default changes only after it and a second label set.
+
 ## Mission
 
 > "Returns the pages containing images of the same character with high confidence."

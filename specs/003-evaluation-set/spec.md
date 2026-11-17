@@ -146,6 +146,7 @@ A reader of the README sees the evaluation results from a real-model run on a li
 **Evaluation behaviour**
 
 - **FR-016**: The evaluator MUST keep using the search's own code at the default threshold; no label set carries its own threshold.
+- **FR-016a**: The evaluator MAY run the search with a minimum indexed-face size (`--min-face`, the same option as `face_matcher`). Each logged run MUST record it (`min_face_px`), so filtered and unfiltered runs are never confused.
 - **FR-017**: The evaluator MUST report, per present person: expected pages, returned pages, recall, extra pages, and every missed page; per absent label: the number of pages returned; and an overall PASS or FAIL against SC-001 to SC-003 of feature 002.
 - **FR-018**: A labelled page that is not in the index MUST be reported as a label error and MUST fail the run; it MUST NOT be counted as a search miss or skipped.
 - **FR-019**: A query photo with no detected face, that cannot be decoded, or on which face detection fails MUST be reported by path with the reason, and MUST fail the run. Every such photo in the set MUST be reported in the same run.

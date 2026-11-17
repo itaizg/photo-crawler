@@ -31,6 +31,7 @@ RUNS_HEADER: Final[tuple[str, ...]] = (
     "labels_sha256",
     "model_profile",
     "threshold",
+    "min_face_px",
     "faces",
     "images",
     "pages",

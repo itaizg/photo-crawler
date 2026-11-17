@@ -46,6 +46,7 @@ RUN_COLUMNS: Final[tuple[str, ...]] = (
     "labels_sha256",
     "model_profile",
     "threshold",
+    "min_face_px",
     "faces",
     "images",
     "pages",
@@ -432,6 +433,7 @@ class RunRow(Record):
     labels_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{12}$")]
     model_profile: FreeText
     threshold: float
+    min_face_px: Annotated[int, Field(ge=0, le=1024)]
     faces: NonNegativeInt
     images: NonNegativeInt
     pages: NonNegativeInt

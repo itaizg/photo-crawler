@@ -5,7 +5,7 @@ role (the password is read from the Compose secrets volume at run time):
 
     PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" \\
       FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces \\
-      uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--log]
+      uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--min-face PX] [--log]
 
 Validate every evaluation file, with no database and no model:
 
@@ -13,6 +13,8 @@ Validate every evaluation file, with no database and no model:
 
 File formats and the output are specified in specs/003-evaluation-set/contracts/. The search's
 own code runs at the default threshold; for each photo the largest detected face is searched.
+--min-face PX compares only indexed faces at least PX pixels on their shorter side (default 0,
+every face), as face_matcher --min-face does; the setting is logged with the run.
 """
 
 import argparse
@@ -118,9 +120,11 @@ def _faces(
     return None if problems else faces
 
 
-def _distances(face: QueryFace, index: SearchIndex, profile_id: int) -> dict[str, float]:
+def _distances(
+    face: QueryFace, index: SearchIndex, profile_id: int, min_face: int
+) -> dict[str, float]:
     """Each page's best distance up to the report ceiling, closest first."""
-    [result] = search_faces([face], index, profile_id, REPORT_CEILING)
+    [result] = search_faces([face], index, profile_id, REPORT_CEILING, min_face)
     return {p.url: p.best_distance for p in result.pages}
 
 
@@ -200,13 +204,14 @@ def run(
     embedder: FaceEmbedder,
     *,
     log_to: Path | None = None,
+    min_face: int = 0,
 ) -> int:
     """Evaluate one label set (the latest by default). Tests pass ``log_to=None``."""
     match _load(root, crawl_date):
         case int() as status:
             return status
         case label_set:
-            return _evaluate(root, label_set, index, embedder, log_to=log_to)
+            return _evaluate(root, label_set, index, embedder, log_to=log_to, min_face=min_face)
 
 
 def _evaluate(
@@ -216,6 +221,7 @@ def _evaluate(
     embedder: FaceEmbedder,
     *,
     log_to: Path | None,
+    min_face: int = 0,
 ) -> int:
     run_at = datetime.now(UTC).replace(microsecond=0)
     profile_id = index.profile_id(model_profile.KEY)
@@ -236,7 +242,9 @@ def _evaluate(
     faces = _faces(root, label_set.labels(), embedder)
     if faces is None:
         return EXIT_CANNOT_EVALUATE
-    found = {label: _distances(faces[label], index, profile_id) for label in label_set.labels()}
+    found = {
+        label: _distances(faces[label], index, profile_id, min_face) for label in label_set.labels()
+    }
     reports = [
         evaluate_present(label, pages, _returned(found[label]), known=known)
         for label, pages in present.items()
@@ -250,7 +258,7 @@ def _evaluate(
         return EXIT_CANNOT_EVALUATE
     print(
         f"label set {label_set.crawl_date} (labels {version}), profile {model_profile.KEY}, "
-        f"threshold {model_profile.MATCH_THRESHOLD:.2f}"
+        f"threshold {model_profile.MATCH_THRESHOLD:.2f}, min face {min_face} px"
     )
     print(f"index: {size.faces} faces, {size.images} images, {size.pages} pages")
     print()
@@ -267,6 +275,7 @@ def _evaluate(
                     labels_sha256=version,
                     model_profile=model_profile.KEY,
                     threshold=model_profile.MATCH_THRESHOLD,
+                    min_face_px=min_face,
                     faces=size.faces,
                     images=size.images,
                     pages=size.pages,
@@ -305,6 +314,17 @@ def check(root: Path) -> int:
     return EXIT_PASS
 
 
+def _pixels(text: str) -> int:
+    """A face size in [0, 1024] pixels: normalized images are at most 1024 on their longest side."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"{text!r}: not a whole number of pixels") from None
+    if not 0 <= value <= 1024:
+        raise argparse.ArgumentTypeError(f"{text!r}: must be in [0, 1024]")
+    return value
+
+
 class _Parser(argparse.ArgumentParser):
     def error(self, message: str) -> NoReturn:
         self.print_usage(sys.stderr)
@@ -333,11 +353,21 @@ def _parse(argv: Sequence[str] | None) -> argparse.Namespace:
         metavar="YYYY-MM-DD",
         help="label set to evaluate (default: the latest)",
     )
+    parser.add_argument(
+        "--min-face",
+        dest="min_face",
+        type=_pixels,
+        default=0,
+        metavar="PX",
+        help="compare only indexed faces at least PX pixels on their shorter side (default: 0)",
+    )
     parser.add_argument("--log", action="store_true", help="append this run to runs.csv")
     parser.add_argument("--check", action="store_true", help="only validate the files")
     args = parser.parse_args(argv)
     if args.log and args.check:
         parser.error("--log and --check cannot be combined")
+    if args.check and args.min_face:
+        parser.error("--min-face and --check cannot be combined")
     return args
 
 
@@ -367,7 +397,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         return EXIT_CANNOT_EVALUATE
     try:  # infrastructure boundary
         with closing(PostgresSearchIndex(dsn)) as index:
-            return _evaluate(root, label_set, index, DeepFaceEmbedder(), log_to=log_to)
+            return _evaluate(
+                root, label_set, index, DeepFaceEmbedder(), log_to=log_to, min_face=args.min_face
+            )
     except (InfrastructureError, IndexNotReady) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_CANNOT_EVALUATE

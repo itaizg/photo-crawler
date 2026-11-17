@@ -7,7 +7,7 @@ The interface a contributor and CI use, and what the tests assert. Implemented i
 ```text
 # Evaluate a label set against the Compose database, as the read-only role.
 # The password is read from the Compose secrets volume at run time (research R11):
-PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--log]
+PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py [FOLDER] [--set YYYY-MM-DD] [--min-face PX] [--log]
 
 # Validate every evaluation file, with no database and no model (CI):
 uv run python scripts/evaluate_search.py [FOLDER] --check
@@ -21,11 +21,12 @@ uv run python scripts/evaluate_search.py [FOLDER] --check
 |---|---|---|---|
 | `FOLDER` | `queries/eval` | Evaluation folder ([eval-set-files.md](eval-set-files.md)) | Must be a directory. A `.toml` file gets exit 64 with "labels are now CSV label sets under queries/eval/sets/". |
 | `--set D` | latest set | The label set `sets/D.csv` to evaluate | ISO date of an existing set, or exit 64 listing the available sets |
+| `--min-face PX` | `0` (every face) | Compare only indexed faces whose box is at least PX pixels on its shorter side, in the normalized image (longest side ≤ 1024), as `face_matcher --min-face` does. Logged as `min_face_px` | Integer in [0, 1024]; not allowed with `--check` (exit 64) |
 | `--log` | off | Append this run to `runs.csv`, and its page distances to `distances.csv` (real model only) | Not allowed with `--check` (exit 64) |
 | `--check` | off | Validate all files and exit; no database, no model | – |
 | `-h, --help` | | Usage and exit statuses | – |
 
-There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESHOLD` (spec FR-016).
+There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESHOLD` (spec FR-016). `--min-face` is a search option, not a threshold, and every logged run records it (FR-016a).
 
 ## Order of work
 
@@ -41,7 +42,7 @@ There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESH
 stdout, UTF-8. Paths are relative to `FOLDER`; labels are neutral.
 
 ```text
-label set 2026-11-20 (labels a1b2c3d4e5f6), profile facenet512-retinaface-cosine, threshold 0.30
+label set 2026-11-20 (labels a1b2c3d4e5f6), profile facenet512-retinaface-cosine, threshold 0.30, min face 0 px
 index: 4812 faces, 2960 images, 61 pages
 
 label          expected returned  recall  extra  errors

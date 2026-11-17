@@ -239,7 +239,7 @@ def test_a_bad_run_log_is_reported(tmp_path: Path) -> None:
 
     write_folder(tmp_path)
     good = (
-        "2026-11-20T18:04:11Z,2026-11-20,a1b2c3d4e5f6,facenet512,0.30,"
+        "2026-11-20T18:04:11Z,2026-11-20,a1b2c3d4e5f6,facenet512,0.30,0,"
         "10,5,3,person-a,2,2,0,0,0,PASS\n"
     )
     with runs.open("a", encoding="utf-8") as f:
@@ -401,7 +401,7 @@ def test_an_attribution_author_cannot_be_a_formula(tmp_path: Path) -> None:
 def test_run_times_must_be_utc(tmp_path: Path, run_at: str) -> None:
     write_folder(tmp_path)
     with (tmp_path / "runs.csv").open("a", encoding="utf-8") as f:
-        f.write(f"{run_at},2026-11-20,a1b2c3d4e5f6,profile,0.30,10,5,3,person-a,2,2,0,0,0,PASS\n")
+        f.write(f"{run_at},2026-11-20,a1b2c3d4e5f6,profile,0.30,0,10,5,3,person-a,2,2,0,0,0,PASS\n")
     assert any(e.startswith("runs.csv:2:") and "UTC" in e for e in errors_for(tmp_path))
 
 

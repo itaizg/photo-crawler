@@ -53,6 +53,7 @@ class Seeder:
         url: str | None = None,
         lead: bool = False,
         index: bool = True,
+        size: int = 8,
     ) -> int:
         self._seed += 1
         seed = self._seed
@@ -70,7 +71,11 @@ class Seeder:
         )
         if index:
             faces = [
-                DetectedFace(box=Box(x=1 + 10 * i, y=1, w=8, h=8), confidence=0.99, embedding=vec)
+                DetectedFace(
+                    box=Box(x=1 + (size + 2) * i, y=1, w=size, h=size),
+                    confidence=0.99,
+                    embedding=vec,
+                )
                 for i, vec in enumerate(vectors)
             ]
             self.store.process_pending(image_id, lambda _p: faces, self.profile_id)
@@ -222,6 +227,31 @@ def test_profile_lookup_and_face_count(seed: Seeder, index: PostgresSearchIndex)
     assert index.profile_id(model_profile.KEY) == seed.profile_id
     assert index.profile_id("missing") is None
     assert index.indexed_face_count(seed.profile_id) == 2
+
+
+def test_min_face_skips_smaller_faces_inclusively(seed: Seeder, index: PostgresSearchIndex) -> None:
+    small = seed.page("https://cnn.test/small")
+    large = seed.page("https://cnn.test/large")
+    mixed = seed.page("https://cnn.test/mixed")
+    seed.image(small, [at_distance(0.10)], size=12)
+    seed.image(large, [at_distance(0.20)], size=40)
+    seed.image(mixed, [at_distance(0.05)], size=12)
+    seed.image(mixed, [at_distance(0.25)], size=40)
+
+    def found(min_face: int) -> list[tuple[str, float]]:
+        return [
+            (m.url, round(m.best_distance, 6))
+            for m in index.matching_pages(QUERY, 0.30, seed.profile_id, min_face)
+        ]
+
+    assert [u for u, _ in found(0)] == [
+        "https://cnn.test/mixed",
+        "https://cnn.test/small",
+        "https://cnn.test/large",
+    ]
+    # A page keeps only its large faces: "mixed" is now ranked by its 40 px face.
+    assert found(40) == [("https://cnn.test/large", 0.2), ("https://cnn.test/mixed", 0.25)]
+    assert found(41) == []
 
 
 def test_known_pages_are_the_crawled_ones(seed: Seeder, index: PostgresSearchIndex) -> None:

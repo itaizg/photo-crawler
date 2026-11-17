@@ -93,7 +93,10 @@ def test_each_face_is_searched_once_with_threshold_and_profile() -> None:
     assert [r.face.number for r in results] == [1, 2]
     assert [(c[1], c[2]) for c in index.calls] == [(0.3, 7), (0.3, 7)]
     assert [c[0][0] for c in index.calls] == [1.0, 2.0]
+    assert index.min_faces == [0, 0]
     assert results[0].pages == (page("https://cnn.test/a", 0.1),)
+    search_faces(faces[:1], index, profile_id=7, threshold=0.3, min_face=40)
+    assert index.min_faces[-1] == 40
 
 
 def test_no_match_gives_an_empty_result() -> None:

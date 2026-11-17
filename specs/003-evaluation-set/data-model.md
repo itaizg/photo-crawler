@@ -100,6 +100,7 @@ Extends the existing `PersonReport`, for one label in one run.
 | `labels_sha256` | 12 hex characters | hash of the set file and its photos |
 | `model_profile` | str | `model_profile.KEY` |
 | `threshold` | float | `model_profile.MATCH_THRESHOLD` |
+| `min_face_px` | int, 0 to 1024 | the run's `--min-face`; 0 means every indexed face was searched. Runs logged before this column existed were all 0. |
 | `faces`, `images`, `pages` | int | index size |
 | `label` | Label | |
 | `expected`, `returned`, `missed`, `extra`, `label_errors` | int | counts from the label report |

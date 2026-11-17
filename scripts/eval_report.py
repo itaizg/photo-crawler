@@ -265,6 +265,10 @@ def _distances_html(run: Run, distances: Sequence[DistanceRow]) -> str:
     )
 
 
+def _min_face(px: int) -> str:
+    return "none" if px == 0 else f"faces ≥ {px} px"
+
+
 def _history(runs: Sequence[Run]) -> str:
     rows = []
     for run in reversed(runs):
@@ -274,11 +278,13 @@ def _history(runs: Sequence[Run]) -> str:
             f"<tr><td class=nowrap>{first.run_at:%Y-%m-%d %H:%M} UTC</td>"
             f"<td class=nowrap>{first.label_set}</td>"
             f"<td><code>{escape(first.labels_sha256)}</code></td>"
+            f"<td class=num>{_min_face(first.min_face_px)}</td>"
             f"<td>{_verdict(first.verdict)}</td>{values}</tr>"
         )
     return (
         '<div class="card"><table><tr><th>run</th><th>label set</th><th>labels</th>'
-        "<th>verdict</th><th class=num>people found</th><th class=num>extra pages</th>"
+        "<th class=num>size filter</th><th>verdict</th><th class=num>people found</th>"
+        "<th class=num>extra pages</th>"
         f"<th class=num>absent matched</th></tr>{''.join(rows)}</table></div>"
     )
 
@@ -322,7 +328,8 @@ def render(root: Path) -> tuple[str, str, bool]:
         f"<h1>Search evaluation {_verdict(first.verdict)}</h1>"
         f'<p class="meta">Label set {first.label_set} (labels <code>{escape(first.labels_sha256)}'
         f"</code>) · run {first.run_at:%Y-%m-%d %H:%M} UTC · profile "
-        f"<code>{escape(first.model_profile)}</code> · threshold {first.threshold:.2f} · index "
+        f"<code>{escape(first.model_profile)}</code> · threshold {first.threshold:.2f}"
+        f" · size filter {_min_face(first.min_face_px)} · index "
         f"{first.faces:,} faces, {first.images:,} images, {first.pages:,} pages</p>"
         f"{warning}{_criteria_html(run)}"
         f"<h2>Per label</h2>{_label_table(run)}"
@@ -343,7 +350,8 @@ def _markdown(run: Run, stale: Iterable[str], *, has_distances: bool) -> str:
         f"## Search evaluation: {first.verdict}",
         "",
         f"Label set {first.label_set}, run {first.run_at:%Y-%m-%d %H:%M} UTC, "
-        f"threshold {first.threshold:.2f}. {attached} to this workflow run as `eval-report`.",
+        f"threshold {first.threshold:.2f}, size filter {_min_face(first.min_face_px)}. "
+        f"{attached} to this workflow run as `eval-report`.",
         "",
         *(f"> {e}" for e in stale),
         "| label | expected | returned | recall | extra |",

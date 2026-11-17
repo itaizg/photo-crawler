@@ -79,7 +79,11 @@ class PostgresSearchIndex:
             return int(row[0]) if row else 0
 
     def matching_pages(
-        self, embedding: Sequence[float], max_distance: float, profile_id: int
+        self,
+        embedding: Sequence[float],
+        max_distance: float,
+        profile_id: int,
+        min_face: int = 0,
     ) -> list[PageMatch]:
         with self._guard() as conn:
             register_vector(conn)  # the profile row exists, so the vector type does too
@@ -89,6 +93,7 @@ class PostgresSearchIndex:
                     "q": np.asarray(embedding, dtype=np.float32),
                     "max_dist": max_distance,
                     "profile_id": profile_id,
+                    "min_face": min_face,
                 },
             ).fetchall()
         return [
