@@ -307,14 +307,16 @@ Against the criteria:
 - **A few pages are close to many faces.** `/travel/news`, `/world/heroes` and `/world/americas` are within 0.40 of three different query photos each, and include absent-d's three false matches. `/world` does the same, but it is an index page with many faces. A face on those pages that resembles many people (small, blurred or side-on) would explain this; it is the case in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md), and those pages' faces are the first thing to inspect.
 - **Every labelled page is within 0.50** of its person's photo, so the misses come from where the cutoff sits, not from faces missing from the index.
 
-**Face-size filter: tried at 40 px, not adopted.** `--min-face PX` (on `face_matcher` and the evaluator) compares only indexed faces at least PX pixels on their shorter side. The value was fixed at 40 px before the run, from the brief's common floor for Facenet-style models, not chosen from these results. The run at 14:27 UTC (`min_face_px=40` in `runs.csv`) compares with the unfiltered run at 13:19:
+**Face-size filter: tried at 40 px, not adopted.** `--min-face PX` (on `face_matcher` and the evaluator) compares only indexed faces at least PX pixels on their shorter side. The value was fixed at 40 px before the run, from the brief's common floor for Facenet-style models, not chosen from these results. The run at 14:27 UTC (`min_face_px=40` in `runs.csv`) compares with the unfiltered run at 13:19, and with a control run at 4 px (14:28), which removes almost no face:
 
-| | no filter | 40 px |
-|---|---:|---:|
-| verdict | FAIL | FAIL |
-| true pages returned (of 16) | 11 | 10 |
-| wrong pages below 0.30 | 4 | 4 |
-| wrong pages below 0.40 | 38 | 19 |
+| | no filter | 4 px (control) | 40 px |
+|---|---:|---:|---:|
+| verdict | FAIL | FAIL | FAIL |
+| true pages returned (of 16) | 11 | 11 | 10 |
+| wrong pages below 0.30 | 4 | 4 | 4 |
+| wrong pages below 0.40 | 38 | 38 | 19 |
+
+The control run's 188 logged distances equal the unfiltered run's exactly, so the filter changes nothing by itself; the differences at 40 px come from the faces it removes.
 
 - **It does not remove the false matches.** absent-c's page (0.280) and absent-d's three pages (0.238 to 0.299) come from faces of 40 px or more, so they are clear faces that look like those people, not tiny background faces.
 - **It costs a true page.** person-c is no longer found on `/politics/president-donald-trump-47` (0.110 before), where the face is under 40 px. That is the "appears only small" case this set lacked. person-c's recall drops to 0.83, still above 0.80. person-b's `/world/middle-east` page moves from 0.342 to 0.445 for the same reason.
