@@ -384,7 +384,7 @@ Absent people below every true page: ArcFace raw has absent-a and absent-c, the 
 | Date | Change | Result on the 2026-11-16 set | Status |
 |---|---|---|---|
 | 2026-11-17 | Face-size filter `--min-face 40` | Same 4 false matches, one true page lost | Not adopted |
-| 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case, and lower AUC in all but query expansion | Not adopted |
+| 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case; AUC also lower, except Facenet512 with query expansion (+0.002) | Not adopted |
 | 2026-11-17 | ArcFace, raw cosine, no re-ranking | AUC 0.994 to 0.999; true pages above every wrong page 10 to 14 of 16; separable people 4 to 5; absent people below every true page 0 to 2 | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
 
 
