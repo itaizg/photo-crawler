@@ -315,6 +315,9 @@ def render(root: Path) -> tuple[str, str, bool]:
     first = run[0]
     stale = eval_set.stale_results_errors(folder)
     warning = f'<div class="warn"><p>{escape(stale[0])}</p></div>' if stale else ""
+    distances = eval_set.read_distance_log(root)[0]
+    key = (first.run_at, first.label_set, first.labels_sha256)
+    has_distances = any((d.run_at, d.label_set, d.labels_sha256) == key for d in distances)
     body = (
         f"<h1>Search evaluation {_verdict(first.verdict)}</h1>"
         f'<p class="meta">Label set {first.label_set} (labels <code>{escape(first.labels_sha256)}'
@@ -323,20 +326,24 @@ def render(root: Path) -> tuple[str, str, bool]:
         f"{first.faces:,} faces, {first.images:,} images, {first.pages:,} pages</p>"
         f"{warning}{_criteria_html(run)}"
         f"<h2>Per label</h2>{_label_table(run)}"
-        f"<h2>Distances</h2>{_distances_html(run, eval_set.read_distance_log(root)[0])}"
+        f"<h2>Distances</h2>{_distances_html(run, distances)}"
         f"<h2>Run history</h2>{_history(runs)}"
     )
-    return _page(body), _markdown(run, stale), True
+    return _page(body), _markdown(run, stale, has_distances=has_distances), True
 
 
-def _markdown(run: Run, stale: Iterable[str]) -> str:
+def _markdown(run: Run, stale: Iterable[str], *, has_distances: bool) -> str:
     first = run[0]
+    attached = (
+        "The full report with page distances is attached"
+        if has_distances
+        else "This run was logged before page distances were recorded. The full report is attached"
+    )
     lines = [
         f"## Search evaluation: {first.verdict}",
         "",
         f"Label set {first.label_set}, run {first.run_at:%Y-%m-%d %H:%M} UTC, "
-        f"threshold {first.threshold:.2f}. The full report with page distances is attached "
-        "to this workflow run as `eval-report`.",
+        f"threshold {first.threshold:.2f}. {attached} to this workflow run as `eval-report`.",
         "",
         *(f"> {e}" for e in stale),
         "| label | expected | returned | recall | extra |",

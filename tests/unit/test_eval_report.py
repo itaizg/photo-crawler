@@ -52,15 +52,17 @@ def test_the_report_shows_the_latest_run_its_distances_and_history(tmp_path: Pat
     assert "Run history" in page_html
     text = summary.read_text(encoding="utf-8")
     assert text.startswith("## Search evaluation: FAIL")
+    assert "report with page distances is attached" in text
     assert "| absent-a | 0 | 1 | - | 1 |" in text
 
 
 def test_a_run_logged_before_distances_says_so(tmp_path: Path) -> None:
     root = logged_folder(tmp_path)
     (root / ev.eval_set.DISTANCES_FILE).unlink()
-    page_html, _, valid = report.render(root)
+    page_html, summary, valid = report.render(root)
     assert valid
     assert "logged before page distances were recorded" in page_html
+    assert "logged before page distances were recorded" in summary
 
 
 def test_invalid_files_are_listed_and_exit_2(tmp_path: Path) -> None:
