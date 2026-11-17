@@ -352,6 +352,42 @@ What the table shows:
 
 The snapshots and the per-person results stay local (`eval-snapshots/`, never committed), because they hold embeddings of people who gave no licence.
 
+**Per-person results for the baseline and the candidate** (true pages above every wrong page, out of each person's true pages; "separable" means that person's true pages all beat their own wrong pages):
+
+| Person | Facenet512 raw | Separable | ArcFace raw | Separable |
+|---|---|---|---|---|
+| person-a | 2 of 3 | yes | 3 of 3 | yes |
+| person-b | 0 of 3 | yes | 3 of 3 | yes |
+| person-c | 6 of 6 | yes | 6 of 6 | yes |
+| person-d | 0 of 2 | no | 0 of 2 | yes |
+| person-e | 2 of 2 | yes | 2 of 2 | yes |
+| Total | 10 of 16 | 4/5 | 14 of 16 | 5/5 |
+
+Absent people below every true page: ArcFace raw has absent-a and absent-c, the baseline has none.
+
+**Experiment details** (run on 2026-11-17 on the 2026-11-16 label set; full design in [search-experiments.md](docs/briefs/search-experiments.md)):
+
+- **Method.** The index was exported once, read-only, to a local file; the stored JPEGs were re-embedded once with ArcFace (same detector, alignment and confidence filter); all 12 combinations were then scored offline in numpy, with no database and no change to the search. Query photos use their largest face, as the evaluator does. A page's score is its best face score among the images the search would show for it.
+- **Fixed before the run, not tuned:** CSLS with k = 10 (neighbours closer than 0.02 skipped, because each size of a photo is a separate image); T-norm over all index faces for each query; query expansion with the top 2 faces. Metrics are threshold-free, because score scales differ between methods.
+- **Check before reporting.** The Facenet512 raw row had to reproduce the logged unfiltered run in `queries/eval/distances.csv` within 5e-5 (4 decimals), and it did.
+- **Data.** 15,822 faces in 5,160 images on 97 pages. The experiments read a clean copy of the committed label set (`--eval`), so photos added to `queries/eval` since do not matter.
+- **Commands** (read-only reader DSN for the first two):
+
+  ```bash
+  uv run python scripts/experiments/export_index.py --set 2026-11-16
+  uv run python scripts/experiments/reembed.py --set 2026-11-16 --model ArcFace --workers 4
+  uv run python scripts/experiments/run.py --set 2026-11-16 --eval <clean copy of queries/eval>
+  ```
+
+**Improvement log.**
+
+| Date | Change | Result on the 2026-11-16 set | Status |
+|---|---|---|---|
+| 2026-11-17 | Face-size filter `--min-face 40` | Same 4 false matches, one true page lost | Not adopted |
+| 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case, and lower AUC in all but query expansion | Not adopted |
+| 2026-11-17 | ArcFace, raw cosine, no re-ranking | AUC 0.994 to 0.999; true pages above every wrong page 10 to 14 of 16; separable people 4 to 5; absent people below every true page 0 to 2 | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
+
+
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
 - The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
