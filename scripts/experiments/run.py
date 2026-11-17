@@ -210,7 +210,11 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return 0
         r_index = scoring.neighbour_means(index, index, skip_same_photo=True)
         for rerank in scoring.RERANKS:
-            q = scoring.expand(queries, index) if rerank == "qe" else queries
+            q = (
+                queries
+                if rerank == "none"
+                else scoring.expand(queries, index, skip_same_photo=rerank == "qe-skip")
+            )
             for score in scoring.SCORES:
                 page_scores = pages.best(scoring.scores(q, index, score, r_index))
                 m = scoring.metrics(page_scores, pages.urls, labels, truth)
