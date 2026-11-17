@@ -324,6 +324,8 @@ The control run's 188 logged distances equal the unfiltered run's exactly, so th
 
 The filter stays available and off by default (0). The remaining false matches are clear look-alikes, which a size filter cannot separate. The next things to try are other approaches: several query photos per person, a stronger embedding model, or score normalization. Any of them needs a second label set to check against.
 
+**Experiments.** Whether hubness reduction (CSLS), score normalization (T-norm), query expansion or the ArcFace model separate true from wrong matches better is measured offline, on a local export of the index, with a grid and metrics fixed before any run: [search-experiments.md](docs/briefs/search-experiments.md). Results will be added here; no default changes before a second label set confirms them.
+
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
 - The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
