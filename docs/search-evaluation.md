@@ -172,7 +172,8 @@ Every combination, over the 5 present and 5 absent people (16 true pages). AUC c
 What the table shows:
 
 - **Re-scoring does not help Facenet512.** CSLS and T-norm lower both AUC and recall. Query expansion raises AUC by 0.002 and halves recall, because it pulls wrong pages closer too. The same holds on ArcFace.
-- **The model is what helps.** ArcFace with raw cosine and no re-ranking is the only row that beats the baseline on both AUC and recall. Recall rises from 10 to 14 of 16 true pages, all 5 people become separable (person-d was not), and 2 of 5 absent people score below every true page. ArcFace with T-norm is close but adds nothing over raw.
+- **The model is what helps.** ArcFace with raw cosine and no re-ranking is the only row that beats the baseline on both recall and AUC. ArcFace: recall at zero false matches 0.88 (14 of 16 true pages), 5/5 people separable, 2/5 absent people below every true page, AUC 0.999. Facenet512 (the baseline): recall at zero false matches 0.62 (10 of 16), 4/5 separable, 0/5 absent people below every true page, AUC 0.994. AUC is near 1 for both because thousands of easy wrong pairs dominate it, so recall at zero false matches is the number that separates them. ArcFace with T-norm is close but adds nothing over raw.
+- **ArcFace does not pass either.** No single threshold meets all three criteria with ArcFace: 2 true pages still score below a wrong page, and 3 absent people still score above a true page.
 - **One combination is worth confirming: ArcFace, raw cosine, no re-ranking.** The gain is spread over three people but not evenly: person-b gains 3 of the 4 extra true pages, person-a 1 and person-d becomes separable. Without person-b it still beats the baseline (recall 11 against 10 pages, 4 against 3 separable people), so it is not carried by one person, but it leans on one.
 - **Not a result yet.** The set is 10 people, one labeller and one crawl; one true page is 6 points of recall. The best of 12 combinations on one set can win by luck. ArcFace distances are on a different scale, so the 0.30 threshold does not carry over, and a new threshold must be chosen on a second label set, not here. The ArcFace index would also need a full re-embedding and a new schema profile.
 
@@ -211,13 +212,14 @@ Absent people below every true page: ArcFace raw has absent-a and absent-c, the 
 |---|---|---|---|
 | 2026-11-17 | Face-size filter `--min-face 40` | Same 4 false matches, one true page lost | Not adopted |
 | 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case; AUC also lower, except Facenet512 with query expansion (+0.002) | Not adopted |
-| 2026-11-17 | ArcFace, raw cosine, no re-ranking | AUC 0.994 to 0.999; true pages above every wrong page 10 to 14 of 16; separable people 4 to 5; absent people below every true page 0 to 2 | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
+| 2026-11-17 | ArcFace, raw cosine, no re-ranking | ArcFace: recall at zero false matches 0.88 (14 of 16), separable 5/5, absent people below every true page 2/5, AUC 0.999. Baseline Facenet512: 0.62 (10 of 16), 4/5, 0/5, AUC 0.994. No single threshold passes with either | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
 
 ## Labelling method and its limits
 
 How each set was labelled (browsing, searching or both), by whom and on which crawl date is in [`queries/eval/methods.csv`](../queries/eval/methods.csv). The labeller keeps a snapshot of that crawl's index locally, so the numbers can be re-run; it is never committed, because it holds face embeddings of people who gave no licence.
 
 - **Recall is only as good as the labels.** A page the labeller did not find is invisible to the measurement.
+- **The 2026-11-16 labels lean towards Facenet512.** They were completed by reviewing Facenet512's matches and near misses (`face-matcher --details`), and some were edited after the first run. A page that only ArcFace ranks high was never reviewed, so it may be scored as a wrong page for ArcFace. The experiments' grid was fixed before the run; the labels were not. The 2026-11-17 set used candidates from Facenet512 too (see its bias note).
 - **The sample is small** and limited to public figures with openly licensed photos.
 - **Rendition checks are manual.** That a query photo is not a copy of an indexed image is checked in review, from the attribution's source page.
 - **Results are tied to one crawl.** The site changes hourly. On an index crawled on another date, labelled pages that are gone are reported as label errors and the run fails; that is drift, not a search failure. To measure a new crawl, add a new label set for it ([quickstart §5](../specs/003-evaluation-set/quickstart.md)).
