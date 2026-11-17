@@ -24,3 +24,11 @@ def test_match_threshold_matches_deepface() -> None:
 
     recommended = find_threshold(model_profile.MODEL, model_profile.DISTANCE)
     assert recommended == model_profile.MATCH_THRESHOLD
+
+
+def test_key_can_name_another_model() -> None:
+    """The experiments read another model's faces by this key (scripts/experiments)."""
+    assert (
+        model_profile.profile_key("0.0.95", "2.20.3", "ArcFace")
+        == "retinaface+ArcFace+cosine+align+base@deepface0.0.95/tf2.20"
+    )

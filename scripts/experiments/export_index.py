@@ -34,7 +34,7 @@ _FACES: Final[LiteralString] = """
 SELECT f.image_id, f.x, f.y, f.w, f.h, f.embedding
 FROM face f
 JOIN image i ON i.id = f.image_id AND i.status = 'indexed'
-JOIN model_profile m ON m.id = f.model_profile_id AND m.key = %s
+JOIN model_profile m ON m.id = f.model_profile_id AND m.key LIKE %s
 ORDER BY f.id
 """
 # The search's visibility rules (src/face_index/search_query.sql): indexed images, and links the
@@ -49,6 +49,16 @@ ORDER BY pi.image_id, p.url
 """
 
 
+def baseline_key() -> str:
+    """A pattern for the Facenet512 baseline's profile keys, under any library versions.
+
+    The baseline may have been indexed with other DeepFace or TensorFlow versions
+    than the ones installed now, so only the model setup is matched, not the version suffix.
+    """
+    key = model_profile.profile_key("0.0.0", "0.0", snapshot.BASELINE)
+    return key.split("@", 1)[0].replace("%", r"\%").replace("_", r"\_") + "@%"
+
+
 log = logging.getLogger("export_index")
 
 
@@ -58,7 +68,7 @@ def export(conn: psycopg.Connection) -> tuple[snapshot.Snapshot, datetime | None
     conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
     with conn.transaction():
         row = conn.execute(_LATEST_CRAWL).fetchone()
-        faces = conn.execute(_FACES, (model_profile.KEY,)).fetchall()
+        faces = conn.execute(_FACES, (baseline_key(),)).fetchall()
         links = conn.execute(_LINKS).fetchall()
     return to_snapshot(faces, links), row[0] if row else None
 
@@ -111,9 +121,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         )
         return 2
     if len(snap.face_image) == 0:
-        log.error("no faces for profile %s", model_profile.KEY)
+        log.error("no faces for profile %s", baseline_key())
         return 2
-    target = snapshot.path(args.crawl_date, "Facenet512")
+    target = snapshot.path(args.crawl_date, snapshot.BASELINE)
     snap.save(target)
     pages = {u for urls in snap.image_pages.values() for u in urls}
     print(

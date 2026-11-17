@@ -24,6 +24,7 @@ from face_index.models import DetectedFace
 
 ROOT: Final[Path] = Path("eval-snapshots/experiments")
 MODELS: Final[Mapping[str, str]] = {"Facenet512": "facenet512", "ArcFace": "arcface"}
+BASELINE: Final[str] = "Facenet512"  # the index's model: the grid's baseline
 
 
 def folder(crawl_date: date) -> Path:

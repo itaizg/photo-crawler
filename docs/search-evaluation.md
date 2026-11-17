@@ -10,7 +10,7 @@ Run it from the host against the Compose database, as the read-only role (the pa
 PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
 ```
 
-It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. With `--log`, the run is appended to [`runs.csv`](../queries/eval/runs.csv), and every page's best distance up to 0.50 to `queries/eval/distances.csv`, so a run can be read as a curve, not only as one verdict.
+It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. With `--log`, the run is appended to [`runs.csv`](../queries/eval/runs.csv), and every page's best distance up to the report ceiling (0.80; 0.50 in the runs logged with Facenet512) to `queries/eval/distances.csv`, so a run can be read as a curve, not only as one verdict.
 
 CI validates the files and runs the evaluator against a seeded mock on every pull request. It also renders the committed results as an HTML report: the verdict, the per-label table, a chart of every logged page distance against the threshold, and the run history. The report is attached to each workflow run as the `eval-report` artifact, and its summary appears on the run's page. To build it locally:
 
@@ -75,6 +75,60 @@ Against the criteria:
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
 - The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
 
+## Results, label set 2026-11-17
+
+**Label set 2026-11-17, run 2026-11-17 18:30 UTC: FAIL.** The second set, on a second crawl of CNN (16,816 faces, 5,577 images, 97 pages), with 10 present and 10 absent people. The profile and threshold are the same as for 2026-11-16. The table is copied from the run's output, and the run is in [`queries/eval/runs.csv`](../queries/eval/runs.csv).
+
+| label | expected | returned | recall | extra | label errors |
+|---|---:|---:|---:|---:|---:|
+| person-a | 3 | 3 | 1.00 | 0 | 0 |
+| person-b | 3 | 0 | 0.00 | 0 | 0 |
+| person-c | 6 | 5 | 0.83 | 0 | 0 |
+| person-d | 7 | 0 | 0.00 | 0 | 0 |
+| person-e | 2 | 2 | 1.00 | 0 | 0 |
+| person-f (small face on 4 pages) | 23 | 0 | 0.00 | 0 | 0 |
+| person-g | 2 | 0 | 0.00 | 0 | 0 |
+| person-h | 4 | 3 | 0.75 | 0 | 0 |
+| person-i | 4 | 2 | 0.50 | 0 | 0 |
+| person-j | 4 | 3 | 0.75 | 0 | 0 |
+| absent-a | 0 | 0 | - | 0 | 0 |
+| absent-b | 0 | 0 | - | 0 | 0 |
+| absent-c | 0 | 1 | - | 1 | 0 |
+| absent-d (look-alike of person-c) | 0 | 2 | - | 2 | 0 |
+| absent-e | 0 | 0 | - | 0 | 0 |
+| absent-f | 0 | 0 | - | 0 | 0 |
+| absent-g | 0 | 0 | - | 0 | 0 |
+| absent-h | 0 | 0 | - | 0 | 0 |
+| absent-i | 0 | 0 | - | 0 | 0 |
+| absent-j | 0 | 0 | - | 0 | 0 |
+
+Against the criteria:
+
+- **SC-001, recall of at least 0.80: fails for 7 of 10 people.** Only person-a, person-c and person-e pass. For person-b, person-d, person-f and person-g the search returned none of their labelled pages at 0.30, although every one of those pages is labelled; their closest pages lie just past the threshold (0.313, 0.349, 0.3002 and 0.3008), and person-h, person-i and person-j (0.75, 0.50, 0.75) each missed one or two pages.
+- **SC-002, no extra pages for present people: passes.** No present person was returned on a page that does not show them. At 0.35 one is.
+- **SC-003, nothing returned for absent people: fails for 2 of 10.** absent-c matched 1 page and the look-alike absent-d matched 2. The labeller judged that none of these pages shows the person (pages that also matched in 2026-11-16).
+
+**What the distances show.** The run logged every page's best distance up to 0.50 in [`distances.csv`](../queries/eval/distances.csv).
+
+- **Several misses are just past the threshold.** person-f's closest labelled page is 0.3002 and person-g's is 0.3008. person-b's three pages lie between 0.313 and 0.344, as in 2026-11-16, so that near miss repeats on a new crawl.
+- **person-d is the hardest.** 5 of its 7 pages lie between 0.349 and 0.495 and 2 are beyond 0.50. The closest wrong page for person-d is 0.447, so a higher threshold would not return wrong pages first for this person.
+- **The formal-portrait query photos probably match worse for the US politicians.** person-f, person-g and person-i have the weakest recall among the new people, and their query photos are formal portraits compared with angled, small or blurred news faces; this is a guess, not tested. person-f has 4 labelled pages (the markets pages, marked `small_face`) where no face lies within 0.50.
+- **Across the set:**
+
+  | threshold | true pages found (of 58) | wrong pages returned (present people) | wrong pages returned (absent people) |
+  |---:|---:|---:|---:|
+  | 0.30 | 18 | 0 | 3 |
+  | 0.35 | 31 | 1 | 6 |
+  | 0.40 | 43 | 16 | 34 |
+
+  The default stays at 0.30. As in 2026-11-16, no threshold separates the wrong pages from the true ones, and these counts are not a basis for choosing one.
+
+**How the labels were made.** The labels were not made by browsing. For each present person, a page was a candidate if an image on it was returned by the search at up to distance 0.45, or if a caption on a freshly crawled page named the person. The labeller then approved each candidate in a review page that showed the page's images with the detected face boxes. Caption-only candidates and look-alike matches were rejected where the person was not in the image. Two pages the labeller was unsure about (person-f on `/world` and `/world/middle-east`) were left out.
+
+**Hard cases in this set.** The small-face case is person-f on the four `/markets` pages, where the face is small and the person does not also appear large. The look-alike is absent-d for person-c. There is no on-site look-alike pair (`onsite_pair=false`).
+
+**Bias in this set.** The candidates came partly from the baseline search itself, so pages the baseline cannot rank are under-labelled. Pages where a person appears but is neither returned at 0.45 nor named in a caption are missing from the labels. Putin and Trump in particular are named on more pages than are labelled, and recall is therefore probably over-stated for them rather than under-stated.
+
 ## Face-size filter: tried at 40 px, not adopted
 
 `--min-face PX` (on `face_matcher` and the evaluator) compares only indexed faces at least PX pixels on their shorter side. The value was fixed at 40 px before the run, from the brief's common floor for Facenet-style models, not chosen from these results. The run at 14:27 UTC (`min_face_px=40` in `runs.csv`) compares with the unfiltered run at 13:19, and with a control run at 4 px (14:28), which removes almost no face:
@@ -115,10 +169,24 @@ Every combination, over the 5 present and 5 absent people (16 true pages). AUC c
 | ArcFace | CSLS | query expansion | 0.991 | 0.00 | 5/5 | 0/5 |
 | ArcFace | T-norm | query expansion | 0.995 | 0.06 | 4/5 | 0/5 |
 
+**Correction: query expansion without renditions (added after pre-registration, 2026-11-17).** The query-expansion rows above average each query with its 2 closest index faces, and those are often one photo stored at two sizes. The corrected arm skips a face closer than 0.02 to a neighbour already taken, as the CSLS arm already did. Re-scored on the same snapshot; the 12 rows above reproduced exactly and are kept as pre-registered. These 6 rows choose nothing:
+
+| Model | Score | Re-ranking | AUC | Recall at zero false matches | Separable | Absent ok |
+|---|---|---|---|---|---|---|
+| Facenet512 | raw cosine | query expansion, renditions skipped | 0.996 | 0.25 | 4/5 | 0/5 |
+| Facenet512 | CSLS | query expansion, renditions skipped | 0.987 | 0.00 | 4/5 | 0/5 |
+| Facenet512 | T-norm | query expansion, renditions skipped | 0.991 | 0.00 | 4/5 | 0/5 |
+| ArcFace | raw cosine | query expansion, renditions skipped | 0.996 | 0.31 | 4/5 | 0/5 |
+| ArcFace | CSLS | query expansion, renditions skipped | 0.991 | 0.00 | 5/5 | 0/5 |
+| ArcFace | T-norm | query expansion, renditions skipped | 0.995 | 0.06 | 4/5 | 0/5 |
+
+The correction changes little: recall at zero false matches for Facenet512 with raw cosine falls from 0.31 to 0.25, and the ArcFace rows are unchanged. Query expansion still lowers recall in every case, so the conclusion below stands.
+
 What the table shows:
 
 - **Re-scoring does not help Facenet512.** CSLS and T-norm lower both AUC and recall. Query expansion raises AUC by 0.002 and halves recall, because it pulls wrong pages closer too. The same holds on ArcFace.
-- **The model is what helps.** ArcFace with raw cosine and no re-ranking is the only row that beats the baseline on both AUC and recall. Recall rises from 10 to 14 of 16 true pages, all 5 people become separable (person-d was not), and 2 of 5 absent people score below every true page. ArcFace with T-norm is close but adds nothing over raw.
+- **The model is what helps.** ArcFace with raw cosine and no re-ranking is the only row that beats the baseline on both recall and AUC. ArcFace: recall at zero false matches 0.88 (14 of 16 true pages), 5/5 people separable, 2/5 absent people below every true page, AUC 0.999. Facenet512 (the baseline): recall at zero false matches 0.62 (10 of 16), 4/5 separable, 0/5 absent people below every true page, AUC 0.994. AUC is near 1 for both because thousands of easy wrong pairs dominate it, so recall at zero false matches is the number that separates them. ArcFace with T-norm is close but adds nothing over raw.
+- **ArcFace does not pass either.** No single threshold meets all three criteria with ArcFace: 2 true pages still score below a wrong page, and 3 absent people still score above a true page.
 - **One combination is worth confirming: ArcFace, raw cosine, no re-ranking.** The gain is spread over three people but not evenly: person-b gains 3 of the 4 extra true pages, person-a 1 and person-d becomes separable. Without person-b it still beats the baseline (recall 11 against 10 pages, 4 against 3 separable people), so it is not carried by one person, but it leans on one.
 - **Not a result yet.** The set is 10 people, one labeller and one crawl; one true page is 6 points of recall. The best of 12 combinations on one set can win by luck. ArcFace distances are on a different scale, so the 0.30 threshold does not carry over, and a new threshold must be chosen on a second label set, not here. The ArcFace index would also need a full re-embedding and a new schema profile.
 
@@ -151,19 +219,33 @@ Absent people below every true page: ArcFace raw has absent-a and absent-c, the 
   uv run python scripts/experiments/run.py --set 2026-11-16 --eval <clean copy of queries/eval>
   ```
 
+## Confirmation on the 2026-11-17 set: not confirmed
+
+The rule was fixed before any run on this set ([search-experiments.md](briefs/search-experiments.md#choice-for-confirmation-recorded-2026-11-17-before-any-run-on-set-2026-11-17)): ArcFace with raw cosine and no re-ranking is confirmed only if it improves both AUC and recall at zero false matches over Facenet512 there too. Scored on 2026-11-17 (16,816 faces, 5,577 images, 97 pages; 10 present people with 58 true pages, 10 absent people); the Facenet512 row reproduced the logged run first.
+
+| Model | Recall at zero false matches | AUC | Separable | Absent ok |
+|---|---|---|---|---|
+| Facenet512 (current) | 0.28 | 0.913 | 7/10 | 0/10 |
+| ArcFace | 0.28 | 0.912 | 4/10 | 0/10 |
+
+ArcFace does not improve either number, so **the default stays Facenet512**. Its gain on 2026-11-16 (0.88 against 0.62) did not carry over to 20 new people and a new crawl: the earlier result was most likely the luck of choosing the best of 12 combinations on 10 people, plus labels completed from Facenet512's matches. The other 17 combinations on this set are descriptive only, and none beats the baseline on both numbers either (`eval-snapshots/`, local).
+
+**The fitted ArcFace threshold, for information.** The cutoff fitted on 2026-11-16 alone is 0.47 (`scripts/experiments/fit_threshold.py`, pairs in [`threshold-fit.csv`](../queries/eval/threshold-fit.csv)). Read out of sample on 2026-11-17, it finds 19 of 58 true pages with 1 wrong page: 4 of 10 people reach recall 0.80, 9 of 10 get no extra page, and all 10 absent people return nothing. It is not adopted, because the model it belongs to was not confirmed.
+
 ## Improvement log
 
 | Date | Change | Result on the 2026-11-16 set | Status |
 |---|---|---|---|
 | 2026-11-17 | Face-size filter `--min-face 40` | Same 4 false matches, one true page lost | Not adopted |
 | 2026-11-17 | CSLS, T-norm, query expansion (Facenet512 and ArcFace) | Lower recall at zero false matches in every case; AUC also lower, except Facenet512 with query expansion (+0.002) | Not adopted |
-| 2026-11-17 | ArcFace, raw cosine, no re-ranking | AUC 0.994 to 0.999; true pages above every wrong page 10 to 14 of 16; separable people 4 to 5; absent people below every true page 0 to 2 | **Candidate**: confirm on a second label set, and choose its own threshold there, before any default changes |
+| 2026-11-17 | ArcFace, raw cosine, no re-ranking | ArcFace: recall at zero false matches 0.88 (14 of 16), separable 5/5, absent people below every true page 2/5, AUC 0.999. Baseline Facenet512: 0.62 (10 of 16), 4/5, 0/5, AUC 0.994. No single threshold passes with either | **Not confirmed** on the 2026-11-17 set (below); the default stays Facenet512 |
 
 ## Labelling method and its limits
 
 How each set was labelled (browsing, searching or both), by whom and on which crawl date is in [`queries/eval/methods.csv`](../queries/eval/methods.csv). The labeller keeps a snapshot of that crawl's index locally, so the numbers can be re-run; it is never committed, because it holds face embeddings of people who gave no licence.
 
 - **Recall is only as good as the labels.** A page the labeller did not find is invisible to the measurement.
+- **The 2026-11-16 labels lean towards Facenet512.** They were completed by reviewing Facenet512's matches and near misses (`face-matcher --details`), and some were edited after the first run. A page that only ArcFace ranks high was never reviewed, so it may be scored as a wrong page for ArcFace. The experiments' grid was fixed before the run; the labels were not. The 2026-11-17 set used candidates from Facenet512 too (see its bias note).
 - **The sample is small** and limited to public figures with openly licensed photos.
 - **Rendition checks are manual.** That a query photo is not a copy of an indexed image is checked in review, from the attribution's source page.
 - **Results are tied to one crawl.** The site changes hourly. On an index crawled on another date, labelled pages that are gone are reported as label errors and the run fails; that is drift, not a search failure. To measure a new crawl, add a new label set for it ([quickstart §5](../specs/003-evaluation-set/quickstart.md)).

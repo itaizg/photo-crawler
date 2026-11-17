@@ -1,26 +1,89 @@
 # photo-crawler
 
-System for crawling a website. It extracts images containing people with visible faces, and indexes them for image-based search. The system allows the user to provide an image of a specific character and return a list of all pages on the site that contain an image of that same character.
+**Give it one photo of a person, and it finds every page of a news site that shows them.**
 
-This repository contains the **image indexer** (the Airflow pipeline, feature 001), the **face matching script** (`face_index.face_matcher`, feature 002) and a labelled **evaluation set** that measures the search's accuracy (feature 003). Specs, plans and contracts are under `specs/`; open items are in [TODO.md](TODO.md).
+An Airflow pipeline crawls the site politely, normalizes every image, detects and embeds every face, and stores it all in Postgres + pgvector. A read-only CLI then searches that index with a new photo. It starts with one command, re-runs incrementally, and comes with a measured accuracy report. The report doesn't hide where the model falls short.
+
+| | |
+|---|---|
+| **One command** | `docker compose up` builds and starts Airflow, Postgres + pgvector, generated secrets and cached model weights. No `.env`, no manual steps. |
+| **Production habits** | Ports-and-adapters core, transactional indexing, idempotent re-runs, per-host rate limits, SSRF-safe fetching, and failures that are counted and surface as a failed run, never a quiet green one. |
+| **Tested at four levels** | About 490 pytest tests (unit, Postgres integration, DAG, offline end-to-end smoke on a mock web), a real-model smoke test, and a full-stack smoke run. CI runs lint, types, tests, Compose validation and the label-set checks on every pull request. |
+| **Measured, not guessed** | Two hand-labelled evaluation sets, a ROC curve, and a model comparison judged by a rule written down *before* the run. When ArcFace failed that rule on held-out data, the default stayed Facenet512. |
+
+| Deliverable | Where |
+|---|---|
+| Airflow pipeline | [dags/image_indexer.py](dags/image_indexer.py) → logic in [src/face_index/](src/face_index/) |
+| Face matching script | [src/face_index/face_matcher.py](src/face_index/face_matcher.py) (Compose service `face-matcher`) |
+| Compose file | [docker-compose.yml](docker-compose.yml) |
+| Accuracy evaluation | [scripts/evaluate_search.py](scripts/evaluate_search.py), [queries/eval/](queries/eval/), [docs/search-evaluation.md](docs/search-evaluation.md) |
+| Operations (re-runs, re-index, dead links, tests) | [docs/operations.md](docs/operations.md) |
+
+`specs/`, `.specify/` and `docs/briefs/` are design records (specs, plans, pre-registered experiment briefs). You don't need them to run or review the project.
+
+## Architecture
+
+```mermaid
+flowchart LR
+    site[(news site)] -->|robots.txt, rate-limited,<br/>SSRF-checked| crawl
+    subgraph airflow["Airflow DAG: image_indexer"]
+        direction LR
+        crawl["crawl pages"] --> download["download +<br/>normalize to JPEG ≤1024px"]
+        download --> plan[plan batches]
+        plan --> detect["detect + embed<br/>(parallel, row-locked)"]
+        detect --> summarize[summarize run]
+    end
+    download -- "images: pending" --> db
+    detect -- "faces + embeddings,<br/>image → indexed (one txn)" --> db
+    db[("Postgres 17<br/>+ pgvector")]
+    photo[/query photo/] --> matcher["face-matcher CLI<br/>(read-only role)"]
+    matcher -- "same detector, model,<br/>normalization" --> db
+    matcher --> pages[/matching pages, closest first/]
+```
+
+```mermaid
+erDiagram
+    page ||--o{ page_image : shows
+    image ||--o{ page_image : "appears on"
+    image ||--o{ image_url : "served at"
+    image ||--o{ face : contains
+    model_profile ||--o{ face : "embedded by"
+    face {
+        vector512 embedding "HNSW, cosine"
+        int x_y_w_h "box in normalized image"
+    }
+    image {
+        bytea jpeg "RGB, longest side 1024"
+        bytea sha256 "content dedup"
+        text status "pending / indexed"
+    }
+    model_profile {
+        text key "detector+model+versions"
+    }
+```
+
+The design decisions behind it:
+
+- **The logic lives outside Airflow.** DAG tasks are thin wrappers over `face_index`, which depends only on interfaces (fetcher, pacer, normalizer, embedder, store). The whole pipeline runs offline in tests against fakes, and the orchestrator could be swapped out.
+- **One database, one transaction per image.** Postgres holds pages, metadata, the normalized JPEGs, boxes and embeddings. An image becomes `indexed` in the same transaction that writes its faces, so the search never sees a half-indexed image. There's no Redis: the LocalExecutor needs no broker, and the per-host rate limit is a single Postgres row per host.
+- **Download and detection are separate.** Downloads only stage images. Detection runs in parallel batches with row locks, so no image is processed twice and the slow model never holds up the crawl.
+- **Incremental by URL and by content.** A known URL is never fetched again, and a new URL with an identical SHA-256 reuses the stored faces. The second run took 2 minutes, against 72 for the first.
+- **A model-profile key on every face.** The detector, model and DeepFace/TensorFlow versions form a key. The search refuses to compare embeddings across keys, and a model change goes through an explicit, resumable re-index from the stored JPEGs, with nothing downloaded again.
+- **Polite and safe crawling.** It obeys robots.txt, sends an honest User-Agent, checks every redirect hop before following it, refuses private addresses and pins connections to the checked IP, and caps downloads and decoded pixels. people.com refuses honest crawlers (HTTP 402) and its terms forbid scraping, so it is disabled, as agreed with the reviewer.
+- **The database enforces the invariants.** CHECK constraints guarantee that every stored image is at most 1024 px, that a JPEG is kept only while an image is pending or indexed, that a page has at most one lead image, and that every embedding is 512-d. A bug can't quietly write a bad row.
+- **Failures stay visible.** A bad page or image is logged, counted, and the run carries on. At the end the run is marked failed, so a failure is never shown green. A database or model outage fails the task outright, so Airflow retries it.
+- **No secrets in git.** Passwords and the JWT secret are generated on first start. The pipeline writes as `faces_writer`; the search reads as `faces_reader`, which can only SELECT.
 
 ## How to run the pipeline
 
-Requirements: Docker with Compose v2 and at least 8 GB of memory for Docker.
+Needs Docker with Compose v2 and at least 8 GB of memory for Docker.
 
 ```bash
-docker compose up -d --build --wait
-```
-
-That one command builds the Airflow image (Python 3.13, DeepFace, model weights cached at build time), and starts Postgres with pgvector, the Airflow API server, scheduler and DAG processor. No `.env` is needed. The UI is at http://localhost:8080.
-
-Trigger a run with the defaults (depth 1, at most 50 pages per site, 1 page request/s and 5 image requests/s per host):
-
-```bash
+docker compose up -d --build --wait                                    # UI at http://localhost:8080
 docker compose exec airflow-scheduler airflow dags trigger image_indexer
 ```
 
-Or pass your own settings (all optional):
+Every setting is optional:
 
 ```bash
 docker compose exec airflow-scheduler airflow dags trigger image_indexer \
@@ -29,239 +92,121 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 
 | Param | Default | Meaning |
 |---|---|---|
-| `depth` | 1 | Link hops from each home page (0–10); 0 = home pages only |
-| `page_cap` | 50 | Maximum page requests per site (failed and non-HTML ones count too); `null` = no cap |
-| `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
-| `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
+| `depth` | 1 | Link hops from the home page (0 = home page only) |
+| `page_cap` | 50 | Most page requests per site; `null` = the whole site within `depth` |
+| `page_rate` / `image_rate` | 1.0 / 5.0 | Requests per second, per host |
+| `reindex` | false | Re-embed stored images after a model change ([operations](docs/operations.md#re-index-after-a-model-change)) |
 
-The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, dead links (HTTP 404/410), known dead links not requested, links abandoned, and outdated page links. A page link is outdated when a re-crawl of the page no longer finds that image there. The download task logs each such page (`outdated links page=… count=…`), the links are kept, and the search ignores them.
-
-**Re-runs** skip every image URL already known, reuse identical content found under a new URL, and still record new pages. A link that fails is retried on later runs, **at most 3 times**; then it is abandoned and logged. To give abandoned links another chance:
-
-```bash
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "DELETE FROM fetch_attempt WHERE attempts >= 3; UPDATE image SET detect_attempts = 0 WHERE status = '\''pending'\'';"'
-```
-
-**Dead links** (HTTP 404/410) are not failures, but they are logged (`page dead url=… status=404`), counted, and stored in the `dead_link` table. A link that answered 410 is not requested again; one that answered 404 is requested again after 30 days (`config.DEAD_LINK_RECHECK`). To list them, or to request them all again on the next run:
-
-```bash
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "SELECT url, kind, status, last_checked_at FROM dead_link ORDER BY last_checked_at DESC;"'
-docker compose exec postgres sh -c 'psql -U "$POSTGRES_USER" -d faces -c "DELETE FROM dead_link;"'
-```
-
-If you re-run a single task by hand in the Airflow UI, clear it **with downstream** (the default), so detection picks up what it stages.
-
-To look at a stored image, byte-identical to the database copy, or with its face boxes drawn:
-
-```bash
-docker compose exec airflow-scheduler uv run --no-project python -m face_index.export_image --id 42 --boxes -o /tmp/42.jpg
-docker compose cp airflow-scheduler:/tmp/42.jpg .
-```
+**Coverage and time.** The default run covers 50 pages of CNN, not the whole site, so a first run finishes in a little over an hour on a laptop. On an Apple M-series machine with 8 GB for Docker, those 50 pages (about 4,700 images) took 72 minutes, mostly face detection on CPU. Use `page_cap: null` for the whole site; the time grows with the number of images. Raising `FACE_WORKERS` adds detection workers.
 
 ## How to use the face matching script
 
-The script takes a photo, finds every face in it, and prints every crawled page that shows the same person. It reads the index the pipeline built and never writes to it. Run the pipeline at least once first.
-
-1. Put the photo in `queries/` at the project root. That folder is shared with the script's container, so `queries/alice.jpg` is the same path on your machine and inside the container. Its contents are git-ignored.
-2. Run:
+Put a photo in `queries/` (the folder is shared with the container and git-ignored), then run:
 
 ```bash
 docker compose run --rm face-matcher queries/alice.jpg
+docker compose run --rm face-matcher queries/alice.jpg --details      # distances and image URLs too
 ```
 
-The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, Facenet512, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
-
-**Output.** One group per face found in the photo. Faces are numbered from 1, left to right, and each header shows the face's box in the normalized photo. Under each header are the matching page URLs, closest match first, each page once:
-
-```text
-# face 1 x=212 y=96 w=118 h=151: 3 pages
-https://edition.cnn.com/2026/11/10/politics/example-a
-https://edition.cnn.com/politics
-https://edition.cnn.com/
-
-# face 2 x=530 y=120 w=104 h=133: no matching pages
-```
-
-Results go to standard output, and progress and errors go to standard error. `grep -v '^#'` leaves only the URLs.
+For each face in the photo, the script prints the pages whose images contain a face closer than the threshold, closest first. It uses exactly the index's detector, model and normalization, and only searches faces from the same model profile. A page that no longer shows the image is not returned.
 
 | Option | Default | Meaning |
 |---|---|---|
-| `--threshold T` | `0.30` | A stored face matches when its cosine distance is **below** T. T must be in (0, 2]. 0.30 is DeepFace's recommended threshold for Facenet512 with cosine distance; lower is stricter. |
-| `--min-face PX` | `0` (every face) | Compare only indexed faces whose box is at least PX pixels on its shorter side, in the normalized image (longest side at most 1024). Small background faces give unreliable embeddings, so this can remove false matches; it can also drop a person who appears only small. Off by default until measured ([noisy-index-faces.md](docs/briefs/noisy-index-faces.md)). |
-| `--face N` | all faces | Search only face N |
-| `--details` | off | Also print each page's best distance, `lead` when the match is the page's main (preview) image, and the matching image URLs |
-| `--list-faces` | off | Print the faces with their boxes and save `queries/<name>.faces.jpg` with the numbers drawn on. No search. It stays on your machine and is overwritten next time. |
+| `--threshold T` | 0.30 | Cosine distance below which a face matches. 0.30 is DeepFace's published value for Facenet512; lower is stricter |
+| `--face N` | all | Search only face N |
+| `--list-faces` | off | Number the faces and save an annotated copy, without searching |
+| `--min-face PX` | 0 | Ignore indexed faces smaller than PX pixels (measured, not adopted) |
 
-A page counts only if its latest successful crawl still showed the matching image, so a page that stopped showing the person is not returned. Faces are compared only with faces indexed by the same model version, and only on images whose indexing has finished.
-
-| Exit status | Meaning |
-|---|---|
-| 0 | Success, including "no matching pages" |
-| 1 | Database or face model unavailable |
-| 2 | Query file problem: missing, unreadable, not a photo, SVG, shorter side under 64 px, or over 50 megapixels |
-| 3 | No face detected in the photo |
-| 4 | Index not ready: no faces for the current model profile, so run the pipeline first |
-| 5 | `--list-faces` could not write the annotated copy (the face list is still printed) |
-| 64 | Usage error, including `--face N` beyond the number of faces |
-
-From the host, without Docker, the same module runs against the Compose database:
-
-```bash
-FACE_INDEX_DSN=postgresql://faces@127.0.0.1:5432/faces uv run python -m face_index.face_matcher queries/alice.jpg
-```
-
-The full command-line contract is in [specs/002-face-search/contracts/face-matcher-cli.md](specs/002-face-search/contracts/face-matcher-cli.md).
+Exit codes are scriptable: `0` success (including no matches), `1` database or model unavailable, `2` bad photo, `3` no face in the photo, `4` index empty, `5` couldn't write the annotated copy, `64` usage error.
 
 ## Libraries and models
 
-| Purpose | Choice |
-|---|---|
-| Orchestration | Apache Airflow 3.4 (LocalExecutor, Task SDK) |
-| Face detection | DeepFace with the **RetinaFace** detector, confidence ≥ 0.9 |
-| Face embeddings | DeepFace **Facenet512** (512-d), aligned, `base` normalization, **cosine** distance |
-| Storage | PostgreSQL 17 + **pgvector** (HNSW index, `vector_cosine_ops`) |
-| Crawling | httpx (manual redirects, IP pinning), BeautifulSoup + lxml, `urllib.robotparser` |
-| Images | Pillow |
-| Tooling | uv, ruff, ty, pytest, pre-commit, GitHub Actions |
-
-The model setup lives in one place, `src/face_index/model_profile.py`, and is recorded in the `model_profile` table, so the search script can check it embeds queries the same way.
-
-## Approach and architecture decisions
-
-Full reasoning: [`specs/001-image-indexer/research.md`](specs/001-image-indexer/research.md) (R1–R13).
-
-```
-init_schema ── crawl_cnn ── download_cnn ── plan_batches ── detect (mapped) ── summarize
-```
-
-People is configured but disabled (see Known limitations); each enabled site gets its own crawl and download pair, in parallel.
-
-- **Ports and adapters.** `face_index` holds all logic and never imports Airflow; DAG tasks are thin wrappers. The pipeline depends only on protocols (`Fetcher`, `Pacer`, `ImageNormalizer`, `FaceEmbedder`, `IndexStore`), so the whole pipeline runs offline in tests with fakes.
-- **One database.** Postgres + pgvector holds image metadata, the converted JPEG bytes, page links, faces and embeddings. An image becomes `indexed` in the same transaction that stores its faces; staged (`pending`) images are invisible to search. No Redis: the LocalExecutor needs no broker, and the per-host rate limit is one Postgres row per host.
-- **Download and detection are decoupled.** Downloads stage images as `pending`; detection runs in parallel batches (`face_cpu` pool, 2 slots by default) with row locks, so no image is processed twice.
-- **Polite and safe crawling.** robots.txt is obeyed; each host has a shared page budget and image budget; every redirect hop is checked before it is requested; requests to private or local network addresses are refused, and connections are pinned to the checked IP. Downloads stop at 20 MB and images over 50 megapixels are not decoded.
-- **Normalization.** Every stored image is an RGB JPEG (quality 90, no EXIF) whose longest side is at most 1024 px; images are never upscaled. SVGs and images under 64 px are skipped with a recorded reason.
-- **Incremental by URL and by content.** A known URL is never downloaded again; a new URL whose SHA-256 matches a stored image is linked to it without re-detecting faces. Lead images (`og:image`) are marked per page.
-- **Failure isolation.** One bad page or image is logged with its URL and counted, and the run continues with everything else. A dead link (HTTP 404 or 410) is not a failure: it is logged, counted in its own summary row, and recorded so it is not requested again (see "Dead links"); a stored page that is now gone stops matching in search (its links count as outdated). The crawl or download task in which it happened is marked failed after it has finished and published its result, so the later tasks still run, and `summarize` then marks the run failed: a failed request is never hidden behind a green run. Database or model outages fail the task without a result, so Airflow retries it.
-- **No secrets in git.** Database passwords and Airflow's JWT secret are generated at first start into private volumes (the pipeline writes as `faces_writer`, search reads as `faces_reader`, SELECT only).
-
-## Tests and smoke runs
-
-```bash
-docker compose up -d postgres         # loopback database for integration tests
-export FACE_INDEX_TEST_DSN="postgresql://faces:$(docker compose exec -T postgres cat /run/db-secrets/postgres_password)@127.0.0.1:5432/faces_test"
-uv sync --locked --group dag          # `dag` adds Airflow for the DAG tests
-uv run pytest -m "not model"          # unit, integration, DAG and offline smoke tests
-uv run pytest -m model                # real DeepFace model
-scripts/smoke.sh                      # the real DAG in the stack, depth 0, one page per site
-```
-
-**Project in iCloud Drive?** iCloud sets the macOS `hidden` flag on the venv's `.pth` files and
-Python 3.13 skips hidden ones, so `import face_index` fails outside pytest (pytest adds `src` itself).
-Keep the venv outside iCloud (`export UV_PROJECT_ENVIRONMENT=$HOME/.venvs/photo-crawler`), or run
-`chflags nohidden .venv/lib/python3.13/site-packages/*.pth`. Delete any `… 2.pth` conflict copies.
-
-| Tier | What it proves | Time |
+| Purpose | Choice | Why |
 |---|---|---|
-| Offline smoke (`-m smoke`) | The whole pipeline, run 4 times, on a tiny mock web: storage, dedup, links, skips, re-runs, 3-attempt cap | ~1 s |
-| Model smoke (`-m model`) | The real model; optional face photos go in `tests/fixtures/images/` | ~15 s |
-| Stack smoke (`scripts/smoke.sh`) | Real Airflow, real model, live home pages | ~4 min |
+| Orchestration | Apache Airflow 3 (LocalExecutor) | Required; LocalExecutor keeps it to one machine with no broker |
+| Face detection | DeepFace + RetinaFace (confidence ≥ 0.9) | Among the most accurate detectors DeepFace offers, which matters for small, angled news faces |
+| Face embedding | DeepFace **Facenet512**, aligned, cosine | Strong published accuracy. ArcFace was tested and not confirmed (below) |
+| Vector store | PostgreSQL 17 + pgvector (HNSW) | One database for metadata and vectors, with transactional consistency |
+| Crawling and images | httpx, BeautifulSoup, Pillow | Manual redirects make every hop checkable |
+| Tooling | uv, ruff, ty, pytest, GitHub Actions | Locked dependencies; lint and types enforced in CI |
 
 ## Example usage and expected outputs
 
-All numbers below come from real runs on 2026-11-11, on an Apple M-series machine with 14 cores and 8 GB for Docker. This is not the spec's reference machine (4 cores, 16 GB), and only CNN could be crawled (people.com refuses the crawler, see Known limitations). These runs predate disabling people.com, so the smoke output below still shows its 402.
-
-**First default run** (`airflow dags trigger image_indexer`, empty index), 72 min. This is the `summarize` task log:
+First run on an empty index (`summarize` task log, 2026-11-11, CNN, 72 min):
 
 ```
-metric                               count
 pages crawled                           50
-  cnn                                   50
 images found                          5575
 downloaded                            4710
 reused by URL                          862
-reused by fingerprint                    3
-staged for detection                  4704
-skipped                                  5
-  robots_disallowed                      2
-  too_small                              3
 newly indexed (with faces)            3034
 analyzed, no faces                    1670
 faces stored                          9346
 failures                                 2
-  crawl                                  1
-  download                               1
-abandoned (3 attempts)                   0
 ```
 
-Per stage: crawl 0.9 min, download 16.3 min (held at the 5 req/s image limit), face detection 54.8 min (2 workers, about 1.4 s per image each). The crawl failure is people.com's HTTP 402; the download failure is one image that returned HTTP 500.
+The two failures are people.com's HTTP 402 (recorded before the site was disabled) and one image that returned HTTP 500. The second run, straight after, downloaded 72 new images and took 2 min 10 s.
 
-**Second default run** right after the first, 2 min 10 s. Known URLs are not downloaded again; new articles add new images:
+A search (`docker compose run --rm face-matcher queries/eval/photos/person-a.jpg --details`, on the 2026-11-17 index; image lists shortened):
 
-```
-images found                          5609
-downloaded                              72
-reused by URL                         5534
-newly indexed (with faces)              63
-analyzed, no faces                       9
-faces stored                           138
-```
-
-**Stack smoke** (`scripts/smoke.sh`, depth 0, one page per site), on the index from the runs above, so the DAG run took 46 s (most home-page images were already known; on an empty index it takes about 4 min). The checks count only this run's pages and the links it saw on them, except the orphan-face check, which covers the whole `face` table:
-
-```
-INFO: cnn crawled (1 page)
-WARN: people has no page this run (see the failing links below)
-PASS: at least one site crawled this run (1)
-PASS: faces on this run's pages (392)
-PASS: images are JPEG and at most 1024 px (0)
-PASS: every face is linked to a page (0)
-PASS: every face on this run's pages has a 512-d embedding (0)
-failing link this run: https://people.com/ | 3 | http 402
-SMOKE PASSED
+```text
+# face 1 x=249 y=116 w=191 h=299: 3 pages
+0.132      https://edition.cnn.com/world
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=3x2&q=h_768,w_1152,c_fill/f_webp
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=1x1&q=h_768,w_768,c_fill/f_webp
+    … 2 more image URLs
+0.140      https://edition.cnn.com/world/middle-east
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=16x9&q=h_438,w_780,c_fill
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=16x9&q=h_810,w_1440,c_fill/f_webp
+    … 9 more image URLs
+0.140      https://edition.cnn.com/world/middleeast/israel
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=16x9&q=h_438,w_780,c_fill
+    image: https://media.cnn.com/api/v1/images/stellar/prod/gettyimages-2301763081.jpg?c=16x9&q=h_810,w_1440,c_fill/f_webp
+    … 10 more image URLs
 ```
 
-**Stored data checks** (quickstart §3), on the index after both runs:
+All three are labelled pages for person-a in the 2026-11-17 set. Several URLs per page are different sizes of the same photo, which are stored as separate images by design.
 
-| Check | Result |
-|---|---|
-| Indexed images that are not JPEG or exceed 1024 px | 0 |
-| Faces not linked to a page | 0 |
-| Faces on images that are not `indexed` | 0 |
-| Images shared by more than one page | 549 (one is on 47 pages) |
-| Lead marks | 49, for 50 pages |
-| Model profile | `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, 512 |
-| Analyzed images missing dimensions or a time | 0 |
+## Search accuracy
 
-**Spot check** (SC-004): 50 random indexed images exported with `--boxes`. Every box is on a face. Some are depictions (a statue, posters, helmet artwork) or tiny background faces.
+The search is scored against two hand-labelled sets. Each is a CNN crawl with people who appear on it, labelled with every page they appear on, and people who don't, each with one openly licensed photo. The targets: find at least 80% of each person's pages, return no page without the person, and return nothing for absent people.
 
-## Search accuracy evaluation
+| Set | True pages found at 0.30 | Wrong pages, present people | Wrong pages, absent people | Verdict |
+|---|---|---|---|---|
+| 2026-11-16 (5 + 5 people) | 11 of 16 | **0** | 4 (2 of 5 people) | FAIL |
+| 2026-11-17 (10 + 10 people, held out) | 18 of 58 | **0** | 3 (2 of 10 people) | FAIL |
 
-The search is measured against hand-labelled label sets in [`queries/eval/`](queries/eval/): at least 5 people who appear on the crawled site, with every page they appear on, and at least 5 who do not, each with one openly licensed photo from outside the site. The criteria are the face search's SC-001 to SC-003: at least 80% of each person's pages found, no page returned that does not show the person, and nothing returned for people not on the site. Run it against the Compose database, as the read-only role:
+**What this means.** When the search returns a page for someone who is on the site, it was right every time on both sets. That's the precision side of the assignment's "high confidence". The cost is recall: on the held-out set it finds about a third of each person's pages, and a close look-alike can pass.
 
-```bash
-PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
-```
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/roc-dark.svg">
+  <img alt="ROC curves of the default search on both label sets, with the 0.30 operating point marked: 69% recall on 2026-11-16 and 31% on 2026-11-17, both at a false positive rate under 0.5%." src="docs/img/roc-light.svg">
+</picture>
 
-It prints a per-label table, then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate. CI validates the label files and runs the evaluator against a mock on every pull request, and attaches an HTML report of the committed results (`eval-report`).
+The default threshold sits far to the left of the curve: at under 0.5% false positives, recall is 69% on the first set and 31% on the held-out set. Over all pairs, the AUC is 0.994 and 0.913. Moving right buys recall quickly, but every step costs wrong pages.
 
-**Result on label set 2026-11-16, at the default threshold of 0.30: FAIL.** 5 present people (16 true pages) and 5 absent people, on a 15,822-face CNN index:
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/distances-dark.svg">
+  <img alt="Histograms of the best face distance per person and page: true pages cluster from 0.10 to 0.30, wrong pages rise from 0.30, and the two overlap between 0.30 and 0.40." src="docs/img/distances-light.svg">
+</picture>
 
-- **SC-001 fails for 2 of 5 people.** person-b and person-d were found on none of their pages (5 between them); person-a, c and e were found on all of theirs.
-- **SC-002 passes.** No present person was returned on a page that does not show them.
-- **SC-003 fails for 2 of 5 absent people,** with 4 wrong pages, 3 of them for a look-alike.
-- **No threshold passes.** True matches reach a distance of 0.392 and wrong ones start at 0.233. The threshold was not tuned to hide this.
+Here is why no threshold passes. True pages (blue) and wrong pages (orange) overlap between 0.30 and 0.40, and several misses sit just past the line (0.3002, 0.3008, 0.313). The threshold was not moved to make the table look better. Both figures are drawn from the committed logs by [scripts/plot_eval.py](scripts/plot_eval.py).
 
-**What was tried since.** A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate: AUC 0.994 to 0.999, and true pages ranked above every wrong page 10 to 14 of 16. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
+**What was tried, each judged by a rule fixed before the run:**
 
-**How the labels were made, and their bias.** One labeller browsed the 2026-11-16 crawl for each person's pages, then reviewed every page the search matched or nearly matched (`face-matcher --details`) and added the pages that do show the person; the method is recorded in [`methods.csv`](queries/eval/methods.csv). Recall is only as good as those labels: a page that neither browsing nor the search surfaced is invisible to the measurement, and because the review started from the search's own matches, the labels lean towards pages the search ranks well. The sample is small (10 people, all public figures with openly licensed photos), one labeller judged every page, and the results describe that one crawl, since the site changes hourly.
+| Idea | Result | Decision |
+|---|---|---|
+| Face-size filter (40 px) | Same false matches, one true page lost | Off by default |
+| Re-scoring: CSLS, T-norm, query expansion (12 combinations) | Worse in every combination | Not adopted |
+| ArcFace instead of Facenet512 | Recall at zero false matches 0.88 against 0.62 on the first set; **no gain on the held-out set** (0.28 against 0.28, AUC 0.912 against 0.913) | Not confirmed, so the default stays Facenet512 |
 
-Full results, distances, the experiments and the labelling method and its limits: [docs/search-evaluation.md](docs/search-evaluation.md).
+The ArcFace result is the one to look at. On the first set, the best of 12 combinations looked like a clear win. A held-out set showed it was luck, plus labels built from the baseline's own matches. A pre-registered check is what stopped it from shipping.
 
-## Known limitations
+**Limits.** The labels were partly built from Facenet512's own near matches, so they favour it. One person labelled every page. The sets are small (30 people). Full tables, distances and experiments are in [docs/search-evaluation.md](docs/search-evaluation.md).
 
-- **SC-011 (a default run on the enabled sites within 30 minutes) is open.** Only CNN is enabled. The one measured run took 72 minutes for CNN, on the machine above rather than the reference machine, so it neither passes nor formally fails the criterion. CNN articles carry about 100 images each, so 50 pages give about 4,700 images; detection, at about 0.7 s per image with 2 workers, is most of the time. An estimate from those per-image times, not a measurement: about 15 pages fit 30 minutes for one site, and about 10 pages per site if People were enabled too (downloads run in parallel per host, detection does not). Raising `FACE_WORKERS` helps if Docker has the memory. Changing the default `page_cap` or the target is an open decision.
-- **people.com is disabled.** It answers the crawler's honest User-Agent (`photo-crawler/0.1.0`) with HTTP 402 from Cloudflare, and its terms forbid scraping. The crawler does not disguise itself to get around this, so the site stays in `config.SITES` with `enabled=False` and the DAG has no `crawl_people`/`download_people` tasks. Leaving People out and documenting why was agreed with the assignment's reviewer (2026-11-15); the other option offered, indexing lead images from People's public news sitemap, was not taken. With the site's permission, set `enabled=True` to crawl it again; while it refuses, a run that includes it records the 402, marks `crawl_people` and the run failed, and still indexes CNN.
-- **Several sizes of one photo** are stored as separate images by design, so `--details` can list the same picture more than once under one page. The page itself is listed once.
-- **Faces that are depictions** (statues, posters) or tiny background faces are indexed and searched like any other face. A 40 px size filter was measured and not adopted, because the false matches are clear look-alike faces ([search-evaluation.md](docs/search-evaluation.md)).
-- **The search fails its accuracy criteria** on the first label set (see [Search accuracy evaluation](#search-accuracy-evaluation)): 2 of 5 people are missed and a look-alike passes the threshold. The threshold was not tuned to hide this; ArcFace is the candidate fix, pending a second label set.
+**Next steps, by expected gain:**
+1. **Several query photos per person.** Most misses are just past the threshold, which averaging tends to fix.
+2. **ArcFace with its own input normalization.** The tested run used Facenet512's.
+3. **Top-k search through the HNSW index.** The current query filters on distance, which scans every face. That's fine at 17k faces, but not at millions.
+
+Each would be judged on a fresh label set.

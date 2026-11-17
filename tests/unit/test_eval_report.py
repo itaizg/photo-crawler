@@ -79,3 +79,21 @@ def test_a_stale_run_is_flagged(tmp_path: Path) -> None:
     page_html, summary, _ = report.render(root)
     assert "results are stale" in page_html
     assert "results are stale" in summary
+
+
+def test_a_not_found_page_names_its_own_runs_ceiling() -> None:
+    """A Facenet512 run searched up to 0.50 only; its marks must not claim 0.80."""
+    row = report.DistanceRow(
+        run_at="2026-11-17T10:34:00Z",
+        label_set="2026-11-16",
+        labels_sha256="0123456789ab",
+        label="person-a",
+        page_url="https://edition.cnn.com/world",
+        labelled=True,
+        distance=None,
+    )
+    facenet = report.eval_set.report_ceiling("retinaface+Facenet512+cosine+align+base@x")
+    arcface = report.eval_set.report_ceiling("retinaface+ArcFace+cosine+align+base@x")
+    assert (facenet, arcface) == (0.50, 0.80)
+    assert "not found up to 0.50" in report._mark(row, 10.0, facenet)
+    assert "not found up to 0.80" in report._mark(row, 10.0, arcface)

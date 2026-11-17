@@ -112,6 +112,21 @@ def test_query_expansion_averages_the_top_faces() -> None:
     assert np.allclose(sc.expand(q, f, n=2), expected)
 
 
+def test_query_expansion_skips_renditions_of_a_taken_face() -> None:
+    q = unit(0)
+    f = unit(10, 10.5, 30, 90)  # faces 0 and 1 are one photo at two sizes
+    assert 1.0 - f[0] @ f[1] < sc.SAME_PHOTO_DISTANCE
+    assert np.allclose(sc.expand(q, f, n=2), sc.normalize(q + f[0] + f[1]))  # pre-registered
+    expected = sc.normalize(q + f[0] + f[2])  # the next distinct face instead
+    assert np.allclose(sc.expand(q, f, n=2, skip_same_photo=True), expected)
+
+
+def test_query_expansion_skip_keeps_distinct_faces() -> None:
+    q = unit(0)
+    f = unit(10, 30, 90)
+    assert np.allclose(sc.expand(q, f, n=2, skip_same_photo=True), sc.expand(q, f, n=2))
+
+
 def test_pages_take_each_pages_best_face() -> None:
     pages = sc.Pages.build([7, 7, 8, 9], {7: ["https://a", "https://b"], 8: ["https://b"]})
     assert pages.urls == ("https://a", "https://b")
@@ -326,3 +341,29 @@ def test_a_second_run_on_the_same_output_is_refused(tmp_path: Path) -> None:
             assert not reembed._lock(tmp_path, second)
     with ExitStack() as third:
         assert reembed._lock(tmp_path, third)  # free again once the first run ends
+
+
+def test_the_baseline_is_found_under_any_library_versions() -> None:
+    """Faces indexed before a DeepFace or TensorFlow upgrade must still export (LIKE pattern)."""
+    sys.path.insert(0, str(SCRIPT.parent))
+    spec = importlib.util.spec_from_file_location(
+        "experiment_export", SCRIPT.parent / "export_index.py"
+    )
+    assert spec is not None
+    assert spec.loader is not None
+    export = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(export)
+    pattern = export.baseline_key()
+    assert pattern == "retinaface+Facenet512+cosine+align+base@%"
+    for versions in (("0.0.95", "2.20"), ("0.0.104", "2.21")):
+        key = export.model_profile.profile_key(*versions, "Facenet512")
+        assert key.startswith(pattern.removesuffix("%"))
+
+
+def test_the_sanity_check_uses_the_reference_runs_own_ceiling() -> None:
+    """The reference run is a Facenet512 run logged up to 0.50; a page at 0.60 is not missing."""
+    run = load_run()
+    label_set, page_scores, urls = logged_baseline(run)
+    row, col = np.argwhere(~np.isfinite(page_scores))[0]
+    page_scores[row, col] = 1.0 - 0.60  # beyond 0.50, inside today's 0.80 report ceiling
+    assert run.sanity_check(label_set, page_scores, urls) == []

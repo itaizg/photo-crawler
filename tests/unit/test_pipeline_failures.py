@@ -43,6 +43,7 @@ class MemoryStore:
     def __init__(self, fail_on: str | None = None) -> None:
         self.failures: list[tuple[str, RequestKind, str]] = []
         self.detect_failures: list[int] = []
+        self.requeued: list[int] = []  # profile ids asked to be re-queued
         self.by_url: dict[str, int] = {}
         self.by_sha: dict[bytes, int] = {}
         self.fail_on = fail_on
@@ -66,6 +67,10 @@ class MemoryStore:
 
     def init_schema(self) -> int:
         return 1
+
+    def requeue_other_profiles(self, profile_id: int) -> int:
+        self.requeued.append(profile_id)
+        return 7
 
     def reset_lead(self, page_id: int) -> None: ...
 
@@ -336,6 +341,28 @@ def test_rates_below_the_floor_are_rejected(rate: float) -> None:
         pipeline.RunParams.model_validate({"page_rate": rate})
     with pytest.raises(ValueError, match="image_rate"):
         pipeline.RunParams.model_validate({"image_rate": rate})
+
+
+def test_a_reindex_run_requeues_the_images_of_other_profiles(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    caplog.set_level(logging.INFO)
+    store = MemoryStore()
+    assert pipeline.init_schema(deps(store, {}), reindex=True) == 1
+    assert store.requeued == [1]  # the current profile's id: everything else is queued again
+    assert "re-queued for the current model images=7" in caplog.text
+
+
+def test_an_ordinary_run_requeues_nothing() -> None:
+    store = MemoryStore()
+    pipeline.init_schema(deps(store, {}))
+    assert store.requeued == []
+    assert pipeline.RunParams().reindex is False
+
+
+def test_reindex_must_be_a_boolean() -> None:
+    with pytest.raises(ValueError, match="reindex"):
+        pipeline.RunParams.model_validate({"reindex": "true"})
 
 
 # -- FR-018: outdated page links are reported, never deleted ----------------------------------

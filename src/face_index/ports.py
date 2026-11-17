@@ -55,6 +55,16 @@ class IndexStore(Protocol):
         """Create the schema if needed and return the current model profile id."""
         ...
 
+    def requeue_other_profiles(self, profile_id: int) -> int:
+        """Send every image whose faces belong to another model profile back to ``pending``.
+
+        Their faces under the other profile are deleted, the stored JPEG is kept, and the next
+        detection embeds them again under ``profile_id``. All or nothing. Returns the number of
+        images re-queued; images with no faces (``no_faces``) are left as they are, so it raises
+        ``ValueError`` when any other profile detected faces with other settings.
+        """
+        ...
+
     def clock(self) -> datetime:
         """The database's current time, the clock every crawl and link timestamp uses."""
         ...

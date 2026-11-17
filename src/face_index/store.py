@@ -128,6 +128,18 @@ def _link(conn: psycopg.Connection, page_id: int, image_id: int, is_lead: bool) 
     conn.execute(_LINK, (page_id, image_id, is_lead))
 
 
+# Profiles that detected faces differently from the current one (re-index refuses them).
+_DETECTION_CHANGED: Final[LiteralString] = """
+SELECT o.key
+FROM model_profile o
+JOIN model_profile c ON c.id = %s
+WHERE o.id <> c.id
+  AND (o.detector, o.align, o.min_face_confidence)
+      IS DISTINCT FROM (c.detector, c.align, c.min_face_confidence)
+ORDER BY o.id
+"""
+
+
 class PostgresIndexStore:
     def __init__(self, dsn: str) -> None:
         self._dsn = dsn
@@ -188,6 +200,30 @@ class PostgresIndexStore:
             ).fetchone()
             assert row is not None
             return int(row[0])
+
+    def requeue_other_profiles(self, profile_id: int) -> int:
+        with self._guard() as conn, conn.transaction():
+            changed = [str(r[0]) for r in conn.execute(_DETECTION_CHANGED, (profile_id,))]
+            if changed:
+                # A no_faces image keeps no JPEG, so a new detector could never look at it again.
+                raise ValueError(
+                    "re-index refused: the face detection settings changed since "
+                    f"{', '.join(changed)}; images judged to have no faces cannot be re-detected "
+                    "from stored JPEGs. Start a fresh index (docker compose down -v, then a run)."
+                )
+            ids = [
+                int(r[0])
+                for r in conn.execute(
+                    "SELECT DISTINCT image_id FROM face WHERE model_profile_id <> %s", (profile_id,)
+                ).fetchall()
+            ]
+            conn.execute("DELETE FROM face WHERE image_id = ANY(%s)", (ids,))
+            conn.execute(
+                "UPDATE image SET status = 'pending', indexed_at = NULL, detect_attempts = 0, "
+                "detect_last_run_id = NULL WHERE id = ANY(%s)",
+                (ids,),
+            )
+        return len(ids)
 
     # -- pages and links --------------------------------------------------------------------
 
