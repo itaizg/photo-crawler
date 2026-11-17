@@ -30,7 +30,7 @@ from face_index.ports import FaceEmbedder
 from face_index.search import prepare_query
 
 EVAL: Final[Path] = Path("queries/eval")
-CEILING: Final[float] = eval_set.REPORT_CEILING
+CEILING: Final[float] = 0.50  # the report ceiling of the logged Facenet512 runs (distances.csv)
 TOLERANCE: Final[float] = 5e-5  # distances.csv keeps 4 decimals
 
 
@@ -175,7 +175,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     labels = label_set.labels()
     truth = {label: frozenset(pages) for label, pages in label_set.present().items()}
     embedders: dict[str, FaceEmbedder] = {
-        "Facenet512": DeepFaceEmbedder(),  # exactly the evaluator's query embedding
+        "Facenet512": DeepFaceEmbedder("Facenet512"),  # exactly the evaluator's query embedding
         "ArcFace": snapshot.ModelEmbedder("ArcFace"),
     }
 

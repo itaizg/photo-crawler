@@ -59,6 +59,7 @@ class RunParams(Record):
     image_rate: Annotated[float, Field(ge=config.MIN_RATE, le=config.MAX_IMAGE_RATE)] = (
         config.DEFAULT_IMAGE_RATE
     )
+    reindex: bool = False
 
 
 class Deps(Record):
@@ -102,9 +103,13 @@ def build_default_deps(dsn: str, params: RunParams, site: Site | None = None) ->
 # -- stages -------------------------------------------------------------------------------------
 
 
-def init_schema(deps: Deps) -> int:
+def init_schema(deps: Deps, reindex: bool = False) -> int:
+    """Create the schema; with ``reindex``, queue the images of other model profiles again."""
     profile_id = deps.store.init_schema()
     log.info("schema ready model_profile_id=%d", profile_id)
+    if reindex:
+        requeued = deps.store.requeue_other_profiles(profile_id)
+        log.info("re-queued for the current model images=%d", requeued)
     return profile_id
 
 

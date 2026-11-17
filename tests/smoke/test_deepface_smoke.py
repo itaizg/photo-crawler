@@ -1,6 +1,6 @@
 """Real-model smoke test (marker `model`, research R13): the actual DeepFace setup.
 
-Needs the RetinaFace and Facenet512 weights (downloaded on first use, or set DEEPFACE_HOME to a
+Needs the RetinaFace and ArcFace weights (downloaded on first use, or set DEEPFACE_HOME to a
 cache). The face cases use photos placed in tests/fixtures/images/ (see its README); they are
 skipped when those files are absent. The stack smoke test (scripts/smoke.sh) covers real faces on
 live pages in any case.

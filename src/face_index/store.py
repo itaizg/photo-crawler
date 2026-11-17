@@ -189,6 +189,22 @@ class PostgresIndexStore:
             assert row is not None
             return int(row[0])
 
+    def requeue_other_profiles(self, profile_id: int) -> int:
+        with self._guard() as conn, conn.transaction():
+            ids = [
+                int(r[0])
+                for r in conn.execute(
+                    "SELECT DISTINCT image_id FROM face WHERE model_profile_id <> %s", (profile_id,)
+                ).fetchall()
+            ]
+            conn.execute("DELETE FROM face WHERE image_id = ANY(%s)", (ids,))
+            conn.execute(
+                "UPDATE image SET status = 'pending', indexed_at = NULL, detect_attempts = 0, "
+                "detect_last_run_id = NULL WHERE id = ANY(%s)",
+                (ids,),
+            )
+        return len(ids)
+
     # -- pages and links --------------------------------------------------------------------
 
     def upsert_page(self, url: str, site: str, depth: int) -> int:

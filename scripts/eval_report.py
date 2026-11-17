@@ -172,7 +172,9 @@ def _x(distance: float | None) -> float:
 
 def _mark(row: DistanceRow, y: float) -> str:
     x = _x(row.distance)
-    where = "not found up to 0.50" if row.distance is None else f"distance {row.distance:.3f}"
+    where = (
+        f"not found up to {CEILING:.2f}" if row.distance is None else f"distance {row.distance:.3f}"
+    )
     kind = "labelled page" if row.labelled else "not a labelled page"
     tip = f"<title>{escape(row.label)} · {escape(row.page_url)} · {where} · {kind}</title>"
     if row.labelled:
@@ -190,7 +192,7 @@ def _chart(labels: Sequence[str], rows: Sequence[DistanceRow]) -> str:
         'aria-label="Best distance of each page to each label\'s query photo">'
     ]
     bottom = _TOP + len(labels) * _ROW
-    for tick in (0.0, 0.1, 0.2, 0.3, 0.4, 0.5):
+    for tick in (i / 10 for i in range(round(CEILING * 10) + 1)):
         x = _x(tick)
         parts.append(
             f'<line class="axis" x1="{x:.1f}" x2="{x:.1f}" y1="{_TOP - 6}" y2="{bottom}"/>'

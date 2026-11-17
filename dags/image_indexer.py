@@ -15,7 +15,8 @@ the per-run attempt cap and page cap, and a retry that succeeded would hide the 
 next run tries the failed links again, up to the 3-attempt cap. Infrastructure failures are
 still retried (`retries=1`).
 
-Trigger with optional params `depth`, `page_cap` (null = no cap), `page_rate`, `image_rate`.
+Trigger with optional params `depth`, `page_cap` (null = no cap), `page_rate`, `image_rate`, and
+`reindex` (re-embed images indexed under another model profile, e.g. after a model change).
 Every task is a thin wrapper around a `face_index.pipeline` function (research R3).
 """
 
@@ -56,6 +57,11 @@ PARAMS: Final[Mapping[str, Param]] = {
         minimum=config.MIN_RATE,
         maximum=config.MAX_IMAGE_RATE,
         description="Image requests per second, per host.",
+    ),
+    "reindex": Param(
+        False,
+        type="boolean",
+        description="Embed the images indexed under another model profile again (stored JPEGs).",
     ),
 }
 
@@ -101,7 +107,7 @@ def image_indexer() -> None:
     @task
     def init_schema() -> int:
         params, _ = _context()
-        return pipeline.init_schema(_deps(params))
+        return pipeline.init_schema(_deps(params), params.reindex)
 
     @task
     def crawl(site_name: str) -> dict[str, object]:

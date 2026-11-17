@@ -44,9 +44,17 @@ ORDER BY pi.image_id, p.url
 """
 
 
+def baseline_key() -> str:
+    """The profile key of the Facenet512 baseline, which was the index's model before ArcFace."""
+    profile = model_profile.current_profile()
+    return model_profile.profile_key(
+        profile.deepface_version, profile.tensorflow_version, snapshot.BASELINE
+    )
+
+
 def export(conn: psycopg.Connection) -> snapshot.Snapshot:
     register_vector(conn)
-    faces = conn.execute(_FACES, (model_profile.KEY,)).fetchall()
+    faces = conn.execute(_FACES, (baseline_key(),)).fetchall()
     links = conn.execute(_LINKS).fetchall()
     return to_snapshot(faces, links)
 
@@ -85,9 +93,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"error: {exc}", file=sys.stderr)
         return 2
     if len(snap.face_image) == 0:
-        print(f"error: no faces for profile {model_profile.KEY}", file=sys.stderr)
+        print(f"error: no faces for profile {baseline_key()}", file=sys.stderr)
         return 2
-    target = snapshot.path(args.crawl_date, "Facenet512")
+    target = snapshot.path(args.crawl_date, snapshot.BASELINE)
     snap.save(target)
     pages = {u for urls in snap.image_pages.values() for u in urls}
     print(

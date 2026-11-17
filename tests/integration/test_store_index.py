@@ -496,3 +496,56 @@ def test_lead_swaps_on_one_page_wait_for_each_other(
     leads = [r[0] for r in sql.execute("SELECT image_id FROM page_image WHERE is_lead").fetchall()]
     assert leads == [b]
     assert a != b
+
+
+def _other_profile(sql: psycopg.Connection) -> int:
+    row = sql.execute(
+        "INSERT INTO model_profile (key, detector, model, dimensions, distance, align, "
+        "normalization, min_face_confidence, deepface_version, tensorflow_version) "
+        "SELECT 'old-model', detector, 'Facenet512', dimensions, distance, align, normalization, "
+        "min_face_confidence, deepface_version, tensorflow_version FROM model_profile LIMIT 1 "
+        "RETURNING id"
+    ).fetchone()
+    assert row is not None
+    return int(row[0])
+
+
+def test_requeue_sends_the_images_of_other_profiles_back_to_pending(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    current = store.init_schema()
+    old = _other_profile(sql)
+    p = page(store)
+    stale, _ = store.stage_image(normalized(1), "https://img/stale.jpg", p, False)
+    fresh, _ = store.stage_image(normalized(2), "https://img/fresh.jpg", p, False)
+    empty, _ = store.stage_image(normalized(3), "https://img/empty.jpg", p, False)
+    store.process_pending(stale, lambda _: [face(1), face(30)], profile_id=old)
+    store.process_pending(fresh, lambda _: [face(1)], profile_id=current)
+    store.process_pending(empty, lambda _: [], profile_id=old)
+
+    assert store.requeue_other_profiles(current) == 1
+
+    assert one(sql, "SELECT status FROM image WHERE id = %s", stale) == "pending"
+    assert one(sql, "SELECT indexed_at IS NULL FROM image WHERE id = %s", stale) is True
+    assert one(sql, "SELECT jpeg IS NOT NULL FROM image WHERE id = %s", stale) is True
+    assert one(sql, "SELECT count(*) FROM face WHERE image_id = %s", stale) == 0
+    assert one(sql, "SELECT status FROM image WHERE id = %s", fresh) == "indexed"
+    assert one(sql, "SELECT count(*) FROM face WHERE image_id = %s", fresh) == 1
+    assert one(sql, "SELECT status FROM image WHERE id = %s", empty) == "no_faces"
+    assert store.pending_batches(50, 3) == [[stale]]
+
+    assert store.process_pending(stale, lambda _: [face(5)], profile_id=current) == 1
+    assert store.requeue_other_profiles(current) == 0  # nothing of another profile is left
+    assert one(sql, "SELECT count(DISTINCT model_profile_id) FROM face") == 1
+
+
+def test_requeue_resets_the_attempt_count(
+    store: PostgresIndexStore, sql: psycopg.Connection
+) -> None:
+    current = store.init_schema()
+    old = _other_profile(sql)
+    image_id, _ = store.stage_image(normalized(), "https://img/a.jpg", page(store), False)
+    store.process_pending(image_id, lambda _: [face(1)], profile_id=old)
+    sql.execute("UPDATE image SET detect_attempts = 2 WHERE id = %s", (image_id,))
+    store.requeue_other_profiles(current)
+    assert one(sql, "SELECT detect_attempts FROM image WHERE id = %s", image_id) == 0

@@ -38,10 +38,11 @@ def _major_minor(full: str) -> str:
     return ".".join(parts[:2])
 
 
-def profile_key(deepface_version: str, tensorflow_version: str) -> str:
+def profile_key(deepface_version: str, tensorflow_version: str, model: str = MODEL) -> str:
+    """The profile key; ``model`` is only passed by the experiments, to name the old model."""
     align = "align" if ALIGN else "noalign"
     return (
-        f"{DETECTOR}+{MODEL}+{DISTANCE}+{align}+{NORMALIZATION}"
+        f"{DETECTOR}+{model}+{DISTANCE}+{align}+{NORMALIZATION}"
         f"@deepface{_major_minor(deepface_version)}/tf{_major_minor(tensorflow_version)}"
     )
 

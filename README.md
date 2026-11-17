@@ -33,8 +33,18 @@ docker compose exec airflow-scheduler airflow dags trigger image_indexer \
 | `page_cap` | 50 | Maximum page requests per site (failed and non-HTML ones count too); `null` = no cap |
 | `page_rate` | 1.0 | Page requests per second, per host (0.1–10) |
 | `image_rate` | 5.0 | Image requests per second, per host (0.1–20) |
+| `reindex` | false | Embed the images indexed under another model profile again, from their stored JPEGs (see "Re-index after a model change") |
 
 The `summarize` task's log ends with a table: pages crawled, images found, reused, skipped (by reason), indexed, faces stored, failures, dead links (HTTP 404/410), known dead links not requested, links abandoned, and outdated page links. A page link is outdated when a re-crawl of the page no longer finds that image there. The download task logs each such page (`outdated links page=… count=…`), the links are kept, and the search ignores them.
+
+**Re-index after a model change.** The face model, its detector settings and the DeepFace and TensorFlow versions form the model profile key. The search compares only faces of the current profile, so after the key changes (as it did when the model changed from Facenet512 to ArcFace) the existing faces cannot be found until they are embedded again. Run the pipeline with `reindex` set:
+
+```bash
+docker compose exec airflow-scheduler airflow dags trigger image_indexer \
+  --conf '{"reindex": true, "page_cap": 1}'
+```
+
+The first task deletes the faces of every other profile in one transaction, and sets those images back to `pending`; their stored JPEGs stay. The normal detection tasks then embed them with the current model, so nothing is downloaded again. The re-index takes about as long as the first index (an hour or more for 5,000 images on CPU), and `page_cap: 1` keeps the crawl in the same run to one page per site. While it runs, **search covers only the images already re-embedded**; an image is never in the index under two profiles. If the run is interrupted, or the per-run batch limit defers some images (the log says `detection deferred`), trigger it again: images still `pending` are picked up and nothing is duplicated. Images with no faces keep their status, since the detector did not change. Old `model_profile` rows are kept as history. A run without `reindex` never touches other profiles' faces.
 
 **Re-runs** skip every image URL already known, reuse identical content found under a new URL, and still record new pages. A link that fails is retried on later runs, **at most 3 times**; then it is abandoned and logged. To give abandoned links another chance:
 
@@ -69,7 +79,7 @@ The script takes a photo, finds every face in it, and prints every crawled page 
 docker compose run --rm face-matcher queries/alice.jpg
 ```
 
-The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, Facenet512, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
+The `face-matcher` service uses the pipeline's image, so the photo is processed by exactly the same model setup as the index: RetinaFace, ArcFace, cosine distance, and the same JPEG ≤ 1024 px normalization. `docker compose up` does not start it; `run` starts it for one search and removes it afterwards. The first search after a build takes about 10–15 s, mostly loading TensorFlow and the model.
 
 **Output.** One group per face found in the photo. Faces are numbered from 1, left to right, and each header shows the face's box in the normalized photo. Under each header are the matching page URLs, closest match first, each page once:
 
@@ -118,7 +128,7 @@ The full command-line contract is in [specs/002-face-search/contracts/face-match
 |---|---|
 | Orchestration | Apache Airflow 3.4 (LocalExecutor, Task SDK) |
 | Face detection | DeepFace with the **RetinaFace** detector, confidence ≥ 0.9 |
-| Face embeddings | DeepFace **Facenet512** (512-d), aligned, `base` normalization, **cosine** distance |
+| Face embeddings | DeepFace **ArcFace** (512-d), aligned, `base` normalization, **cosine** distance (Facenet512 until 2026-11-17; see Experiments) |
 | Storage | PostgreSQL 17 + **pgvector** (HNSW index, `vector_cosine_ops`) |
 | Crawling | httpx (manual redirects, IP pinning), BeautifulSoup + lxml, `urllib.robotparser` |
 | Images | Pillow |

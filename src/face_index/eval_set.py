@@ -10,6 +10,7 @@ them at once, so collecting errors needs no exception handling (constitution VII
 import csv
 import hashlib
 import re
+from bisect import bisect_left
 from collections.abc import Mapping, Sequence
 from datetime import date, datetime, timedelta
 from enum import StrEnum
@@ -67,16 +68,26 @@ DISTANCE_COLUMNS: Final[tuple[str, ...]] = (
     "labelled",
     "distance",
 )
+FIT_COLUMNS: Final[tuple[str, ...]] = (
+    "model",
+    "label_set",
+    "label",
+    "page_url",
+    "labelled",
+    "distance",
+)
 ATTRIBUTION_COLUMNS: Final[tuple[str, ...]] = ("path", "source_url", "author", "licence")
 ATTRIBUTION_FILE: Final[str] = "attribution.csv"
 METHODS_FILE: Final[str] = "methods.csv"
 RUNS_FILE: Final[str] = "runs.csv"
 DISTANCES_FILE: Final[str] = "distances.csv"
+FIT_FILE: Final[str] = "threshold-fit.csv"
 MIN_LABELS: Final[int] = 5  # per role, per set (spec FR-001a, FR-002)
 MIN_RECALL: Final[float] = 0.80  # feature 002 SC-001: each present label's recall
 # Pages up to this distance are logged with their distance, so a run can be read as a curve
 # (research R12). Only pages below the match threshold count as returned.
-REPORT_CEILING: Final[float] = 0.50
+REPORT_CEILING: Final[float] = 0.80  # beyond ArcFace's DeepFace cutoff (0.68); was 0.50
+FIT_STEP: Final[float] = 0.01  # the match threshold is a two-decimal number everywhere
 
 LABEL_PATTERN: Final[str] = r"^(person|absent)-[a-z]+$"
 _SET_NAME: Final[re.Pattern[str]] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -621,6 +632,70 @@ def read_distance_log(root: Path) -> tuple[list[DistanceRow], list[str]]:
     return [row for _, row in rows], errors
 
 
+class FitPair(Record):
+    """One (label, page) pair the match threshold was fitted on (``threshold-fit.csv``).
+
+    Unlike ``DistanceRow`` it belongs to no logged run: it is the pooled input of one fit, for
+    one model. A labelled page the model never found within the ceiling has no distance.
+    """
+
+    model: FreeText
+    label_set: date
+    label: Label
+    page_url: Annotated[str, AfterValidator(_logged_page_url)]
+    labelled: bool
+    distance: Annotated[float, Field(ge=0, le=REPORT_CEILING)] | None
+
+    @field_validator("labelled", mode="before")
+    @classmethod
+    def _text_or_bool(cls, value: object) -> object:
+        return value if isinstance(value, bool) else _true_or_false(value)
+
+    @field_validator("distance", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value: object) -> object:
+        return None if value == "" else value
+
+    @model_validator(mode="after")
+    def _unfound_is_labelled(self) -> Self:
+        if self.distance is None and not self.labelled:
+            raise ValueError("a pair without a distance must be a labelled page")
+        return self
+
+
+def read_threshold_fit(root: Path) -> tuple[list[FitPair], list[str]]:
+    """The fit's pairs (empty when the file does not exist yet), or its errors."""
+    path = root / FIT_FILE
+    if not path.is_file():
+        return [], []
+    raw, errors = _read_csv(path, FIT_FILE, FIT_COLUMNS)
+    rows, row_errors = _parse_rows(FitPair, raw, FIT_FILE)
+    return [row for _, row in rows], errors + row_errors
+
+
+def fit_threshold(pairs: Sequence[FitPair]) -> float:
+    """The cutoff, on a 0.01 grid, that maximises F1 over the pooled pairs.
+
+    A pair is matched when its distance is strictly below the cutoff, as the search decides it.
+    F1 is the pair-level 2TP / (2TP + FP + FN); a labelled page with no distance is a miss at
+    every cutoff. A tie goes to the lowest cutoff.
+    """
+    labelled = sorted(p.distance for p in pairs if p.labelled and p.distance is not None)
+    unlabelled = sorted(p.distance for p in pairs if not p.labelled and p.distance is not None)
+    positives = sum(p.labelled for p in pairs)
+    if positives == 0:
+        raise ValueError("cannot fit a threshold without labelled pages")
+    best_cutoff, best_f1 = 0.0, -1.0
+    for step in range(1, round(REPORT_CEILING / FIT_STEP) + 1):
+        cutoff = round(step * FIT_STEP, 2)
+        tp = bisect_left(labelled, cutoff)
+        fp = bisect_left(unlabelled, cutoff)
+        f1 = 2 * tp / (2 * tp + fp + positives - tp)
+        if f1 > best_f1:
+            best_cutoff, best_f1 = cutoff, f1
+    return best_cutoff
+
+
 def labels_sha256(root: Path, label_set: LabelSet) -> str:
     """The labels version: the set file followed by its photos, in label order (research R7)."""
     digest = hashlib.sha256((root / label_set.file).read_bytes())
@@ -705,7 +780,7 @@ def stale_results_errors(folder: EvalFolder) -> list[str]:
 
 
 _ENTRIES: Final[frozenset[str]] = frozenset(
-    {"sets", "photos", ATTRIBUTION_FILE, METHODS_FILE, RUNS_FILE, DISTANCES_FILE}
+    {"sets", "photos", ATTRIBUTION_FILE, METHODS_FILE, RUNS_FILE, DISTANCES_FILE, FIT_FILE}
 )
 
 
@@ -719,7 +794,7 @@ def _layout_errors(root: Path) -> list[str]:
     errors = [f"{link}: symbolic links are not allowed in the evaluation folder" for link in links]
     errors += [
         f"{p.name}: not an evaluation file; only sets/, photos/, {ATTRIBUTION_FILE}, "
-        f"{METHODS_FILE}, {RUNS_FILE} and {DISTANCES_FILE} belong here "
+        f"{METHODS_FILE}, {RUNS_FILE}, {DISTANCES_FILE} and {FIT_FILE} belong here "
         "(index snapshots are never committed)"
         for p in sorted(root.iterdir())
         if p.name not in _ENTRIES
@@ -758,6 +833,7 @@ def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:
         *_attribution_errors(root, sets.labels),
         *read_run_log(root)[1],
         *read_distance_log(root)[1],
+        *read_threshold_fit(root)[1],
     ]
     if errors:
         return None, tuple(errors)
