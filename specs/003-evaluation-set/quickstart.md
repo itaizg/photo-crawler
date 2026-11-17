@@ -63,7 +63,7 @@ Expected: `runs.csv` gains one row per label. Commit it together with the README
 ## 5b. Correct an existing set, or take a photo down
 
 1. Edit the set, or remove the photo, its attribution row and its label from every set. If a set falls below its minimums, add a replacement label in the same change.
-2. Re-run section 4 for the latest set and commit the new `runs.csv` rows and README numbers with the change. Until then, section 1 fails with a stale-results error.
+2. If the latest set's file or one of its photos changed, re-run section 4 for it and commit the new `runs.csv` rows and README numbers with the change. Until then, section 1 fails with a stale-results error. Attribution or methods corrections need no new run.
 3. Say in the pull request what changed and why. For a takedown, a maintainer also removes the photo from git history; that step is outside this feature.
 
 ## 6. Final check

@@ -200,16 +200,40 @@ def latest_set(folder: EvalFolder) -> LabelSet:
 # --- reading -----------------------------------------------------------------------------------
 
 
+def _field_count_errors(path: Path, name: str) -> list[str]:
+    """Every record has as many fields as the header; blank lines are left to row validation."""
+    with path.open(encoding="utf-8", newline="") as f:
+        reader = csv.reader(f)
+        width = len(next(reader, []))
+        return [
+            f"{name}:{reader.line_num}: expected {width} fields, found {len(record)}"
+            for record in reader
+            if record and len(record) != width
+        ]
+
+
 def _read_csv(
     path: Path, name: str, columns: Sequence[str]
 ) -> tuple[list[tuple[int, Row]], list[str]]:
     """Rows with their file line numbers, or the errors that stop the file from being read."""
-    try:
+    try:  # file-reading boundary (constitution VIII): a bad file is reported, not raised
+        widths = _field_count_errors(path, name)
+        if widths:
+            return [], widths
         frame = pd.read_csv(
-            path, dtype="string", keep_default_na=False, na_filter=False, skip_blank_lines=False
+            path,
+            dtype="string",
+            keep_default_na=False,
+            na_filter=False,
+            skip_blank_lines=False,
+            index_col=False,  # never take a column as the index, which would drop its values
         )
-    except (pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
-        return [], [f"{name}:1: cannot read the file as CSV ({type(exc).__name__})"]
+    except (csv.Error, pd.errors.ParserError, pd.errors.EmptyDataError, UnicodeDecodeError) as exc:
+        line = re.search(r"line (\d+)", str(exc))
+        return [], [
+            f"{name}:{line.group(1) if line else 1}: cannot read the file as CSV "
+            f"({type(exc).__name__})"
+        ]
     header = [str(c) for c in frame.columns]
     if header != list(columns):
         return [], [f"{name}:1: header must be {','.join(columns)}, got {','.join(header)}"]

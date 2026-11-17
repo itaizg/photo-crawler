@@ -300,7 +300,7 @@ How each set was labelled (browsing, searching or both), by whom and on which cr
 
 ### Correcting a set or taking a photo down
 
-A set may be corrected (a labelling mistake, a wrong licence, a takedown request) as long as every set keeps its minimums: a removed label is replaced in the same change. After a change, the latest set needs a fresh logged run before CI passes, so these results never describe files that have since changed ([quickstart §5b](specs/003-evaluation-set/quickstart.md)). Deleting a photo does not remove it from git history; for a takedown, a maintainer also rewrites the history on the remote.
+A set may be corrected (a labelling mistake, a wrong licence, a takedown request) as long as every set keeps its minimums: a removed label is replaced in the same change. After a change to the latest set or one of its photos, that set needs a fresh logged run before CI passes, so these results never describe inputs that have since changed. Attribution or methods corrections need no new run, since they change no result ([quickstart §5b](specs/003-evaluation-set/quickstart.md)). Deleting a photo does not remove it from git history; for a takedown, a maintainer also rewrites the history on the remote.
 
 ## Known limitations
 

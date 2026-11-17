@@ -86,9 +86,14 @@ jobs:
         env:
           BASE_REF: ${{ github.base_ref }}
         run: |
-          if git diff --unified=0 "origin/${BASE_REF}...HEAD" -- queries/eval/runs.csv | grep -E '^-[^-]'; then
-            echo "queries/eval/runs.csv is append-only: existing lines were changed or removed" >&2
-            exit 1
+          # The base branch's log must be an unchanged prefix: rows may only be added at the end.
+          log=queries/eval/runs.csv
+          base="$RUNNER_TEMP/base-runs.csv"
+          if git show "origin/${BASE_REF}:${log}" > "$base" 2>/dev/null; then
+            if ! head -c "$(wc -c < "$base")" "$log" | cmp -s - "$base"; then
+              echo "$log is append-only: existing lines were changed, removed or reordered, or rows were inserted before them" >&2
+              exit 1
+            fi
           fi
       - name: Evaluator end to end against a mock
         run: uv run --locked pytest tests/integration/test_evaluate_search_e2e.py --durations=5

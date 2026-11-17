@@ -439,3 +439,20 @@ def test_committed_eval_set_is_valid() -> None:
     folder, errors = eval_set.read_folder(root)
     assert errors == ()
     assert folder is not None
+
+
+# --- review fixes, round 3 (PR 15) ---------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("line", "change"), [(3, "extra,"), (5, "")])
+def test_a_row_with_the_wrong_number_of_fields_is_reported_with_its_line(
+    tmp_path: Path, line: int, change: str
+) -> None:
+    """An extra leading field must not be taken as a row index and silently dropped."""
+    write_folder(tmp_path)
+    path = tmp_path / SET_FILE
+    lines = path.read_text(encoding="utf-8").splitlines(keepends=True)
+    lines[line - 1] = change + lines[line - 1] if change else "a,b\n"
+    path.write_text("".join(lines), encoding="utf-8")
+    found = 5 if change else 2
+    assert f"{SET_FILE}:{line}: expected 4 fields, found {found}" in errors_for(tmp_path)
