@@ -169,6 +169,19 @@ Every combination, over the 5 present and 5 absent people (16 true pages). AUC c
 | ArcFace | CSLS | query expansion | 0.991 | 0.00 | 5/5 | 0/5 |
 | ArcFace | T-norm | query expansion | 0.995 | 0.06 | 4/5 | 0/5 |
 
+**Correction: query expansion without renditions (added after pre-registration, 2026-11-17).** The query-expansion rows above average each query with its 2 closest index faces, and those are often one photo stored at two sizes. The corrected arm skips a face closer than 0.02 to a neighbour already taken, as the CSLS arm already did. Re-scored on the same snapshot; the 12 rows above reproduced exactly and are kept as pre-registered. These 6 rows choose nothing:
+
+| Model | Score | Re-ranking | AUC | Recall at zero false matches | Separable | Absent ok |
+|---|---|---|---|---|---|---|
+| Facenet512 | raw cosine | query expansion, renditions skipped | 0.996 | 0.25 | 4/5 | 0/5 |
+| Facenet512 | CSLS | query expansion, renditions skipped | 0.987 | 0.00 | 4/5 | 0/5 |
+| Facenet512 | T-norm | query expansion, renditions skipped | 0.991 | 0.00 | 4/5 | 0/5 |
+| ArcFace | raw cosine | query expansion, renditions skipped | 0.996 | 0.31 | 4/5 | 0/5 |
+| ArcFace | CSLS | query expansion, renditions skipped | 0.991 | 0.00 | 5/5 | 0/5 |
+| ArcFace | T-norm | query expansion, renditions skipped | 0.995 | 0.06 | 4/5 | 0/5 |
+
+The correction changes little: recall at zero false matches for Facenet512 with raw cosine falls from 0.31 to 0.25, and the ArcFace rows are unchanged. Query expansion still lowers recall in every case, so the conclusion below stands.
+
 What the table shows:
 
 - **Re-scoring does not help Facenet512.** CSLS and T-norm lower both AUC and recall. Query expansion raises AUC by 0.002 and halves recall, because it pulls wrong pages closer too. The same holds on ArcFace.

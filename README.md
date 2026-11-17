@@ -274,9 +274,9 @@ It prints a per-label table, then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 mea
 
 **Result on label set 2026-11-16, run on 2026-11-17, at the default threshold of 0.30: FAIL.** 5 present people (16 true pages) and 5 absent people, on a 15,822-face CNN index:
 
-- **Finding at least 80% of each person's pages fails for 2 of 5 people.** person-b and person-d were found on none of their pages (5 between them); person-a, c and e were found on all of theirs.
-- **No extra pages passes.** No present person was returned on a page that does not show them.
-- **Nothing returned for absent people fails for 2 of 5,** with 4 wrong pages, 3 of them for a look-alike.
+- **Finding each person on at least 80% of their pages: fails for 2 of 5 people.** person-b and person-d were found on none of their pages (5 between them); person-a, c and e were found on all of theirs.
+- **No extra pages for present people: passes.** No present person was returned on a page that does not show them.
+- **Nothing returned for absent people: fails for 2 of 5,** with 4 wrong pages, 3 of them for a look-alike.
 - **No threshold passes.** True matches reach a distance of 0.392 and wrong ones start at 0.233. The threshold was not tuned to hide this.
 
 **What was tried since** (measured on 2026-11-17). A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate. Recall at zero false matches (true pages ranked above every wrong page): ArcFace 0.88 (14 of 16), Facenet512 0.62 (10 of 16). Separable people: 5/5 against 4/5; absent people below every true page: 2/5 against 0/5 (AUC 0.999 against 0.994, near 1 for both). **ArcFace does not pass either:** no single threshold meets all three criteria, since 2 true pages and 3 absent people still overlap. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
