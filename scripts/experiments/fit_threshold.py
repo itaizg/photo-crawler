@@ -33,6 +33,7 @@ import snapshot
 
 from face_index import eval_set
 from face_index.eval_set import FitPair
+from face_index.faces import DeepFaceEmbedder
 
 MODEL: Final[str] = "ArcFace"
 DEEPFACE_CUTOFF: Final[float] = 0.68  # find_threshold("ArcFace", "cosine"), for comparison
@@ -43,7 +44,7 @@ def pairs_for(label_set: eval_set.LabelSet, eval_dir: Path = run.EVAL) -> list[F
     snap = snapshot.Snapshot.load(snapshot.path(label_set.crawl_date, MODEL))
     index = scoring.normalize(snap.embeddings)
     pages = scoring.Pages.build(snap.face_image.tolist(), snap.image_pages)
-    queries = run.query_vectors(label_set, snapshot.ModelEmbedder(MODEL), eval_dir)
+    queries = run.query_vectors(label_set, DeepFaceEmbedder(MODEL), eval_dir)
     page_scores = pages.best(scoring.scores(queries, index, "raw"))
     truth = label_set.present()
     out: list[FitPair] = []

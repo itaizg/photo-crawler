@@ -35,10 +35,26 @@ def test_export_matches_the_search_visibility_rules(db_dsn: str, store: Postgres
     with psycopg.connect(db_dsn, autocommit=True) as conn:
         # The shared image is also shown on page b, so it belongs to both pages.
         conn.execute("INSERT INTO page_image (page_id, image_id) VALUES (%s, %s)", (b, shared))
-        snap = load_export().export(conn)
+        snap, latest = load_export().export(conn)
+    assert latest is not None
     assert len(snap.face_image) == 3
     assert snap.embeddings.shape == (3, 512)
     assert np.allclose(snap.embeddings[0], QUERY)
     assert snap.boxes[2].tolist()[2:] == [20, 20]
     assert snap.image_pages[shared] == ("https://cnn.test/a", "https://cnn.test/b")
     assert set(snap.image_pages) == set(snap.face_image.tolist())  # the pending image is left out
+
+
+def test_an_index_crawled_after_the_set_date_is_refused() -> None:
+    from datetime import UTC, date, datetime, timedelta, timezone
+
+    export = load_export()
+    day = date(2026, 11, 16)
+    assert not export.later_crawl(None, day)
+    assert not export.later_crawl(datetime(2026, 11, 16, 23, 59, tzinfo=UTC), day)
+    assert not export.later_crawl(datetime(2026, 11, 10, tzinfo=UTC), day)
+    assert export.later_crawl(datetime(2026, 11, 17, 0, 1, tzinfo=UTC), day)
+    # Compared in UTC: 01:00 on the 17th at UTC+2 is still the 16th.
+    assert not export.later_crawl(
+        datetime(2026, 11, 17, 1, 0, tzinfo=timezone(timedelta(hours=2))), day
+    )

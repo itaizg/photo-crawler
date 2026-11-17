@@ -48,10 +48,14 @@ def narrow_results(raw: Sequence[Mapping[str, Any]], width: int, height: int) ->
 
 
 class DeepFaceEmbedder:
-    """``FaceEmbedder`` adapter. DeepFace and TensorFlow are imported on first use."""
+    """``FaceEmbedder`` adapter. DeepFace and TensorFlow are imported on first use.
+
+    ``model`` is the index's model; the offline search experiments pass another DeepFace model,
+    with the same detector, alignment, normalization and error handling.
+    """
 
     def __init__(self, model: str = model_profile.MODEL) -> None:
-        self._model = model
+        self.model = model
         self._ready = False
 
     def _load(self) -> None:
@@ -60,7 +64,7 @@ class DeepFaceEmbedder:
         try:
             from deepface import DeepFace
 
-            DeepFace.build_model(self._model)
+            DeepFace.build_model(self.model)
         except Exception as exc:  # any failure to load the model is infrastructure
             raise InfrastructureError(f"face model unavailable: {type(exc).__name__}") from exc
         self._ready = True
@@ -78,7 +82,7 @@ class DeepFaceEmbedder:
         try:
             raw = DeepFace.represent(
                 img_path=bgr,
-                model_name=self._model,
+                model_name=self.model,
                 detector_backend=model_profile.DETECTOR,
                 enforce_detection=False,
                 align=model_profile.ALIGN,

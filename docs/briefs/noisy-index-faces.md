@@ -2,7 +2,7 @@
 
 Source of truth: [assignment.md](../assignment.md). Quoted text is from the assignment; anything else is interpretation. Origin: [TODO.md](../../TODO.md), "Search script: noisy faces from the index". Lands with or after feature 002.
 
-**Status (2026-11-17):** the size filter exists as `--min-face PX` on `face_matcher` and `scripts/evaluate_search.py` (query time, `least(face.w, face.h) >= PX`, default 0). At 40 px (label set 2026-11-16, run 2026-11-17 14:27 UTC) it removed no false match at the 0.30 threshold, cost one true page (a person who appears only small), and halved the wrong pages between 0.30 and 0.40. The default stays 0; see the README's "Face-size filter".
+**Status (2026-11-17):** the size filter exists as `--min-face PX` on `face_matcher` and `scripts/evaluate_search.py` (query time, `least(face.w, face.h) >= PX`, default 0). At 40 px (label set 2026-11-16, run 2026-11-17 14:27 UTC) it removed no false match at the 0.30 threshold, cost one true page (a person who appears only small), and halved the wrong pages between 0.30 and 0.40. The default stays 0; see [search-evaluation.md](../search-evaluation.md#face-size-filter-tried-at-40-px-not-adopted).
 
 ## Mission
 
