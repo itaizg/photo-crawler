@@ -279,17 +279,32 @@ Against the criteria:
 
 **How the labels were completed.** The set was labelled by browsing, and the first run (the first block in `runs.csv`) reported 8 extra pages. The labeller then reviewed every matched image with `face-matcher --details` and confirmed that each extra page does show the person. Pages are labelled from what their images show, so those pages were added to the set. Pages above the threshold were reviewed the same way, which added 3 pages for person-b and person-d that the search does not return. Each person is therefore labelled on the pages the review found, which may still miss a page the search never ranked.
 
-**What the distances show.** From the match review at a 0.45 threshold:
+**What the distances show.** The run at 13:19 UTC repeated these counts with `--log`, which also recorded every page's best distance to each query photo up to 0.50 in [`distances.csv`](queries/eval/distances.csv) (the CI report charts them):
 
-| query | true pages (distance) | wrong pages (distance) |
+| query | true pages (distance) | closest wrong page (distance) |
 |---|---|---|
-| person-a, c, e | all below 0.30 (those measured: 0.10 to 0.26) | none |
-| person-b | 0.313, 0.342, 0.344 | 0.365 and above |
-| person-d | 0.365, 0.392 | 0.349, 0.447 |
-| absent-c | none | 0.280 |
-| absent-d | none | 0.233, 0.296, 0.299 |
+| person-a | 0.150, 0.171, 0.256 | 0.413 |
+| person-b | 0.313, 0.342, 0.344 | 0.365 |
+| person-c | 0.100 to 0.123 (6 pages) | 0.342 |
+| person-d | 0.365, 0.392 | 0.349 |
+| person-e | 0.157, 0.158 | 0.370 |
+| absent-c | none | 0.280, then 0.349 |
+| absent-d | none | 0.233, 0.296, 0.299, then 0.303 |
 
-Wrong matches start at 0.233 and true matches reach 0.392, so no single threshold separates them: the misses lie above 0.30 and the false matches below it. For person-d, a wrong page (0.349) is closer than both of his true pages. Changing the threshold cannot make this set pass, so it was left at 0.30. Whether a face-size filter or a per-face quality check would help is the open question in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md).
+- **For person-a, c and e the search separates cleanly:** true pages at 0.26 or less, the nearest wrong page at 0.34 or more.
+- **person-b is a near miss.** All 3 pages are ranked above any wrong page but lie just past 0.30.
+- **person-d cannot be found by a threshold.** A wrong page (0.349) is closer than both true pages.
+- **No single threshold separates true from wrong matches.** absent-d's wrong pages start at 0.233, below person-b's true pages. Across the set:
+
+  | threshold | true pages found (of 16) | wrong pages returned |
+  |---:|---:|---:|
+  | 0.30 | 11 | 4 |
+  | 0.35 | 14 | 10, including 1 each for person-c and person-d |
+  | 0.40 | 16 | 38 |
+
+  A higher threshold trades the recall failure for more false matches and also breaks SC-002, so the default stays at 0.30. These numbers come from this set alone and are not a basis for choosing a threshold; tuning on them would overfit it.
+- **A few pages are close to many faces.** `/travel/news`, `/world/heroes` and `/world/americas` are within 0.40 of three different query photos each, and include absent-d's three false matches. `/world` does the same, but it is an index page with many faces. A face on those pages that resembles many people (small, blurred or side-on) would explain this; it is the case in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md), and those pages' faces are the first thing to inspect.
+- **Every labelled page is within 0.50** of its person's photo, so the misses come from where the cutoff sits, not from faces missing from the index.
 
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. A later set should add a page where a person appears only small.
