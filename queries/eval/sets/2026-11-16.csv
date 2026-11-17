@@ -1,6 +1,7 @@
 label,page_url,hard_case,lookalike_of
 person-a,https://edition.cnn.com/world/middleeast/israel,none,
 person-a,https://edition.cnn.com/world,none,
+person-a,https://edition.cnn.com/world/middle-east,none,
 person-b,https://edition.cnn.com/world/middleeast/israel,none,
 person-b,https://edition.cnn.com/world,none,
 person-b,https://edition.cnn.com/world/middle-east,none,
