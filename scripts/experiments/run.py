@@ -13,7 +13,7 @@ Exit 0 when the check passes, 1 when it fails, 2 when an input is missing.
 
 import argparse
 import csv
-import sys
+import logging
 from collections.abc import Mapping, Sequence
 from datetime import date
 from pathlib import Path
@@ -32,6 +32,8 @@ from face_index.search import prepare_query
 EVAL: Final[Path] = Path("queries/eval")
 CEILING: Final[float] = eval_set.REPORT_CEILING
 TOLERANCE: Final[float] = 5e-5  # distances.csv keeps 4 decimals
+
+log = logging.getLogger("run")
 
 
 def query_vectors(
@@ -158,31 +160,40 @@ def main(argv: Sequence[str] | None = None) -> int:
         help="score only these models' half of the grid (default: both); an early look",
     )
     args = parser.parse_args(argv)
+    snapshot.setup_logging()
 
     folder, errors = eval_set.read_folder(args.eval_dir)
     label_set = folder.set_for(args.crawl_date) if folder else None
     if label_set is None:
-        print(f"error: no valid label set {args.crawl_date}: {errors}", file=sys.stderr)
+        log.error("no valid label set %s: %s", args.crawl_date, errors)
         return 2
     models = ["Facenet512"] if args.only else args.models
     if "Facenet512" not in models:  # the sanity check runs on it, before anything is reported
-        print("error: --models must include Facenet512 (the sanity check)", file=sys.stderr)
+        log.error("--models must include Facenet512 (the sanity check)")
         return 2
     missing = [m for m in models if not snapshot.path(args.crawl_date, m).is_file()]
     if missing:
-        print(f"error: no snapshot for {', '.join(missing)}; see the brief", file=sys.stderr)
+        log.error("no snapshot for %s; see the brief", ", ".join(missing))
         return 2
     labels = label_set.labels()
     truth = {label: frozenset(pages) for label, pages in label_set.present().items()}
     embedders: dict[str, FaceEmbedder] = {
         "Facenet512": DeepFaceEmbedder(),  # exactly the evaluator's query embedding
-        "ArcFace": snapshot.ModelEmbedder("ArcFace"),
+        "ArcFace": DeepFaceEmbedder("ArcFace"),
     }
 
+    incomplete: dict[str, int] = {}
     results: list[dict[str, object]] = []
     summary: list[tuple[str, str, str, scoring.Metrics]] = []
     for model in models:
         snap = snapshot.Snapshot.load(snapshot.path(args.crawl_date, model))
+        if snap.failed_images:
+            incomplete[model] = len(snap.failed_images)
+            log.warning(
+                "%s snapshot is incomplete: %d images could not be embedded and have no faces",
+                model,
+                len(snap.failed_images),
+            )
         index = scoring.normalize(snap.embeddings)
         pages = scoring.Pages.build(snap.face_image.tolist(), snap.image_pages)
         queries = query_vectors(label_set, embedders[model], args.eval_dir)
@@ -190,9 +201,9 @@ def main(argv: Sequence[str] | None = None) -> int:
             baseline = pages.best(scoring.scores(queries, index, "raw"))
             problems = sanity_check(label_set, baseline, pages.urls, args.eval_dir)
             for problem in problems:
-                print(f"sanity check: {problem}", file=sys.stderr)
+                log.error("sanity check: %s", problem)
             if problems:
-                print("sanity check FAILED: no results are reported", file=sys.stderr)
+                log.error("sanity check FAILED: no results are reported")
                 return 1
             print("sanity check passed: the baseline reproduces the logged run")
             if args.only:
@@ -221,6 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             f"{m.separable_people:>7}/{len(truth)} "
             f"{m.absent_below_all_true:>7}/{len(label_set.absent())}"
         )
+    for model, count in incomplete.items():
+        print(f"note: {model} is missing the faces of {count} images that could not be embedded")
     print(f"\nper-label results: {target}")
     return 0
 

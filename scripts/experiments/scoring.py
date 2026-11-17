@@ -123,22 +123,30 @@ def pairs(
     labels: Sequence[str],
     truth: Mapping[str, frozenset[str]],
 ) -> Iterator[tuple[str, bool, float]]:
-    """(label, is_true, score) for every scored page, plus labelled pages with no face."""
+    """(label, is_true, score) for every scored page, plus every labelled page.
+
+    A labelled page with no score (not in the index, or no face on it) is a true page scored
+    ``-inf``: missed, but still counted in recall. Wrong pages with no score are left out.
+    """
     column = {u: i for i, u in enumerate(urls)}
     for q, label in enumerate(labels):
         true_pages = truth.get(label, frozenset())
         for url, i in column.items():
             value = float(page_scores[q, i])
-            if np.isfinite(value):
-                yield label, url in true_pages, value
+            if url in true_pages:
+                yield label, True, value if np.isfinite(value) else -np.inf
+            elif np.isfinite(value):
+                yield label, False, value
         for _ in true_pages - column.keys():
-            yield label, True, -np.inf  # a labelled page the index has no face for
+            yield label, True, -np.inf  # a labelled page the index does not show
 
 
 def auc(true: Sequence[float], wrong: Sequence[float]) -> float:
     """P(random true pair > random wrong pair), ties counting one half."""
     t = np.asarray(true)[:, None]
     w = np.asarray(wrong)[None, :]
+    if t.size == 0 or w.size == 0:
+        return float("nan")  # no pairs to compare
     return float(((t > w).sum() + 0.5 * (t == w).sum()) / (t.size * w.size))
 
 

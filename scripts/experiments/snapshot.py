@@ -6,6 +6,8 @@ image → page links the search would show. It holds embeddings of people who ga
 so it never leaves the labeller's machine.
 """
 
+import logging
+import sys
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import date
@@ -17,8 +19,7 @@ import psycopg
 from numpy.typing import NDArray
 
 from face_index import config, db, model_profile
-from face_index.errors import InfrastructureError, ItemError
-from face_index.faces import narrow_results
+from face_index.errors import InfrastructureError
 from face_index.models import DetectedFace
 
 ROOT: Final[Path] = Path("eval-snapshots/experiments")
@@ -39,6 +40,8 @@ class Snapshot:
     boxes: NDArray[np.int64]  # x, y, w, h
     embeddings: NDArray[np.float32]
     image_pages: Mapping[int, tuple[str, ...]]
+    # Images that could not be embedded (re-embedded snapshots only): their faces are missing.
+    failed_images: tuple[int, ...] = ()
 
     def save(self, target: Path) -> None:
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -50,6 +53,7 @@ class Snapshot:
             embeddings=self.embeddings,
             link_image=np.asarray([i for i, _ in links], dtype=np.int64),
             link_url=np.asarray([u for _, u in links], dtype=np.str_),
+            failed_image=np.asarray(self.failed_images, dtype=np.int64),
         )
 
     @classmethod
@@ -63,7 +67,17 @@ class Snapshot:
                 boxes=data["boxes"],
                 embeddings=data["embeddings"],
                 image_pages={i: tuple(u) for i, u in pages.items()},
+                failed_images=(
+                    tuple(int(i) for i in data["failed_image"])
+                    if "failed_image" in data.files
+                    else ()
+                ),
             )
+
+
+def setup_logging() -> None:
+    """Progress and errors go to standard error through ``logging``; results to standard output."""
+    logging.basicConfig(level=logging.INFO, format="%(levelname)s %(message)s", stream=sys.stderr)
 
 
 def connect() -> psycopg.Connection:
@@ -74,41 +88,6 @@ def connect() -> psycopg.Connection:
     except psycopg.Error as exc:
         raise InfrastructureError(f"database unavailable: {type(exc).__name__}") from exc
     return conn
-
-
-class ModelEmbedder:
-    """``FaceEmbedder`` for any DeepFace model, with the index's detector, alignment and filter."""
-
-    def __init__(self, model: str) -> None:
-        self.model = model
-        self._ready = False
-
-    def embed(self, jpeg: bytes) -> list[DetectedFace]:
-        import cv2
-        from deepface import DeepFace
-
-        if not self._ready:
-            try:
-                DeepFace.build_model(self.model)
-            except Exception as exc:  # any failure to load the model is infrastructure
-                raise InfrastructureError(f"face model unavailable: {exc}") from exc
-            self._ready = True
-        bgr = cv2.imdecode(np.frombuffer(jpeg, dtype=np.uint8), cv2.IMREAD_COLOR)
-        if bgr is None:
-            raise ItemError("JPEG could not be decoded")
-        try:
-            raw = DeepFace.represent(
-                img_path=bgr,
-                model_name=self.model,
-                detector_backend=model_profile.DETECTOR,
-                enforce_detection=False,
-                align=model_profile.ALIGN,
-                normalization=model_profile.NORMALIZATION,
-            )
-        except ValueError as exc:
-            raise ItemError(f"detection failed: {exc}") from exc
-        height, width = bgr.shape[:2]
-        return narrow_results([e for e in raw if isinstance(e, dict)], width, height)
 
 
 def faces_to_arrays(

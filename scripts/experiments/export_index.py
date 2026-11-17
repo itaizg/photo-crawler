@@ -6,15 +6,19 @@ See docs/briefs/search-experiments.md.
       FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces \\
       uv run python scripts/experiments/export_index.py --set YYYY-MM-DD
 
-Writes eval-snapshots/experiments/<date>/facenet512.npz (gitignored). Exit 0 on success, 2 when
-the database or the profile is unavailable.
+Writes eval-snapshots/experiments/<date>/facenet512.npz (gitignored). The faces and the page
+links are read in one repeatable-read transaction, so they describe one state of the index. An
+index whose latest page crawl is after the --set date is refused: it is no longer that crawl.
+
+Exit 0 on success, 2 when the database or the profile is unavailable or the index is from a
+later crawl.
 """
 
 import argparse
-import sys
+import logging
 from collections.abc import Sequence
 from contextlib import closing
-from datetime import date
+from datetime import UTC, date, datetime
 from typing import Any, Final, LiteralString
 
 import numpy as np
@@ -35,6 +39,7 @@ ORDER BY f.id
 """
 # The search's visibility rules (src/face_index/search_query.sql): indexed images, and links the
 # page's latest crawl refreshed.
+_LATEST_CRAWL: Final[LiteralString] = "SELECT max(last_crawled_at) FROM page"
 _LINKS: Final[LiteralString] = """
 SELECT pi.image_id, p.url
 FROM page_image pi
@@ -44,11 +49,23 @@ ORDER BY pi.image_id, p.url
 """
 
 
-def export(conn: psycopg.Connection) -> snapshot.Snapshot:
+log = logging.getLogger("export_index")
+
+
+def export(conn: psycopg.Connection) -> tuple[snapshot.Snapshot, datetime | None]:
+    """The snapshot, and the index's latest page crawl, from one consistent view of the database."""
     register_vector(conn)
-    faces = conn.execute(_FACES, (model_profile.KEY,)).fetchall()
-    links = conn.execute(_LINKS).fetchall()
-    return to_snapshot(faces, links)
+    conn.isolation_level = psycopg.IsolationLevel.REPEATABLE_READ
+    with conn.transaction():
+        row = conn.execute(_LATEST_CRAWL).fetchone()
+        faces = conn.execute(_FACES, (model_profile.KEY,)).fetchall()
+        links = conn.execute(_LINKS).fetchall()
+    return to_snapshot(faces, links), row[0] if row else None
+
+
+def later_crawl(latest: datetime | None, crawl_date: date) -> bool:
+    """Whether the index has been crawled again after the label set's crawl date (UTC)."""
+    return latest is not None and latest.astimezone(UTC).date() > crawl_date
 
 
 def _vector(value: object) -> NDArray[np.float32]:
@@ -78,14 +95,23 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="export_index", description=__doc__.splitlines()[0])
     parser.add_argument("--set", dest="crawl_date", type=date.fromisoformat, required=True)
     args = parser.parse_args(argv)
+    snapshot.setup_logging()
     try:
         with closing(snapshot.connect()) as conn:
-            snap = export(conn)
+            snap, latest = export(conn)
     except (InfrastructureError, RuntimeError, psycopg.Error) as exc:
-        print(f"error: {exc}", file=sys.stderr)
+        log.error("%s", exc)  # noqa: TRY400 - an expected outage: its message, no traceback
+        return 2
+    if later_crawl(latest, args.crawl_date):
+        log.error(
+            "the index was crawled again on %s, after the %s crawl; export the labeller's "
+            "snapshot of that crawl",
+            latest.astimezone(UTC).date() if latest else None,
+            args.crawl_date,
+        )
         return 2
     if len(snap.face_image) == 0:
-        print(f"error: no faces for profile {model_profile.KEY}", file=sys.stderr)
+        log.error("no faces for profile %s", model_profile.KEY)
         return 2
     target = snapshot.path(args.crawl_date, "Facenet512")
     snap.save(target)

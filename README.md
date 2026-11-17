@@ -254,6 +254,8 @@ It prints a per-label table, then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 mea
 
 **What was tried since.** A face-size filter (`--min-face 40`) kept the same 4 false matches and lost one true page, so it stays off. Re-scoring (CSLS, T-norm, query expansion), measured offline in 12 combinations with both models, ranked fewer true pages above every wrong page in every case. Swapping Facenet512 for **ArcFace** (raw cosine) is the one candidate: AUC 0.994 to 0.999, and true pages ranked above every wrong page 10 to 14 of 16. It is exploratory, on 10 people, and must be confirmed on a second label set, with its own threshold, before the default changes ([TODO.md](TODO.md)).
 
+**How the labels were made, and their bias.** One labeller browsed the 2026-11-16 crawl for each person's pages, then reviewed every page the search matched or nearly matched (`face-matcher --details`) and added the pages that do show the person; the method is recorded in [`methods.csv`](queries/eval/methods.csv). Recall is only as good as those labels: a page that neither browsing nor the search surfaced is invisible to the measurement, and because the review started from the search's own matches, the labels lean towards pages the search ranks well. The sample is small (10 people, all public figures with openly licensed photos), one labeller judged every page, and the results describe that one crawl, since the site changes hourly.
+
 Full results, distances, the experiments and the labelling method and its limits: [docs/search-evaluation.md](docs/search-evaluation.md).
 
 ## Known limitations
