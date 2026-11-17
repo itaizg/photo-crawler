@@ -324,11 +324,65 @@ The control run's 188 logged distances equal the unfiltered run's exactly, so th
 
 The filter stays available and off by default (0). The remaining false matches are clear look-alikes, which a size filter cannot separate. The next things to try are other approaches: several query photos per person, a stronger embedding model, or score normalization. Any of them needs a second label set to check against.
 
-**Experiments.** Whether hubness reduction (CSLS), score normalization (T-norm), query expansion or the ArcFace model separate true from wrong matches better is measured offline, on a local export of the index, with a grid and metrics fixed before any run: [search-experiments.md](docs/briefs/search-experiments.md). Results will be added here; no default changes before a second label set confirms them.
+**Experiments.** Whether hubness reduction (CSLS), score normalization (T-norm), query expansion or the ArcFace model separate true from wrong matches better is measured offline, on a local export of the index, with a grid and metrics fixed before any run: [search-experiments.md](docs/briefs/search-experiments.md). Results will be added here; no default changes before a second label set confirms them. The second set now exists (2026-11-17, below); the experiments' confirmation run on it is still to be done.
 
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. The 40 px run showed that person-c appears only small on `/politics/president-donald-trump-47`; a later set should mark such a page `small_face`.
 - The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
+
+### Results, label set 2026-11-17
+
+**Label set 2026-11-17, run 2026-11-17 18:30 UTC: FAIL.** The second set, on a second crawl of CNN (16,816 faces, 5,577 images, 97 pages), with 10 present and 10 absent people. The profile and threshold are the same as for 2026-11-16. The table is copied from the run's output, and the run is in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+
+| label | expected | returned | recall | extra | label errors |
+|---|---:|---:|---:|---:|---:|
+| person-a | 3 | 3 | 1.00 | 0 | 0 |
+| person-b | 3 | 0 | 0.00 | 0 | 0 |
+| person-c | 6 | 5 | 0.83 | 0 | 0 |
+| person-d | 7 | 0 | 0.00 | 0 | 0 |
+| person-e | 2 | 2 | 1.00 | 0 | 0 |
+| person-f (small face on 4 pages) | 23 | 0 | 0.00 | 0 | 0 |
+| person-g | 2 | 0 | 0.00 | 0 | 0 |
+| person-h | 4 | 3 | 0.75 | 0 | 0 |
+| person-i | 4 | 2 | 0.50 | 0 | 0 |
+| person-j | 4 | 3 | 0.75 | 0 | 0 |
+| absent-a | 0 | 0 | - | 0 | 0 |
+| absent-b | 0 | 0 | - | 0 | 0 |
+| absent-c | 0 | 1 | - | 1 | 0 |
+| absent-d (look-alike of person-c) | 0 | 2 | - | 2 | 0 |
+| absent-e | 0 | 0 | - | 0 | 0 |
+| absent-f | 0 | 0 | - | 0 | 0 |
+| absent-g | 0 | 0 | - | 0 | 0 |
+| absent-h | 0 | 0 | - | 0 | 0 |
+| absent-i | 0 | 0 | - | 0 | 0 |
+| absent-j | 0 | 0 | - | 0 | 0 |
+
+Against the criteria:
+
+- **SC-001, recall of at least 0.80: fails for 7 of 10 people.** Only person-a, person-c and person-e pass. For person-b, person-d, person-f and person-g the search returned none of their labelled pages at 0.30, although every one of those pages is labelled; their closest pages lie just past the threshold (0.313, 0.349, 0.3002 and 0.3008), and person-h, person-i and person-j (0.75, 0.50, 0.75) each missed one or two pages.
+- **SC-002, no extra pages for present people: passes.** No present person was returned on a page that does not show them. At 0.35 one is.
+- **SC-003, nothing returned for absent people: fails for 2 of 10.** absent-c matched 1 page and the look-alike absent-d matched 2. The labeller judged that none of these pages shows the person (pages that also matched in 2026-11-16).
+
+**What the distances show.** The run logged every page's best distance up to 0.50 in [`distances.csv`](queries/eval/distances.csv).
+
+- **Several misses are just past the threshold.** person-f's closest labelled page is 0.3002 and person-g's is 0.3008. person-b's three pages lie between 0.313 and 0.344, as in 2026-11-16, so that near miss repeats on a new crawl.
+- **person-d is the hardest.** 5 of its 7 pages lie between 0.349 and 0.495 and 2 are beyond 0.50. The closest wrong page for person-d is 0.447, so a higher threshold would not return wrong pages first for this person.
+- **The formal-portrait query photos probably match worse for the US politicians.** person-f, person-g and person-i have the weakest recall among the new people, and their query photos are formal portraits compared with angled, small or blurred news faces; this is a guess, not tested. person-f has 4 labelled pages (the markets pages, marked `small_face`) where no face lies within 0.50.
+- **Across the set:**
+
+  | threshold | true pages found (of 58) | wrong pages returned (present people) | wrong pages returned (absent people) |
+  |---:|---:|---:|---:|
+  | 0.30 | 18 | 0 | 3 |
+  | 0.35 | 31 | 1 | 6 |
+  | 0.40 | 43 | 16 | 34 |
+
+  The default stays at 0.30. As in 2026-11-16, no threshold separates the wrong pages from the true ones, and these counts are not a basis for choosing one.
+
+**How the labels were made.** The labels were not made by browsing. For each present person, a page was a candidate if an image on it was returned by the search at up to distance 0.45, or if a caption on a freshly crawled page named the person. The labeller then approved each candidate in a review page that showed the page's images with the detected face boxes. Caption-only candidates and look-alike matches were rejected where the person was not in the image. Two pages the labeller was unsure about (person-f on `/world` and `/world/middle-east`) were left out.
+
+**Hard cases in this set.** The small-face case is person-f on the four `/markets` pages, where the face is small and the person does not also appear large. The look-alike is absent-d for person-c. There is no on-site look-alike pair (`onsite_pair=false`).
+
+**Bias in this set.** The candidates came partly from the baseline search itself, so pages the baseline cannot rank are under-labelled. Pages where a person appears but is neither returned at 0.45 nor named in a caption are missing from the labels. Putin and Trump in particular are named on more pages than are labelled, and recall is therefore probably over-stated for them rather than under-stated.
 
 ### Labelling method and its limits
 
