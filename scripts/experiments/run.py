@@ -30,7 +30,6 @@ from face_index.ports import FaceEmbedder
 from face_index.search import prepare_query
 
 EVAL: Final[Path] = Path("queries/eval")
-CEILING: Final[float] = eval_set.REPORT_CEILING
 TOLERANCE: Final[float] = 5e-5  # distances.csv keeps 4 decimals
 
 log = logging.getLogger("run")
@@ -72,6 +71,14 @@ def _reference(label_set: eval_set.LabelSet, eval_dir: Path = EVAL) -> list[eval
     ]
 
 
+def _reference_ceiling(reference: Sequence[eval_set.DistanceRow], eval_dir: Path = EVAL) -> float:
+    """How far the reference run searched: its own ceiling, 0.50 for a Facenet512 run."""
+    runs, _ = eval_set.read_run_log(eval_dir)
+    run_at = reference[0].run_at
+    profiles = {r.model_profile for r in runs if r.run_at == run_at}
+    return min(eval_set.report_ceiling(p) for p in profiles)
+
+
 def sanity_check(
     label_set: eval_set.LabelSet,
     page_scores: scoring.Matrix,
@@ -82,13 +89,14 @@ def sanity_check(
     reference = _reference(label_set, eval_dir)
     if not reference:
         return ["no logged unfiltered run with distances for this set and labels version"]
+    ceiling = _reference_ceiling(reference, eval_dir)
     column = {u: i for i, u in enumerate(urls)}
     labels = label_set.labels()
     ours: dict[tuple[str, str], float] = {}
     for q, label in enumerate(labels):
         for url, i in column.items():
             d = 1.0 - float(page_scores[q, i])
-            if d < CEILING:
+            if d < ceiling:
                 ours[(label, url)] = d
     logged: dict[tuple[str, str], float] = {
         (r.label, r.page_url): r.distance for r in reference if r.distance is not None

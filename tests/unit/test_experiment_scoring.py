@@ -343,3 +343,12 @@ def test_the_baseline_is_found_under_any_library_versions() -> None:
     for versions in (("0.0.95", "2.20"), ("0.0.104", "2.21")):
         key = export.model_profile.profile_key(*versions, "Facenet512")
         assert key.startswith(pattern.removesuffix("%"))
+
+
+def test_the_sanity_check_uses_the_reference_runs_own_ceiling() -> None:
+    """The reference run is a Facenet512 run logged up to 0.50; a page at 0.60 is not missing."""
+    run = load_run()
+    label_set, page_scores, urls = logged_baseline(run)
+    row, col = np.argwhere(~np.isfinite(page_scores))[0]
+    page_scores[row, col] = 1.0 - 0.60  # beyond 0.50, inside today's 0.80 report ceiling
+    assert run.sanity_check(label_set, page_scores, urls) == []
