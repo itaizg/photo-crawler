@@ -250,15 +250,15 @@ It prints a per-label table (expected pages, returned pages, recall, extra pages
 
 ### Results
 
-**Label set 2026-11-16, run 2026-11-17: FAIL.** The run used the labeller's snapshot of the 2026-11-16 CNN crawl (15,822 faces, 5,160 images, 97 pages), profile `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, at the default threshold of 0.30. The labels were found by browsing. The table is copied from the run's output; every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+**Label set 2026-11-16, run 2026-11-17 10:34 UTC: FAIL.** The run used the labeller's snapshot of the 2026-11-16 CNN crawl (15,822 faces, 5,160 images, 97 pages), profile `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, at the default threshold of 0.30. The table is copied from the run's output; every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
 
 | label | expected | returned | recall | extra | label errors |
 |---|---:|---:|---:|---:|---:|
-| person-a | 1 | 3 | 1.00 | 2 | 0 |
-| person-b | 1 | 0 | 0.00 | 0 | 0 |
-| person-c (small face) | 1 | 6 | 1.00 | 5 | 0 |
-| person-d (small face) | 1 | 0 | 0.00 | 0 | 0 |
-| person-e | 1 | 2 | 1.00 | 1 | 0 |
+| person-a | 3 | 3 | 1.00 | 0 | 0 |
+| person-b | 3 | 0 | 0.00 | 0 | 0 |
+| person-c (small face on 1 page) | 6 | 6 | 1.00 | 0 | 0 |
+| person-d (small face on 1 page) | 2 | 0 | 0.00 | 0 | 0 |
+| person-e | 2 | 2 | 1.00 | 0 | 0 |
 | absent-a | 0 | 0 | - | 0 | 0 |
 | absent-b | 0 | 0 | - | 0 | 0 |
 | absent-c | 0 | 1 | - | 1 | 0 |
@@ -267,11 +267,23 @@ It prints a per-label table (expected pages, returned pages, recall, extra pages
 
 Against the criteria:
 
-- **SC-001, recall of at least 0.80: fails for 2 of 5 people.** person-b and person-d were not found on their labelled page. It is not yet known whether their faces there were not detected or detected but too far from the query photo.
-- **SC-002, no extra pages: fails, with 8 extra pages for 3 people. These are probably label gaps.** Each person was labelled on one page only. The extras are section fronts (`/world`, `/world/middle-east`, `/world/asia`, `/world/china`, `/world/europe`) that reuse article photos. If the person is in the matched image, the page belongs in the label set, and recall is lower than shown, because expected pages are missing.
-- **SC-003, nothing returned for absent people: fails for 2 of 5.** The look-alike absent-d matched 3 pages, and absent-c matched 1. These are false matches unless one of those pages really shows the person.
+- **SC-001, recall of at least 0.80: fails for 2 of 5 people.** person-b and person-d were not found on any of their 5 pages between them.
+- **SC-002, no extra pages for present people: passes.** No present person was returned on a page that does not show them.
+- **SC-003, nothing returned for absent people: fails for 2 of 5.** absent-c matched 1 page and the look-alike absent-d matched 3. In the match review, the labeller judged that none of these pages shows the person.
 
-These findings are not verified yet. To check them, open the image URLs that `face-matcher --details` prints for each photo in `queries/eval/photos/`; CNN's image links usually keep working after the live pages change. Confirmed appearances go into the set as a correction ([quickstart §5b](specs/003-evaluation-set/quickstart.md)), followed by a new logged run. The threshold was not changed to pass. Whether the false matches call for a stricter threshold or a face-size filter is the question in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md); the run alone does not decide it.
+**How the labels were completed.** The set was labelled by browsing, and the first run (the first block in `runs.csv`) reported 8 extra pages. The labeller then reviewed every matched image with `face-matcher --details` and confirmed that each extra page does show the person. Pages are labelled from what their images show, so those pages were added to the set. Pages above the threshold were reviewed the same way, which added 3 pages for person-b and person-d that the search does not return. Each person is therefore labelled on the pages the review found, which may still miss a page the search never ranked.
+
+**What the distances show.** From the match review at a 0.45 threshold:
+
+| query | true pages (distance) | wrong pages (distance) |
+|---|---|---|
+| person-a, c, e | all below 0.30 (those measured: 0.10 to 0.26) | none |
+| person-b | 0.313, 0.342, 0.344 | 0.365 and above |
+| person-d | 0.365, 0.392 | 0.349, 0.447 |
+| absent-c | none | 0.280 |
+| absent-d | none | 0.233, 0.296, 0.299 |
+
+Wrong matches start at 0.233 and true matches reach 0.392, so no single threshold separates them: the misses lie above 0.30 and the false matches below it. For person-d, a wrong page (0.349) is closer than both of his true pages. Changing the threshold cannot make this set pass, so it was left at 0.30. Whether a face-size filter or a per-face quality check would help is the open question in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md).
 
 **Hard cases in this set.**
 - The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. A later set should add a page where a person appears only small.

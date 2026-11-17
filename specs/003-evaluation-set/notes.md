@@ -24,3 +24,9 @@
 | SC-005 | yes | 10 photos, 10 attribution rows, all Commons `curid=` links with allowed licences; rejection tests in the US3 section of `tests/unit/test_eval_set.py` |
 | SC-006 | yes | README "Search accuracy evaluation": results, method, crawl date, bias, re-labelling and correction steps; `specs/002-face-search/quickstart.md` §7 points to the new format |
 | SC-007 | yes | `runs.csv` holds one block of 10 rows for the one real run in the README; mock runs pass `log_to=None`; `test_a_bad_run_log_is_reported` |
+
+## Label correction and final run, 2026-11-17
+
+- The labeller reviewed every matched image with `face-matcher --details`, using the review page built for this; results above 0.30 were taken from a 0.45 threshold run. Every extra page from the first run showed the person, so the extras were missing labels, not search errors. 11 pages were added: 8 from extras, and 3 above the threshold (person-b and person-d).
+- That took two corrections and two more logged runs. Both times, the stale-results rule turned CI red until a new run was pushed, as designed.
+- Final run, 10:34 UTC, labels 9f57e0b488b1: SC-001 fails (person-b 0/3, person-d 0/2), SC-002 passes (no extra pages), SC-003 fails (absent-c 1 page, absent-d 3 pages). True and false match distances overlap between 0.233 and 0.392, so changing the threshold cannot pass. Details are in the README.
