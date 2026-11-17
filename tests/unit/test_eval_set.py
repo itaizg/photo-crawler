@@ -456,3 +456,56 @@ def test_a_row_with_the_wrong_number_of_fields_is_reported_with_its_line(
     path.write_text("".join(lines), encoding="utf-8")
     found = 5 if change else 2
     assert f"{SET_FILE}:{line}: expected 4 fields, found {found}" in errors_for(tmp_path)
+
+
+# --- page distances (research R12) ---------------------------------------------------------------
+
+
+def write_distances(root: Path, *rows: tuple[str, ...]) -> None:
+    write_csv(root / eval_set.DISTANCES_FILE, eval_set.DISTANCE_COLUMNS, list(rows))
+
+
+def test_distance_rows_must_belong_to_a_logged_run(tmp_path: Path) -> None:
+    write_folder(tmp_path)
+    write_distances(
+        tmp_path,
+        (
+            "2026-11-20T18:04:11Z",
+            CRAWL.isoformat(),
+            "a1b2c3d4e5f6",
+            "person-a",
+            page(0),
+            "true",
+            "0.1",
+        ),
+    )
+    assert any(
+        e.startswith(f"{eval_set.DISTANCES_FILE}:2: no run at 2026-11-20T18:04:11Z")
+        for e in errors_for(tmp_path)
+    )
+
+
+@pytest.mark.parametrize(
+    ("labelled", "distance", "fragment"),
+    [("yes", "0.1", "labelled"), ("true", "2.5", "distance"), ("false", "near", "distance")],
+)
+def test_a_bad_distance_row_is_reported(
+    tmp_path: Path, labelled: str, distance: str, fragment: str
+) -> None:
+    write_folder(tmp_path)
+    write_distances(
+        tmp_path,
+        (
+            "2026-11-20T18:04:11Z",
+            CRAWL.isoformat(),
+            "a1b2c3d4e5f6",
+            "person-a",
+            page(0),
+            labelled,
+            distance,
+        ),
+    )
+    assert any(
+        e.startswith(f"{eval_set.DISTANCES_FILE}:2:") and fragment in e
+        for e in errors_for(tmp_path)
+    )

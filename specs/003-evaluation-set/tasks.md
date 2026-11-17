@@ -274,6 +274,13 @@ description: "Task list for feature 003: Search Evaluation Set"
 - [X] T035 [P] Check for leftovers: `grep -rn "labels.toml\|tomllib\|parse_labels" scripts src tests docs specs/002-face-search README.md` should return nothing. Also check that no committed file under `queries/eval/` contains a real name, by reviewing `attribution.csv`'s `author` column (photographers only) and the file names.
 - [X] T036 Walk through `specs/003-evaluation-set/quickstart.md` §§1 to 4 on a fresh clone, then tick the spec's success criteria SC-001 to SC-007 in `specs/003-evaluation-set/notes.md` with evidence: command output, the CI run link, the job duration.
 
+### Added after the first results (research R12)
+
+- [X] T037 Log page distances: `DistanceRow`, `read_distance_log` and `append_run(…, distances)` in `src/face_index/eval_set.py`; the evaluator searches up to `REPORT_CEILING` and returns only pages below the threshold. Tests in `tests/unit/test_evaluate_search.py` and `tests/unit/test_eval_set.py`.
+- [X] T038 Add `scripts/eval_report.py` (HTML report and Markdown summary from the committed files) with `tests/unit/test_eval_report.py`.
+- [X] T039 CI: render the report, attach it as the `eval-report` artifact and write the job summary; keep `distances.csv` append-only like `runs.csv`.
+- [ ] T040 [HUMAN] Log a new real-model run of the latest set, so `distances.csv` holds its first rows.
+
 ---
 
 ## Dependencies & Execution Order

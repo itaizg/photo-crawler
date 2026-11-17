@@ -21,7 +21,7 @@ uv run python scripts/evaluate_search.py [FOLDER] --check
 |---|---|---|---|
 | `FOLDER` | `queries/eval` | Evaluation folder ([eval-set-files.md](eval-set-files.md)) | Must be a directory. A `.toml` file gets exit 64 with "labels are now CSV label sets under queries/eval/sets/". |
 | `--set D` | latest set | The label set `sets/D.csv` to evaluate | ISO date of an existing set, or exit 64 listing the available sets |
-| `--log` | off | Append this run to `runs.csv` (real model only) | Not allowed with `--check` (exit 64) |
+| `--log` | off | Append this run to `runs.csv`, and its page distances to `distances.csv` (real model only) | Not allowed with `--check` (exit 64) |
 | `--check` | off | Validate all files and exit; no database, no model | – |
 | `-h, --help` | | Usage and exit statuses | – |
 
@@ -33,8 +33,8 @@ There is no `--threshold`: the evaluator always uses `model_profile.MATCH_THRESH
 2. Connect; read the profile id (none → exit 2) and the index size (no faces → exit 2). Record the labels version before any photo is read.
 3. Call `known_pages` with every labelled URL of the selected set. A missing URL becomes a label error for its label.
 4. Embed every photo. Each photo with no detected face (`NoFaceError`) or that can't be decoded or detected (`QueryImageError`) is listed with its reason; if any, exit 2. The largest face of each photo is used.
-5. Search each label's face with `search_faces` at the default threshold.
-6. If the labels version changed during the run, exit 2 without logging. Otherwise print the report and the verdict; with `--log`, append to `runs.csv`. Error messages escape control characters taken from the files.
+5. Search each label's face with `search_faces` up to the report ceiling (0.50, research R12). Pages strictly below the default threshold are the returned pages; the others are only logged.
+6. If the labels version changed during the run, exit 2 without logging. Otherwise print the report and the verdict; with `--log`, append to `runs.csv` and `distances.csv`. Error messages escape control characters taken from the files.
 
 ## Output
 
@@ -80,4 +80,4 @@ With `--check`: 0 when all files are valid, 2 otherwise.
 
 ## Read-only guarantee
 
-The evaluator only reads the database, through `SearchIndex` (`profile_id`, `index_size`, `known_pages`, `matching_pages`). It writes nothing but `runs.csv`, and only when `--log` is given.
+The evaluator only reads the database, through `SearchIndex` (`profile_id`, `index_size`, `known_pages`, `matching_pages`). It writes nothing but `runs.csv` and `distances.csv`, and only when `--log` is given.

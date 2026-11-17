@@ -44,21 +44,27 @@ def load() -> ModuleType:
 ev: Final[ModuleType] = load()
 
 
-def match(url: str) -> PageMatch:
-    return PageMatch(url=url, best_distance=0.1, lead=False, image_urls=("https://img.test/i",))
+def match(url: str, distance: float = 0.1) -> PageMatch:
+    return PageMatch(
+        url=url, best_distance=distance, lead=False, image_urls=("https://img.test/i",)
+    )
 
 
-def by_label(pages: dict[str, list[str]]) -> Callable[[Sequence[float], float], list[PageMatch]]:
+type Found = dict[str, list[str]] | dict[str, list[tuple[str, float]]]
+
+
+def by_label(pages: Found) -> Callable[[Sequence[float], float], list[PageMatch]]:
     """A ``pages_by_face`` that answers per label, recognising each label's photo embedding."""
     embedder = FakeEmbedder(default_faces=1)
-    keyed: dict[tuple[float, ...], list[str]] = {}
+    keyed: dict[tuple[float, ...], list[str] | list[tuple[str, float]]] = {}
     for label in (*PRESENT, *ABSENT):
         normalized = ev.PillowNormalizer().normalize(photo_bytes(label), None)
         [face] = embedder.embed(normalized.jpeg)
         keyed[face.embedding] = pages.get(label, [])
 
     def answer(embedding: Sequence[float], max_distance: float) -> list[PageMatch]:
-        return [match(u) for u in keyed.get(tuple(embedding), [])]
+        found = keyed.get(tuple(embedding), [])
+        return [match(*p) if isinstance(p, tuple) else match(p) for p in found]
 
     return answer
 
@@ -125,7 +131,7 @@ def test_run_prints_the_report_and_passes(
     assert "person-a" in out
     assert "absent-e" in out
     assert out.strip().endswith("PASS")
-    assert {threshold for _, threshold, _ in index.calls} == {model_profile.MATCH_THRESHOLD}
+    assert {threshold for _, threshold, _ in index.calls} == {ev.REPORT_CEILING}
     assert len(index.calls) == len(PRESENT) + len(ABSENT)
 
 
@@ -390,3 +396,46 @@ def test_reported_urls_are_printed_with_control_characters_escaped(
     out = capsys.readouterr().out
     assert "\x1b" not in out
     assert "\\x1b[2Jspoof" in out
+
+
+# --- page distances (research R12) ---------------------------------------------------------------
+
+
+def test_pages_between_the_threshold_and_the_ceiling_are_logged_but_not_returned(
+    tmp_path: Path,
+) -> None:
+    root = write_folder(tmp_path)
+    runs = root / "runs.csv"
+    found: dict[str, list[tuple[str, float]]] = {
+        label: [(page(2 * i), 0.1), (page(2 * i + 1), 0.2)] for i, label in enumerate(PRESENT)
+    }
+    found["person-a"].append((page(9), 0.42))  # a wrong page beyond the threshold
+    found["absent-a"] = [(page(8), 0.35)]
+    index = FakeSearchIndex(pages_by_face=by_label(found))
+    assert ev.run(root, None, index, FakeEmbedder(default_faces=1), log_to=runs) == ev.EXIT_PASS
+    rows, errors = ev.eval_set.read_distance_log(root)
+    assert errors == []
+    by_page = {(r.label, r.page_url): (r.labelled, r.distance) for r in rows}
+    assert by_page[("person-a", page(0))] == (True, 0.1)
+    assert by_page[("person-a", page(9))] == (False, 0.42)
+    assert by_page[("absent-a", page(8))] == (False, 0.35)
+    assert len(rows) == 2 * len(PRESENT) + 2
+    [run] = {(r.run_at, r.labels_sha256) for r in ev.eval_set.read_run_log(root)[0]}
+    assert {(r.run_at, r.labels_sha256) for r in rows} == {run}
+
+
+def test_a_labelled_page_beyond_the_ceiling_is_logged_without_a_distance(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    found = all_found()
+    found["person-b"] = [page(2)]  # page(3) is labelled but not found up to the ceiling
+    index = FakeSearchIndex(pages_by_face=by_label(found))
+    runs = root / "runs.csv"
+    assert ev.run(root, None, index, FakeEmbedder(default_faces=1), log_to=runs) == ev.EXIT_FAIL
+    rows, _ = ev.eval_set.read_distance_log(root)
+    assert [(r.labelled, r.distance) for r in rows if r.page_url == page(3)] == [(True, None)]
+
+
+def test_an_unlogged_run_writes_no_distances(tmp_path: Path) -> None:
+    root = write_folder(tmp_path)
+    assert passing_run(root, None) == ev.EXIT_PASS
+    assert not (root / ev.eval_set.DISTANCES_FILE).exists()

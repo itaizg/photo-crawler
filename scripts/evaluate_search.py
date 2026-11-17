@@ -17,7 +17,7 @@ own code runs at the default threshold; for each photo the largest detected face
 
 import argparse
 import sys
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from contextlib import closing
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -32,7 +32,8 @@ from face_index.ports import FaceEmbedder, SearchIndex
 from face_index.search import NoFaceError, QueryImageError, prepare_query, search_faces
 from face_index.search_store import PostgresSearchIndex
 
-MIN_RECALL: Final[float] = 0.80
+MIN_RECALL: Final[float] = eval_set.MIN_RECALL
+REPORT_CEILING: Final[float] = eval_set.REPORT_CEILING
 DEFAULT_FOLDER: Final[Path] = Path("queries/eval")
 
 EXIT_PASS: Final[int] = 0
@@ -117,9 +118,41 @@ def _faces(
     return None if problems else faces
 
 
-def _pages(face: QueryFace, index: SearchIndex, profile_id: int) -> list[str]:
-    [result] = search_faces([face], index, profile_id, model_profile.MATCH_THRESHOLD)
-    return [p.url for p in result.pages]
+def _distances(face: QueryFace, index: SearchIndex, profile_id: int) -> dict[str, float]:
+    """Each page's best distance up to the report ceiling, closest first."""
+    [result] = search_faces([face], index, profile_id, REPORT_CEILING)
+    return {p.url: p.best_distance for p in result.pages}
+
+
+def _returned(distances: Mapping[str, float]) -> list[str]:
+    """The pages the search returns at the default threshold (a match is strictly below it)."""
+    return [url for url, d in distances.items() if d < model_profile.MATCH_THRESHOLD]
+
+
+def _distance_rows(
+    run: Mapping[str, object],
+    label_set: eval_set.LabelSet,
+    found: Mapping[str, Mapping[str, float]],
+) -> list[eval_set.DistanceRow]:
+    """Every page found up to the ceiling, then each labelled page found beyond it."""
+    present = label_set.present()
+    rows: list[eval_set.DistanceRow] = []
+    for label, distances in found.items():
+        labelled = present.get(label, ())
+        rows += [
+            eval_set.DistanceRow.model_validate(
+                {**run, "label": label, "page_url": url, "labelled": url in labelled, "distance": d}
+            )
+            for url, d in distances.items()
+        ]
+        rows += [
+            eval_set.DistanceRow.model_validate(
+                {**run, "label": label, "page_url": url, "labelled": True, "distance": None}
+            )
+            for url in labelled
+            if url not in distances
+        ]
+    return rows
 
 
 def _print_report(reports: Sequence[LabelReport], ok: bool) -> None:
@@ -203,13 +236,11 @@ def _evaluate(
     faces = _faces(root, label_set.labels(), embedder)
     if faces is None:
         return EXIT_CANNOT_EVALUATE
+    found = {label: _distances(faces[label], index, profile_id) for label in label_set.labels()}
     reports = [
-        evaluate_present(label, pages, _pages(faces[label], index, profile_id), known=known)
+        evaluate_present(label, pages, _returned(found[label]), known=known)
         for label, pages in present.items()
-    ] + [
-        evaluate_absent(label, _pages(faces[label], index, profile_id))
-        for label in label_set.absent()
-    ]
+    ] + [evaluate_absent(label, _returned(found[label])) for label in label_set.absent()]
 
     if eval_set.labels_sha256(root, label_set) != version:
         print(
@@ -249,8 +280,15 @@ def _evaluate(
                 )
                 for r in reports
             ],
+            _distance_rows(
+                {"run_at": run_at, "label_set": label_set.crawl_date, "labels_sha256": version},
+                label_set,
+                found,
+            ),
         )
-        print(f"logged to {log_to}", file=sys.stderr)
+        print(
+            f"logged to {log_to} and {log_to.with_name(eval_set.DISTANCES_FILE)}", file=sys.stderr
+        )
     return EXIT_PASS if ok else EXIT_FAIL
 
 

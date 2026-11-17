@@ -167,6 +167,8 @@ A reader of the README sees the evaluation results from a real-model run on a li
 **Run log**
 
 - **FR-027**: On request, a real-model evaluation run MUST append one entry to a committed run log with: run date, label set (crawl date), labels version, model profile, threshold, index size (faces, images, pages), per-label recall, extra pages, absent matches and label errors, and the verdict. A FAIL is logged like a PASS.
+- **FR-027a**: The same run MUST append, to a committed distance log, the best distance of every page found for each label up to a report ceiling above the threshold, marked as labelled or not, and a row without a distance for each labelled page not found up to the ceiling. Only pages below the threshold count as returned (research R12).
+- **FR-027b**: The automated check MUST render the latest logged run, its distances and the run history as an HTML report attached to the CI run, reading the committed files only (research R12).
 - **FR-028**: Mock runs MUST NOT be logged. Log entries MUST use neutral labels and counts only, adding no page URLs, names or face data. Existing entries MUST NOT be rewritten.
 
 ### Key Entities

@@ -246,7 +246,13 @@ Run it from the host against the Compose database, as the read-only role (the pa
 PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py
 ```
 
-It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. CI validates the files and runs the evaluator against a seeded mock on every pull request.
+It prints a per-label table (expected pages, returned pages, recall, extra pages, label errors, and every missed or extra URL), then `PASS` (exit 0) or `FAIL` (exit 1); exit 2 means it could not evaluate (invalid files, a photo with no usable face, no index). `--set YYYY-MM-DD` picks an older set and `--check` validates the files without a database. With `--log`, the run is appended to [`runs.csv`](queries/eval/runs.csv), and every page's best distance up to 0.50 to `queries/eval/distances.csv`, so a run can be read as a curve, not only as one verdict.
+
+CI validates the files and runs the evaluator against a seeded mock on every pull request. It also renders the committed results as an HTML report: the verdict, the per-label table, a chart of every logged page distance against the threshold, and the run history. The report is attached to each workflow run as the `eval-report` artifact, and its summary appears on the run's page. To build it locally:
+
+```bash
+uv run python scripts/eval_report.py --out eval-report.html
+```
 
 ### Results
 

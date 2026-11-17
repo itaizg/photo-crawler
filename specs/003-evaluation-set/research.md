@@ -158,3 +158,11 @@ The `postgres` service already mounts that volume read-only at `/run/db-secrets`
 **Rationale**: It is one command (spec FR-020, SC-004), needs no file or secret beyond what `docker compose up` generated, uses the read-only role (constitution XIV), and never puts the password in a URL, in git, or in the evaluator's output. The shell history keeps the `$(…)` expression, not the value.
 
 **Alternatives**: The README's host example for `face_matcher` uses `postgresql://faces@127.0.0.1:5432/faces`, the admin role without a password. It is not read-only and fails unless the host has its own password setup, so it was not copied; fixing that example is outside this feature. Running the evaluator as a Compose service was rejected: `scripts/` is not in the image, and a new service is extra scope (constitution I).
+
+## R12. Page distances and the CI report (added 2026-11-17)
+
+**Decision**: A logged run also appends to `distances.csv`. For each label, the evaluator searches once up to a report ceiling of 0.50. Every page found has a row: label, page URL, whether the page is labelled for that label, and its best distance. A labelled page not found up to the ceiling also has a row, with an empty distance. Only pages strictly below the match threshold count as returned, so the verdict is the same as a search at the threshold. In CI, `scripts/eval_report.py` renders the committed files as one self-contained HTML page. The page is attached to the workflow run as the `eval-report` artifact, and a short Markdown summary goes to the job summary.
+
+**Rationale**: The first real run showed that one verdict at one threshold hides the useful finding: true and wrong matches overlap in distance (README, Results). Distances let a run be read as a curve without re-running, which a face-size filter or threshold decision needs. The ceiling of 0.50 keeps the log small (about 30 rows a run here) while covering the 0.23 to 0.39 band where true and wrong matches overlap. The report reads files only, so it runs in CI, which has neither the snapshot nor the model.
+
+**Alternatives**: Adding distance columns to `runs.csv` was rejected, because a label has a variable number of pages. Searching without a ceiling would log every page of the index for every label. Publishing the report on GitHub Pages needs a deployment and write permission. An artifact needs neither.

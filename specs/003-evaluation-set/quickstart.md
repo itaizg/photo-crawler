@@ -52,7 +52,7 @@ Restore your local snapshot of the labelling-date index (never committed; `metho
 PGPASSWORD="$(docker compose exec -T postgres cat /run/db-secrets/reader_password)" FACE_INDEX_DSN=postgresql://faces_reader@127.0.0.1:5432/faces uv run python scripts/evaluate_search.py --set <YYYY-MM-DD> --log
 ```
 
-Expected: `runs.csv` gains one row per label. Commit it together with the README results table, which is copied from this run's output and never hand-filled.
+Expected: `runs.csv` gains one row per label, and `distances.csv` one row per page found up to 0.50 (plus each labelled page not found). Commit both together with the README results table, which is copied from this run's output and never hand-filled.
 
 ## 5. Add a label set after the site drifts
 
@@ -68,6 +68,6 @@ Expected: `runs.csv` gains one row per label. Commit it together with the README
 
 ## 6. Final check
 
-- The CI `eval-set` job is green and finishes in under 5 minutes.
+- The CI `eval-set` job is green and finishes in under 5 minutes. Its summary shows the latest results, and the `eval-report` artifact holds the HTML report with the distance chart.
 - The README shows the latest results, labelling method, bias, crawl date and re-labelling steps.
 - Feature 002's quickstart §7 points here.

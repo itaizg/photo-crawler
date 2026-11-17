@@ -20,6 +20,7 @@ import pandas as pd
 from PIL import Image
 from pydantic import (
     AfterValidator,
+    Field,
     NonNegativeInt,
     StringConstraints,
     ValidationError,
@@ -56,11 +57,25 @@ RUN_COLUMNS: Final[tuple[str, ...]] = (
     "label_errors",
     "verdict",
 )
+DISTANCE_COLUMNS: Final[tuple[str, ...]] = (
+    "run_at",
+    "label_set",
+    "labels_sha256",
+    "label",
+    "page_url",
+    "labelled",
+    "distance",
+)
 ATTRIBUTION_COLUMNS: Final[tuple[str, ...]] = ("path", "source_url", "author", "licence")
 ATTRIBUTION_FILE: Final[str] = "attribution.csv"
 METHODS_FILE: Final[str] = "methods.csv"
 RUNS_FILE: Final[str] = "runs.csv"
+DISTANCES_FILE: Final[str] = "distances.csv"
 MIN_LABELS: Final[int] = 5  # per role, per set (spec FR-001a, FR-002)
+MIN_RECALL: Final[float] = 0.80  # feature 002 SC-001: each present label's recall
+# Pages up to this distance are logged with their distance, so a run can be read as a curve
+# (research R12). Only pages below the match threshold count as returned.
+REPORT_CEILING: Final[float] = 0.50
 
 LABEL_PATTERN: Final[str] = r"^(person|absent)-[a-z]+$"
 _SET_NAME: Final[re.Pattern[str]] = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -429,6 +444,38 @@ class RunRow(Record):
     verdict: Literal["PASS", "FAIL"]
 
 
+def _logged_page_url(url: str) -> str:
+    _check_page_url(url)
+    return url
+
+
+class DistanceRow(Record):
+    """One page's best distance to one label's query face in one logged run (research R12).
+
+    A logged run has a row for every page within the report ceiling, labelled or not, and for
+    every labelled page beyond it (``distance`` empty), so the distances can be read as a curve.
+    """
+
+    run_at: UtcTime
+    label_set: date
+    labels_sha256: Annotated[str, StringConstraints(pattern=r"^[0-9a-f]{12}$")]
+    label: Label
+    page_url: Annotated[str, AfterValidator(_logged_page_url)]
+    labelled: bool
+    distance: Annotated[float, Field(ge=0, le=2)] | None
+
+    @field_validator("labelled", mode="before")
+    @classmethod
+    def _text_or_bool(cls, value: object) -> object:
+        """``true``/``false`` from the file; a bool when the evaluator builds the row."""
+        return value if isinstance(value, bool) else _true_or_false(value)
+
+    @field_validator("distance", mode="before")
+    @classmethod
+    def _empty_is_none(cls, value: object) -> object:
+        return None if value == "" else value
+
+
 def _methods_errors(root: Path, set_dates: frozenset[date], sets: Sequence[LabelSet]) -> list[str]:
     """Every set has exactly one methods row, and its onsite_pair agrees with the set."""
     path = root / METHODS_FILE
@@ -550,6 +597,28 @@ def read_run_log(root: Path) -> tuple[list[RunRow], list[str]]:
     return [row for _, row in rows], errors + row_errors
 
 
+def read_distance_log(root: Path) -> tuple[list[DistanceRow], list[str]]:
+    """The distance log's rows (empty when the file does not exist yet), or its errors.
+
+    Every row must belong to a run in the run log, so the two files describe the same runs.
+    """
+    path = root / DISTANCES_FILE
+    if not path.is_file():
+        return [], []
+    raw, errors = _read_csv(path, DISTANCES_FILE, DISTANCE_COLUMNS)
+    rows, row_errors = _parse_rows(DistanceRow, raw, DISTANCES_FILE)
+    errors += row_errors
+    runs, _ = read_run_log(root)
+    logged = {(r.run_at, r.label_set, r.labels_sha256) for r in runs}
+    errors += [
+        f"{DISTANCES_FILE}:{line}: no run at {row.run_at:%Y-%m-%dT%H:%M:%SZ} for label set "
+        f"{row.label_set} in {RUNS_FILE}"
+        for line, row in rows
+        if (row.run_at, row.label_set, row.labels_sha256) not in logged
+    ]
+    return [row for _, row in rows], errors
+
+
 def labels_sha256(root: Path, label_set: LabelSet) -> str:
     """The labels version: the set file followed by its photos, in label order (research R7)."""
     digest = hashlib.sha256((root / label_set.file).read_bytes())
@@ -566,14 +635,38 @@ def _cells(row: RunRow) -> list[str]:
     return [str(values[column]) for column in RUN_COLUMNS]
 
 
-def append_run(path: Path, rows: Sequence[RunRow]) -> None:
-    """Append one run to the log, writing the header first if the file is new. Never rewrites."""
+def _distance_cells(row: DistanceRow) -> list[str]:
+    return [
+        row.run_at.strftime("%Y-%m-%dT%H:%M:%SZ"),
+        row.label_set.isoformat(),
+        row.labels_sha256,
+        row.label,
+        row.page_url,
+        "true" if row.labelled else "false",
+        "" if row.distance is None else f"{row.distance:.4f}",
+    ]
+
+
+def _append(path: Path, header: Sequence[str], cells: Sequence[Sequence[str]]) -> None:
+    """Append rows, writing the header first if the file is new. Never rewrites."""
     is_new = not path.is_file()
     with path.open("a", encoding="utf-8", newline="") as f:
         writer = csv.writer(f, lineterminator="\n")
         if is_new:
-            writer.writerow(RUN_COLUMNS)
-        writer.writerows(_cells(row) for row in rows)
+            writer.writerow(header)
+        writer.writerows(cells)
+
+
+def append_run(path: Path, rows: Sequence[RunRow], distances: Sequence[DistanceRow] = ()) -> None:
+    """Append one run to the run log at ``path``, and its page distances to the distance log
+    beside it. Neither file is ever rewritten."""
+    _append(path, RUN_COLUMNS, [_cells(row) for row in rows])
+    if distances:
+        _append(
+            path.with_name(DISTANCES_FILE),
+            DISTANCE_COLUMNS,
+            [_distance_cells(r) for r in distances],
+        )
 
 
 def stale_results_errors(folder: EvalFolder) -> list[str]:
@@ -610,7 +703,7 @@ def stale_results_errors(folder: EvalFolder) -> list[str]:
 
 
 _ENTRIES: Final[frozenset[str]] = frozenset(
-    {"sets", "photos", ATTRIBUTION_FILE, METHODS_FILE, RUNS_FILE}
+    {"sets", "photos", ATTRIBUTION_FILE, METHODS_FILE, RUNS_FILE, DISTANCES_FILE}
 )
 
 
@@ -624,7 +717,8 @@ def _layout_errors(root: Path) -> list[str]:
     errors = [f"{link}: symbolic links are not allowed in the evaluation folder" for link in links]
     errors += [
         f"{p.name}: not an evaluation file; only sets/, photos/, {ATTRIBUTION_FILE}, "
-        f"{METHODS_FILE} and {RUNS_FILE} belong here (index snapshots are never committed)"
+        f"{METHODS_FILE}, {RUNS_FILE} and {DISTANCES_FILE} belong here "
+        "(index snapshots are never committed)"
         for p in sorted(root.iterdir())
         if p.name not in _ENTRIES
     ]
@@ -661,6 +755,7 @@ def read_folder(root: Path) -> tuple[EvalFolder | None, tuple[str, ...]]:
         *_methods_errors(root, sets.dates, sets.valid),
         *_attribution_errors(root, sets.labels),
         *read_run_log(root)[1],
+        *read_distance_log(root)[1],
     ]
     if errors:
         return None, tuple(errors)

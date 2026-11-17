@@ -106,3 +106,17 @@ Extends the existing `PersonReport`, for one label in one run.
 | `verdict` | `PASS \| FAIL` | the run's verdict, repeated on each row |
 
 **Privacy** (spec FR-028): the log holds labels and counts only, with no URLs, names or face data.
+
+## Distance log row
+
+`distances.csv`, one row per (run, label, page), written by the same `--log` run (research R12). It is append-only, and every row must belong to a run in `runs.csv`.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `run_at`, `label_set`, `labels_sha256` | as in the run log | the run the row belongs to |
+| `label` | Label | |
+| `page_url` | str | a page found for this label up to the report ceiling (0.50), or a labelled page not found up to it |
+| `labelled` | `true \| false` | the page is labelled for this label in the set |
+| `distance` | float in [0, 2], or empty | the page's best cosine distance to the label's query face; empty for a labelled page not found up to the ceiling |
+
+**Privacy**: like the label sets, it pairs neutral labels with public page URLs. A distance is a number, not face data.
