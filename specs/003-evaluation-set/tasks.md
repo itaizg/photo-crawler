@@ -126,15 +126,15 @@ description: "Task list for feature 003: Search Evaluation Set"
 
   `log_to` is accepted and ignored until T030.
 - [X] T014 [US1] Replace `main()` in `scripts/evaluate_search.py` with an `argparse` parser for `FOLDER` (default `queries/eval`), `--set`, `--log` and `--check`, with the exit 64 cases from the contract. It opens `PostgresSearchIndex(config.database_dsn())` with `closing` and `DeepFaceEmbedder()`, and calls `run`, passing `log_to=folder / "runs.csv"` only when `--log` is given. Catch `InfrastructureError` at this boundary to print a DSN-free error and exit 2. Update the module docstring to the new usage. This makes T011 pass.
-- [ ] T015 [US1] [HUMAN] Label the first set:
+- [X] T015 [US1] [HUMAN] Label the first set:
   - Run the indexer at default depth.
   - Take a local snapshot of the database (`docker compose exec postgres pg_dump …` to a file outside the repo).
   - Browse and/or search the indexed pages to find at least 5 people on the site. For each, list every page they appear on. Copy each URL as `normalize_page_url` returns it (`uv run python -c "from face_index.urls import normalize_page_url as n; print(n('<url>'))"`).
   - Choose at least 5 absent people, including at least 1 look-alike of a present person, and mark at least 1 small-face page.
   - Note whether the crawl has an on-site look-alike pair.
-- [ ] T016 [US1] [HUMAN] For every label from T015, find one photo with one clear face that is not from the indexed site and not a copy or resized version of an indexed image (spec FR-007; this is checked in review, so the reviewer compares the attribution's source page with the indexed images), licensed PD, CC0, CC BY or CC BY-SA, on Wikimedia Commons, Flickr or Unsplash. Save it as `queries/eval/photos/<label>.jpg`, and add its row (page-ID source URL per research R4, photographer, licence) to `queries/eval/attribution.csv`.
-- [ ] T017 [US1] Write `queries/eval/sets/<crawl date>.csv` from T015's labels, and the matching row in `queries/eval/methods.csv` (`found_by`, `labeller`, `snapshot_holder`, `onsite_pair`). Load it with `uv run python -c "from pathlib import Path; from face_index import eval_set as e; f=Path('queries/eval'); print(e.load_set(f, e.latest_set(f)))"` and fix any reported line.
-- [ ] T018 [US1] [HUMAN] Run the quickstart §3 command (reader role, password read from the Compose secrets volume) against the labelling-date index, and confirm the output matches the contract's shape (quickstart §3). Record surprises (no-face photos, label errors) in `specs/003-evaluation-set/notes.md` (constitution XX).
+- [X] T016 [US1] [HUMAN] For every label from T015, find one photo with one clear face that is not from the indexed site and not a copy or resized version of an indexed image (spec FR-007; this is checked in review, so the reviewer compares the attribution's source page with the indexed images), licensed PD, CC0, CC BY or CC BY-SA, on Wikimedia Commons, Flickr or Unsplash. Save it as `queries/eval/photos/<label>.jpg`, and add its row (page-ID source URL per research R4, photographer, licence) to `queries/eval/attribution.csv`.
+- [X] T017 [US1] Write `queries/eval/sets/<crawl date>.csv` from T015's labels, and the matching row in `queries/eval/methods.csv` (`found_by`, `labeller`, `snapshot_holder`, `onsite_pair`). Load it with `uv run python -c "from pathlib import Path; from face_index import eval_set as e; f=Path('queries/eval'); print(e.load_set(f, e.latest_set(f)))"` and fix any reported line.
+- [X] T018 [US1] [HUMAN] Run the quickstart §3 command (reader role, password read from the Compose secrets volume) against the labelling-date index, and confirm the output matches the contract's shape (quickstart §3). Record surprises (no-face photos, label errors) in `specs/003-evaluation-set/notes.md` (constitution XX).
 
 **Checkpoint**: US1 is usable. The set exists and evaluates with one command.
 
@@ -170,7 +170,7 @@ description: "Task list for feature 003: Search Evaluation Set"
     - photo with 0 faces → 2 with the path printed;
     - undecodable photo → 2 with the path and reason printed.
   - assert that the database row counts are unchanged after each run.
-- [ ] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.read_folder(Path("queries/eval"))` returns no errors for the repository's committed folder. This is US2's final gate: it fails until T017 (the committed set) and T027 (attribution rules) are done, because an empty folder is an error. Once T030 adds the stale-results rule, CI's `--check` step also needs T031's logged run.
+- [X] T021 [P] [US2] Add `test_committed_eval_set_is_valid` to `tests/unit/test_eval_set.py`, asserting that `eval_set.read_folder(Path("queries/eval"))` returns no errors for the repository's committed folder. This is US2's final gate: it fails until T017 (the committed set) and T027 (attribution rules) are done, because an empty folder is an error. Once T030 adds the stale-results rule, CI's `--check` step also needs T031's logged run.
 
 ### Implementation for User Story 2
 
@@ -253,8 +253,8 @@ description: "Task list for feature 003: Search Evaluation Set"
   Add `stale_results_errors(folder: EvalFolder, root: Path) -> list[str]` and call it only from the `--check` path in `scripts/evaluate_search.py`, never from evaluation (research R7).
 
   In `scripts/evaluate_search.py`, have `run()` build the rows (with `run_at` as UTC now at the start of the database step) and call `append_run` when `log_to` is set and the exit is 0 or 1. This makes T029 pass.
-- [ ] T031 [US4] [HUMAN] On the labelling-date snapshot, run the quickstart §4 command (`… scripts/evaluate_search.py --set <crawl date> --log`, reader password from the Compose secrets volume) with the real model, and commit the new `queries/eval/runs.csv` rows.
-- [ ] T032 [US4] Add a "Search accuracy evaluation" section to `README.md`:
+- [X] T031 [US4] [HUMAN] On the labelling-date snapshot, run the quickstart §4 command (`… scripts/evaluate_search.py --set <crawl date> --log`, reader password from the Compose secrets volume) with the real model, and commit the new `queries/eval/runs.csv` rows.
+- [X] T032 [US4] Add a "Search accuracy evaluation" section to `README.md`:
   - the per-label table and verdict copied from T031's output (never hand-filled);
   - the run command, exactly as in quickstart §3 (reader role, password from the Compose secrets volume), the labelling method from `methods.csv`, and the crawl date;
   - the known bias: recall only counts pages the labeller found, rendition checks (FR-007) are done by review, the sample is small and limited to public figures with open-licence photos, and results are tied to one crawl;
@@ -271,7 +271,7 @@ description: "Task list for feature 003: Search Evaluation Set"
 ## Phase 7: Polish & cross-cutting
 
 - [X] T034 Run the full local gate: `uv run pre-commit run --all-files`, `uv run pytest -m "not model"` and `uv run python scripts/evaluate_search.py --check`. Fix only the failures this feature introduced.
-- [ ] T035 [P] Check for leftovers: `grep -rn "labels.toml\|tomllib\|parse_labels" scripts src tests docs specs/002-face-search README.md` should return nothing. Also check that no committed file under `queries/eval/` contains a real name, by reviewing `attribution.csv`'s `author` column (photographers only) and the file names.
+- [X] T035 [P] Check for leftovers: `grep -rn "labels.toml\|tomllib\|parse_labels" scripts src tests docs specs/002-face-search README.md` should return nothing. Also check that no committed file under `queries/eval/` contains a real name, by reviewing `attribution.csv`'s `author` column (photographers only) and the file names.
 - [ ] T036 Walk through `specs/003-evaluation-set/quickstart.md` §§1 to 4 on a fresh clone, then tick the spec's success criteria SC-001 to SC-007 in `specs/003-evaluation-set/notes.md` with evidence: command output, the CI run link, the job duration.
 
 ---

@@ -429,3 +429,13 @@ def test_a_photo_that_does_not_decode_is_rejected(tmp_path: Path) -> None:
     assert any(
         e.startswith("photos/absent-d.jpg:") and "decodable" in e for e in errors_for(tmp_path)
     )
+
+
+# --- the committed folder (T021) -----------------------------------------------------------------
+
+
+def test_committed_eval_set_is_valid() -> None:
+    root = Path(__file__).resolve().parents[2] / "queries" / "eval"
+    folder, errors = eval_set.read_folder(root)
+    assert errors == ()
+    assert folder is not None

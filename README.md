@@ -250,7 +250,32 @@ It prints a per-label table (expected pages, returned pages, recall, extra pages
 
 ### Results
 
-Not measured yet: the first label set and its logged real-model run are still to be made (feature 003 tasks T015 to T018 and T031). The table will be copied here from that run's output, and every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+**Label set 2026-11-16, run 2026-11-17: FAIL.** The run used the labeller's snapshot of the 2026-11-16 CNN crawl (15,822 faces, 5,160 images, 97 pages), profile `retinaface+Facenet512+cosine+align+base@deepface0.0.104/tf2.21`, at the default threshold of 0.30. The labels were found by browsing. The table is copied from the run's output; every run is kept in [`queries/eval/runs.csv`](queries/eval/runs.csv).
+
+| label | expected | returned | recall | extra | label errors |
+|---|---:|---:|---:|---:|---:|
+| person-a | 1 | 3 | 1.00 | 2 | 0 |
+| person-b | 1 | 0 | 0.00 | 0 | 0 |
+| person-c (small face) | 1 | 6 | 1.00 | 5 | 0 |
+| person-d (small face) | 1 | 0 | 0.00 | 0 | 0 |
+| person-e | 1 | 2 | 1.00 | 1 | 0 |
+| absent-a | 0 | 0 | - | 0 | 0 |
+| absent-b | 0 | 0 | - | 0 | 0 |
+| absent-c | 0 | 1 | - | 1 | 0 |
+| absent-d (look-alike of person-c) | 0 | 3 | - | 3 | 0 |
+| absent-e | 0 | 0 | - | 0 | 0 |
+
+Against the criteria:
+
+- **SC-001, recall of at least 0.80: fails for 2 of 5 people.** person-b and person-d were not found on their labelled page. It is not yet known whether their faces there were not detected or detected but too far from the query photo.
+- **SC-002, no extra pages: fails, with 8 extra pages for 3 people. These are probably label gaps.** Each person was labelled on one page only. The extras are section fronts (`/world`, `/world/middle-east`, `/world/asia`, `/world/china`, `/world/europe`) that reuse article photos. If the person is in the matched image, the page belongs in the label set, and recall is lower than shown, because expected pages are missing.
+- **SC-003, nothing returned for absent people: fails for 2 of 5.** The look-alike absent-d matched 3 pages, and absent-c matched 1. These are false matches unless one of those pages really shows the person.
+
+These findings are not verified yet. To check them, open the image URLs that `face-matcher --details` prints for each photo in `queries/eval/photos/`; CNN's image links usually keep working after the live pages change. Confirmed appearances go into the set as a correction ([quickstart §5b](specs/003-evaluation-set/quickstart.md)), followed by a new logged run. The threshold was not changed to pass. Whether the false matches call for a stricter threshold or a face-size filter is the question in [noisy-index-faces.md](docs/briefs/noisy-index-faces.md); the run alone does not decide it.
+
+**Hard cases in this set.**
+- The small-face rows are weak. person-c and person-d appear on the Ukraine page both large and small, so the large face can carry the match. A later set should add a page where a person appears only small.
+- The crawl had no on-site look-alike pair: no two labelled people on the site resemble each other (`onsite_pair=false`).
 
 ### Labelling method and its limits
 
