@@ -34,22 +34,24 @@ CEILING: Final[float] = eval_set.REPORT_CEILING
 TOLERANCE: Final[float] = 5e-5  # distances.csv keeps 4 decimals
 
 
-def query_vectors(label_set: eval_set.LabelSet, embedder: FaceEmbedder) -> scoring.Matrix:
+def query_vectors(
+    label_set: eval_set.LabelSet, embedder: FaceEmbedder, eval_dir: Path = EVAL
+) -> scoring.Matrix:
     """Each label's largest face, in label order, as the evaluator searches it."""
     normalizer = PillowNormalizer()
     vectors = []
     for label in label_set.labels():
-        data = (EVAL / eval_set.photo_path(label)).read_bytes()
+        data = (eval_dir / eval_set.photo_path(label)).read_bytes()
         _, faces = prepare_query(data, normalizer, embedder)
         vectors.append(max(faces, key=lambda f: f.box.w * f.box.h).embedding)
     return scoring.normalize(np.asarray(vectors))
 
 
-def _reference(label_set: eval_set.LabelSet) -> list[eval_set.DistanceRow]:
+def _reference(label_set: eval_set.LabelSet, eval_dir: Path = EVAL) -> list[eval_set.DistanceRow]:
     """The distance rows of the latest logged run of this set without a size filter."""
-    version = eval_set.labels_sha256(EVAL, label_set)
-    runs, _ = eval_set.read_run_log(EVAL)
-    distances, _ = eval_set.read_distance_log(EVAL)
+    version = eval_set.labels_sha256(eval_dir, label_set)
+    runs, _ = eval_set.read_run_log(eval_dir)
+    distances, _ = eval_set.read_distance_log(eval_dir)
     logged = {(d.run_at, d.labels_sha256) for d in distances if d.label_set == label_set.crawl_date}
     candidates = sorted(
         {
@@ -69,10 +71,13 @@ def _reference(label_set: eval_set.LabelSet) -> list[eval_set.DistanceRow]:
 
 
 def sanity_check(
-    label_set: eval_set.LabelSet, page_scores: scoring.Matrix, urls: Sequence[str]
+    label_set: eval_set.LabelSet,
+    page_scores: scoring.Matrix,
+    urls: Sequence[str],
+    eval_dir: Path = EVAL,
 ) -> list[str]:
     """Differences between the baseline and the reference run; empty when they agree."""
-    reference = _reference(label_set)
+    reference = _reference(label_set, eval_dir)
     if not reference:
         return ["no logged unfiltered run with distances for this set and labels version"]
     column = {u: i for i, u in enumerate(urls)}
@@ -138,6 +143,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--set", dest="crawl_date", type=date.fromisoformat, required=True)
     parser.add_argument("--only", choices=["baseline"], help="only the sanity check")
     parser.add_argument(
+        "--eval",
+        dest="eval_dir",
+        type=Path,
+        default=EVAL,
+        help="the label-set folder to read (default queries/eval); a clean copy of the commit "
+        "keeps photos added since from being rejected",
+    )
+    parser.add_argument(
         "--models",
         nargs="+",
         choices=list(snapshot.MODELS),
@@ -146,7 +159,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    folder, errors = eval_set.read_folder(EVAL)
+    folder, errors = eval_set.read_folder(args.eval_dir)
     label_set = folder.set_for(args.crawl_date) if folder else None
     if label_set is None:
         print(f"error: no valid label set {args.crawl_date}: {errors}", file=sys.stderr)
@@ -172,10 +185,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         snap = snapshot.Snapshot.load(snapshot.path(args.crawl_date, model))
         index = scoring.normalize(snap.embeddings)
         pages = scoring.Pages.build(snap.face_image.tolist(), snap.image_pages)
-        queries = query_vectors(label_set, embedders[model])
+        queries = query_vectors(label_set, embedders[model], args.eval_dir)
         if model == "Facenet512":
             baseline = pages.best(scoring.scores(queries, index, "raw"))
-            problems = sanity_check(label_set, baseline, pages.urls)
+            problems = sanity_check(label_set, baseline, pages.urls, args.eval_dir)
             for problem in problems:
                 print(f"sanity check: {problem}", file=sys.stderr)
             if problems:
