@@ -1,8 +1,8 @@
 # Mission Brief — Submission Review Findings
 
-Source of truth: [assignment.md](../assignment.md). Quoted text is from the assignment; anything else is interpretation. Origin: a strict reviewer's grading of PR #16 ("Prepare for submission", head `6922196`) against the assignment, 2026-11-17. Lands after PR #16.
+Source of truth: [assignment.md](../assignment.md). Quoted text is from the assignment; anything else is interpretation. Origin: a reviewer's findings on PR #16 ("Prepare for submission", head `6922196`) against the assignment, 2026-11-17. Lands after PR #16.
 
-**Status (2026-11-17):** not started. The grading gave 73/100. The submission meets every deliverable on paper. It falls short on the search's "high confidence", on a design claim the code does not keep (the HNSW index), on how the experiments are run and reported, and on the README's length. This brief covers every finding; each goal below is one finding.
+**Status (2026-11-19):** partly done. Landed: goals 2, 4 and 8 (PR #17) and goal 10 (PR #19). Partly done: goal 5 (the label bias is documented, PR #17; the second set's labelling method and the blind audit are not done), goal 7 (plain words and dated example outputs, PR #17; the README is still 212 lines, and the coverage statement waits on goal 11) and goal 9 (password files owner-only, PR #19; the separate Airflow database role from spec FR-031a is not done). Not started: goals 1, 3, 6 and 11. Spec 004 is no longer on hold: PR #17 has landed, and revising the spec against it is the next step. The submission meets every deliverable on paper. It falls short on the search's "high confidence", on a design claim the code does not keep (the HNSW index), on how the experiments are run and reported, and on the README's length. This brief covers every finding; each goal below is one finding.
 
 ## Mission
 
