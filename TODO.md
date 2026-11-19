@@ -2,17 +2,17 @@
 
 ## Future resolution
 
-- [ ] **Submission review findings (PR #16 graded 73/100).** Brief: [submission-review.md](docs/briefs/submission-review.md); spec: [004-submission-review-fixes](specs/004-submission-review-fixes/spec.md). One item per goal, closed as each lands:
+- [ ] **Submission review findings (PR #16).** Brief: [submission-review.md](docs/briefs/submission-review.md); spec: [004-submission-review-fixes](specs/004-submission-review-fixes/spec.md). One item per goal, closed as each lands. Still open (2026-11-19): goals 1, 3, 6 and 11 not started; 5, 7 and 9 partly done (see the brief's status):
   - [ ] 1. The search uses its HNSW index (nearest neighbours first, growing batch, exact fallback).
-  - [ ] 2. ArcFace's and the baseline's numbers reported separately, recall at zero false matches first.
+  - [x] 2. ArcFace's and the baseline's numbers reported separately, recall at zero false matches first.
   - [ ] 3. ArcFace re-run with its own input scaling (added row, for information).
-  - [ ] 4. Query expansion skips renditions; six rows re-scored as corrections.
+  - [x] 4. Query expansion skips renditions; six rows re-scored as corrections.
   - [ ] 5. Label bias documented, second-set method fixed, blind audit of the 2026-11-16 set.
   - [ ] 6. ArcFace as a selectable profile (revised once PR #17 lands).
   - [ ] 7. README under 150 lines, no internal identifiers, current dated outputs, coverage stated.
-  - [ ] 8. A reviewer's map of where each deliverable lives.
+  - [x] 8. A reviewer's map of where each deliverable lives.
   - [ ] 9. Secret files no longer world-readable.
-  - [ ] 10. pgvector image pinned in Compose and CI.
+  - [x] 10. pgvector image pinned in Compose and CI.
   - [ ] 11. No default page cap; first default run measured.
 - [ ] **Search script: query images with several faces.** Brief: [multi-face-queries.md](docs/briefs/multi-face-queries.md). Currently every detected face is searched and results are grouped per face (`--face N` narrows to one). Revisit once real queries have been tried:
   - Do background or blurry faces add noisy result groups? If so, consider a minimum face size or detection-confidence filter.

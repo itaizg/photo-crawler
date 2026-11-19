@@ -6,7 +6,7 @@
 
 **Status**: Draft, on hold. It waits for the ArcFace work (branch `claude/arcface-eval-set-2026-11-17`) to land on `main`; then Story 3, FR-015 to FR-022 and the non-goals are revised to build on it, and planning starts (decision of 2026-11-17, below).
 
-**Input**: User description: "Mission Brief — Submission Review Findings" (the strict reviewer's grading of PR #16, 73/100)
+**Input**: User description: "Mission Brief — Submission Review Findings" (the reviewer's findings on PR #16)
 
 ## Clarifications
 
