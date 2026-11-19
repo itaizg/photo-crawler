@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-17
 
-**Status**: Draft, on hold. It waits for the ArcFace work (branch `claude/arcface-eval-set-2026-11-17`) to land on `main`; then Story 3, FR-015 to FR-022 and the non-goals are revised to build on it, and planning starts (decision of 2026-11-17, below).
+**Status**: Draft. The ArcFace work (branch `claude/arcface-eval-set-2026-11-17`) landed on `main` in PR #17 on 2026-11-17, and its confirmation did not hold, so the default stays Facenet512. Next: revise Story 3, FR-015 to FR-022 and the non-goals to build on it, then start planning (decision of 2026-11-17, below).
 
 **Input**: User description: "Mission Brief — Submission Review Findings" (the reviewer's findings on PR #16)
 
@@ -245,7 +245,7 @@ The owner decided on 2026-11-17 that a default run should not stop at 50 pages. 
 
 ## Assumptions
 
-- **Pending revision (2026-11-17)**: Story 3 (FR-017 to FR-022: Facenet512 default, published 0.68 threshold), FR-015 (method fixed before the second set is labelled) and the re-index non-goal were written before the ArcFace branch was known. They stand until that branch lands, then are revised against it; Stories 1, 2, 4, 5 and 6 are expected to carry over, with the README rewrite done on top of that branch's README edits.
+- **Pending revision (2026-11-17)**: Story 3 (FR-017 to FR-022: Facenet512 default, published 0.68 threshold), FR-015 (method fixed before the second set is labelled) and the re-index non-goal were written before the ArcFace branch was known. That branch landed in PR #17 on 2026-11-17; they stand until they are revised against it; Stories 1, 2, 4, 5 and 6 are expected to carry over, with the README rewrite done on top of that branch's README edits.
 - **Starting point**: work starts from `main` after PR #16 (merge of `6922196`): README at 265 lines and the evaluation detail in `docs/search-evaluation.md`. This checkout's branch predates that merge (its README is longer and that document is absent); planning rebases onto `main` first.
 - **Recommendations adopted from the brief (k)**: the first batch is k = 100 faces with the approximate breadth at twice k; k doubles while the farthest face is within the limit; once k would pass 500 (the breadth's cap of 1000), the exact comparison runs instead. These are verified on the snapshot (FR-005), not chosen from it: the number of matching faces is a property of the index, not a tuned result.
 - **Profile filter and coexisting profiles**: if the database extension supports iterative index scans, the plan considers them for the profile filter; the version is checked when it is pinned (FR-032).

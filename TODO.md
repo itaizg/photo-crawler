@@ -8,7 +8,7 @@
   - [ ] 3. ArcFace re-run with its own input scaling (added row, for information).
   - [x] 4. Query expansion skips renditions; six rows re-scored as corrections.
   - [ ] 5. Label bias documented, second-set method fixed, blind audit of the 2026-11-16 set.
-  - [ ] 6. ArcFace as a selectable profile (revised once PR #17 lands).
+  - [ ] 6. ArcFace as a selectable profile (to be revised against PR #17, which has landed).
   - [ ] 7. README under 150 lines, no internal identifiers, current dated outputs, coverage stated.
   - [x] 8. A reviewer's map of where each deliverable lives.
   - [ ] 9. Secret files no longer world-readable.
